@@ -45,10 +45,13 @@ async function sendBatch(
   }
 
   const json = await res.json();
+  console.log("FC raw response:", JSON.stringify(json));
+  // Farcaster may nest under result or return flat — handle both
+  const payload = json.result ?? json;
   return {
-    successfulTokens: json.successfulTokens ?? [],
-    invalidTokens: json.invalidTokens ?? [],
-    rateLimitedTokens: json.rateLimitedTokens ?? [],
+    successfulTokens: payload.successfulTokens ?? [],
+    invalidTokens: payload.invalidTokens ?? [],
+    rateLimitedTokens: payload.rateLimitedTokens ?? [],
   };
 }
 
