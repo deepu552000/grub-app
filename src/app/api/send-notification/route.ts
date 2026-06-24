@@ -15,7 +15,7 @@ import { sendNotificationToUser } from "@/lib/send-notification";
 // The Farcaster app's own FID — used to scope tokens. Replace if your
 // manifest's accountAssociation custody fid differs; this is your app's
 // identity, set once.
-const APP_FID = 777804;
+const APP_FID = 9152;
 
 const APP_URL = "https://grub-app-eight.vercel.app";
 
