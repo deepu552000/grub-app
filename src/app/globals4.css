@@ -615,12 +615,11 @@ h1 {
   overflow: visible;
 }
 
-/* ── Eyelids: fully open by default (scaleY 0 + opacity 0 = invisible rect) ── */
+/* ── Eyelids: fully open by default (scaleY 0 = invisible rect) ── */
 .kitty-eyelid {
   transform-box: fill-box;
   transform-origin: center top;
   transform: scaleY(0);
-  opacity: 0;
 }
 
 /* Idle blink + poke blink — same animation, left eye leads, right follows */
@@ -632,11 +631,9 @@ h1 {
 }
 
 @keyframes eyelidClose {
-  0%   { transform: scaleY(0); opacity: 0; }
-  20%  { opacity: 1; }
-  40%  { transform: scaleY(1); opacity: 1; }
-  80%  { opacity: 1; }
-  100% { transform: scaleY(0); opacity: 0; }
+  0%   { transform: scaleY(0); }
+  40%  { transform: scaleY(1); }
+  100% { transform: scaleY(0); }
 }
 
 /* ── EAR overlays ──────────────────────────────────────────────────────────
