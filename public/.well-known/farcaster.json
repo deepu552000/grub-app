@@ -7,12 +7,16 @@
   "frame": {
     "version": "1",
     "name": "Grub",
+    "subtitle": "Feed the fragile white kitty",
+    "description": "Grub is a fragile white kitty living on Farcaster. Feed it, pet it, and keep it alive — or watch it slowly wither. A fun mini pet app for cat lovers on Farcaster.",
     "iconUrl": "https://grub-app-eight.vercel.app/cats/stage1.webp",
     "homeUrl": "https://grub-app-eight.vercel.app",
     "imageUrl": "https://grub-app-eight.vercel.app/cats/stage1.webp",
-    "buttonTitle": "Play Grub",
+    "buttonTitle": "Play Grub 🐱",
     "splashImageUrl": "https://grub-app-eight.vercel.app/cats/stage1.webp",
     "splashBackgroundColor": "#f5f0e8",
-    "webhookUrl": "https://grub-app-eight.vercel.app/api/webhook"
+    "webhookUrl": "https://grub-app-eight.vercel.app/api/webhook",
+    "primaryCategory": "games",
+    "tags": ["cat", "pet", "game", "fun", "tamagotchi"]
   }
 }
