@@ -25,7 +25,6 @@ type PetState = {
   lastCheckInDay: string;
   checkinStreak: number;
   checkinHistory: string[]; // last 7 day-keys that were checked in
-  totalCheckIns: number; // lifetime check-in count, first 5 are free
 };
 
 type FloatingNumber = {
@@ -200,7 +199,6 @@ const defaultState: PetState = {
   lastCheckInDay: "",
   checkinStreak: 0,
   checkinHistory: [],
-  totalCheckIns: 0,
 };
 
 function clamp(value: number) {
@@ -326,41 +324,6 @@ export default function Home() {
   const lastActionHasBonus = lastAction.includes("bond bonus");
   const checkedInToday = state.lastCheckInDay === todayKey();
 
-  // ── Check-in payment state ────────────────────────────────────────────────
-  const FREE_CHECKIN_DAYS = 5;
-  const CHECKIN_USD = 0.01; // $0.01 per check-in after the free period
-  const RECIPIENT = "0xCF8A44059652DB5Af8B4CB62938c5DC6916eB082" as const;
-
-  const totalCheckIns = state.totalCheckIns ?? 0;
-  const freeCheckInsLeft = Math.max(0, FREE_CHECKIN_DAYS - totalCheckIns);
-  const isFreeCheckin = freeCheckInsLeft > 0;
-
-  const [checkinPending, setCheckinPending] = useState(false);
-  const [checkinError, setCheckinError] = useState<string | null>(null);
-
-  // Fetch live ETH price in USD, returns null on failure
-  async function fetchEthPriceUsd(): Promise<number | null> {
-    try {
-      const res = await fetch(
-        "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
-      );
-      const json = await res.json();
-      return typeof json?.ethereum?.usd === "number" ? json.ethereum.usd : null;
-    } catch {
-      return null;
-    }
-  }
-
-  // Converts $0.01 USD → ETH amount string (e.g. "0.000003333"), for sendToken amount in wei string
-  async function centToEthWeiString(): Promise<string> {
-    const ethPrice = await fetchEthPriceUsd();
-    const price = ethPrice && ethPrice > 0 ? ethPrice : 3000; // safe fallback
-    const ethAmount = CHECKIN_USD / price;
-    // sendToken expects amount as wei (integer string) for native ETH: eip155:8453/slip44:60
-    const wei = BigInt(Math.floor(ethAmount * 1e18));
-    return wei.toString();
-  }
-
   // yesterday's date key
   function yesterdayKey() {
     const d = new Date();
@@ -372,8 +335,7 @@ export default function Home() {
   const missedYesterday = !checkedInToday && state.lastCheckInDay !== "" && state.lastCheckInDay !== yesterdayKey() && state.lastCheckInDay !== todayKey();
   const streakRewardEarned = checkinStreak > 0 && checkinStreak % 7 === 0;
 
-  // Applies check-in to state after payment confirmed (or for free days)
-  function applyCheckIn() {
+  function doCheckIn() {
     setState((current) => {
       const isNewDay = current.lastCheckInDay !== todayKey();
       if (!isNewDay) return current;
@@ -383,6 +345,7 @@ export default function Home() {
       const consecutive = current.lastCheckInDay === yKey;
       const newCheckinStreak = consecutive ? (current.checkinStreak ?? 0) + 1 : 1;
       const streakBonus = newCheckinStreak % 7 === 0 ? 5 : 0;
+      // Keep last 7 checked-in day keys
       const history = [...(current.checkinHistory ?? []), todayKey()].slice(-7);
       return {
         ...current,
@@ -391,7 +354,6 @@ export default function Home() {
         checkinStreak: newCheckinStreak,
         xp: current.xp + streakBonus,
         checkinHistory: history,
-        totalCheckIns: (current.totalCheckIns ?? 0) + 1,
         actionsToday: { feed: 0, play: 0, groom: 0, nap: 0 },
       };
     });
@@ -399,51 +361,6 @@ export default function Home() {
     setLastAction(isSeventhDay
       ? "7-day streak! +5 XP bonus dropped. Keep it going!"
       : "Day started! Care for Grub to earn XP and keep your streak.");
-  }
-
-  async function doCheckIn() {
-    if (checkedInToday || checkinPending) return;
-    setCheckinError(null);
-
-    // Free check-in (first 5 days) — no payment needed
-    if (isFreeCheckin) {
-      applyCheckIn();
-      setLastAction(
-        freeCheckInsLeft === 1
-          ? `Day started! Last free check-in used. Tomorrow costs $0.01.`
-          : `Day started! ${freeCheckInsLeft - 1} free check-in${freeCheckInsLeft - 1 === 1 ? "" : "s"} remaining.`,
-      );
-      return;
-    }
-
-    // Paid check-in — send $0.01 in ETH on Base using sdk.actions.sendToken
-    setCheckinPending(true);
-    try {
-      const weiAmount = await centToEthWeiString();
-      // Native ETH on Base: token = eip155:8453/slip44:60
-      const result = await sdk.actions.sendToken({
-        token: "eip155:8453/slip44:60",
-        amount: weiAmount,
-        recipientAddress: RECIPIENT,
-      });
-
-      if (result.success) {
-        applyCheckIn();
-      } else if (result.reason === "rejected_by_user") {
-        setCheckinError("Cancelled. Tap Check In to try again.");
-      } else {
-        setCheckinError("Payment failed. Try again.");
-      }
-    } catch (err: any) {
-      const msg: string = err?.message ?? String(err);
-      if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
-        setCheckinError("No wallet connected. Open in Farcaster to pay.");
-      } else {
-        setCheckinError("Payment failed. Try again.");
-      }
-    } finally {
-      setCheckinPending(false);
-    }
   }
   const line = useMemo(() => {
     const pool = dialogue[mood];
@@ -747,25 +664,10 @@ export default function Home() {
                 ? "Start your streak → +5 XP bonus on day 7"
                 : `${checkinStreak % 7}/7 days — keep going for +5 XP bonus`}
               </small>
-              <button type="button" className="checkin-btn" onClick={doCheckIn} disabled={checkinPending}>
-                {checkinPending
-                  ? "⏳ Confirming..."
-                  : streakRewardEarned
-                  ? "✦ Check In · +5 XP bonus!"
-                  : isFreeCheckin
-                  ? `✦ Check In · Free (${freeCheckInsLeft} left)`
-                  : "✦ Check In · $0.01"}
+              <button type="button" className="checkin-btn" onClick={doCheckIn}>
+                {streakRewardEarned ? "✦ Check In · +5 XP bonus!" : "✦ Check In · $0.01"}
               </button>
-              {checkinError && (
-                <small style={{ color: "#b5544f", fontSize: "0.78rem", marginTop: 2 }}>
-                  {checkinError}
-                </small>
-              )}
-              <small>
-                {isFreeCheckin
-                  ? `First 5 days free · then $0.01/day on Base`
-                  : "Wallet payment on Base"}
-              </small>
+              <small>Wallet payment coming soon — free for now</small>
             </div>
           )}
           {checkedInToday && (
