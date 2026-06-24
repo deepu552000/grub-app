@@ -17,6 +17,10 @@
     "splashBackgroundColor": "#f5f0e8",
     "webhookUrl": "https://grub-app-eight.vercel.app/api/webhook",
     "primaryCategory": "games",
-    "tags": ["cat", "pet", "game", "fun", "tamagotchi"]
+    "tags": ["cat", "pet", "game", "fun", "tamagotchi"],
+    "screenshotUrls": [
+      "https://grub-app-eight.vercel.app/screenshot1.jpeg",
+      "https://grub-app-eight.vercel.app/screenshot2.jpeg"
+    ]
   }
 }
