@@ -12,6 +12,7 @@
     "imageUrl": "https://grub-app-eight.vercel.app/cats/stage1.webp",
     "buttonTitle": "Play Grub",
     "splashImageUrl": "https://grub-app-eight.vercel.app/cats/stage1.webp",
-    "splashBackgroundColor": "#f5f0e8"
+    "splashBackgroundColor": "#f5f0e8",
+    "webhookUrl": "https://grub-app-eight.vercel.app/api/webhook"
   }
 }
