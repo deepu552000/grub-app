@@ -39,8 +39,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { fid, event } = data;
-  // appFid identifies which client sent this (Farcaster vs Base App vs others)
-  // so the same user's tokens never collide across hosts.
+  const appFid = data.appFid;
   console.log("appFid received:", appFid, "fid:", fid);
 
   switch (event.event) {
