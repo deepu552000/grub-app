@@ -1,0 +1,17 @@
+{
+  "accountAssociation": {
+    "header": "",
+    "payload": "",
+    "signature": ""
+  },
+  "frame": {
+    "version": "1",
+    "name": "Grub",
+    "iconUrl": "https://grub-app-eight.vercel.app/cats/stage1.webp",
+    "homeUrl": "https://grub-app-eight.vercel.app",
+    "imageUrl": "https://grub-app-eight.vercel.app/cats/stage1.webp",
+    "buttonTitle": "Play Grub",
+    "splashImageUrl": "https://grub-app-eight.vercel.app/cats/stage1.webp",
+    "splashBackgroundColor": "#f5f0e8"
+  }
+}
