@@ -410,6 +410,44 @@ h1 {
   }
 }
 
+/* Tail wag — mood-based speeds */
+.kitty-tail {
+  transform-box: fill-box;
+}
+/* content: gentle relaxed wag */
+.kitty-tail-content {
+  animation: tailWag 2.4s ease-in-out infinite;
+}
+/* smug: slow confident swish */
+.kitty-tail-smug {
+  animation: tailWag 3.2s ease-in-out infinite;
+}
+/* hungry: faster impatient flick */
+.kitty-tail-hungry {
+  animation: tailWagFast 0.9s ease-in-out infinite;
+}
+/* feral: rapid aggressive thrash */
+.kitty-tail-feral {
+  animation: tailWagFast 0.5s ease-in-out infinite;
+}
+/* sleepy: barely moving, very slow drift */
+.kitty-tail-sleepy {
+  animation: tailWagSlow 5s ease-in-out infinite;
+}
+
+@keyframes tailWag {
+  0%, 100% { transform: rotate(-8deg); }
+  50%       { transform: rotate(8deg);  }
+}
+@keyframes tailWagFast {
+  0%, 100% { transform: rotate(-12deg); }
+  50%       { transform: rotate(12deg);  }
+}
+@keyframes tailWagSlow {
+  0%, 100% { transform: rotate(-3deg); }
+  50%       { transform: rotate(3deg);  }
+}
+
 @keyframes charmSwing {
   0%,
   100% {
@@ -502,8 +540,9 @@ h1 {
 
 .kitty-stage-wrap {
   position: relative;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-height: 300px;
 }
 
@@ -523,10 +562,11 @@ h1 {
 
 .kitty-wrap {
   --growth-scale: 0.88;
+  --kitty-size: 168px;
   position: relative;
   z-index: 1;
-  display: grid;
-  place-items: center;
+  width: var(--kitty-size);
+  height: var(--kitty-size);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transform: scale(var(--growth-scale));
@@ -535,18 +575,19 @@ h1 {
 }
 
 .kitty-image {
-  width: 220px;
-  height: 220px;
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   -webkit-user-drag: none;
   user-select: none;
   pointer-events: none;
 }
 
-.kitty-stage-1 .kitty-image { width: 168px; height: 168px; }
-.kitty-stage-2 .kitty-image { width: 188px; height: 188px; }
-.kitty-stage-3 .kitty-image { width: 208px; height: 208px; }
-.kitty-stage-4 .kitty-image { width: 232px; height: 232px; }
+.kitty-stage-1 { --kitty-size: 168px; }
+.kitty-stage-2 { --kitty-size: 188px; }
+.kitty-stage-3 { --kitty-size: 208px; }
+.kitty-stage-4 { --kitty-size: 232px; }
 
 @keyframes kittyFadeIn {
   0% {
@@ -563,21 +604,114 @@ h1 {
   transform: scale(calc(var(--growth-scale) * 0.97));
 }
 
+/* ── Overlay SVG: sits pixel-perfect on top of the webp image ── */
+.kitty-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* ── Eyelids: fully open by default (scaleY 0 + opacity 0 = invisible rect) ── */
+.kitty-eyelid {
+  transform-box: fill-box;
+  transform-origin: center top;
+  transform: scaleY(0);
+  opacity: 0;
+}
+
+/* Idle blink + poke blink — same animation, left eye leads, right follows */
+.eyelid-blink-l {
+  animation: eyelidClose 0.22s ease-in-out forwards;
+}
+.eyelid-blink-r {
+  animation: eyelidClose 0.22s ease-in-out 0.04s forwards;
+}
+
+@keyframes eyelidClose {
+  0%   { transform: scaleY(0); opacity: 0; }
+  20%  { opacity: 1; }
+  40%  { transform: scaleY(1); opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: scaleY(0); opacity: 0; }
+}
+
+/* ── EAR overlays ──────────────────────────────────────────────────────────
+   opacity:0 at rest, webp shows cleanly.
+   Idle twitch: tip flicks INWARD (toward head center) — left ear rotates
+   positive (clockwise), right ear rotates negative (anticlockwise).
+   Small degrees so it reads as a natural ear twitch not a flap.
+   Alternating: L first, R follows 1.4s later, long rest before repeat.
+──────────────────────────────────────────────────────────────────────────── */
+.kitty-ear-l {
+  transform-box: fill-box;
+  transform-origin: bottom right;
+  opacity: 0;
+  animation: earIdleL 5s ease-in-out infinite;
+}
+.kitty-ear-r {
+  transform-box: fill-box;
+  transform-origin: bottom left;
+  opacity: 0;
+  animation: earIdleR 5s ease-in-out infinite 1.4s;
+}
+
+/* Left ear tip flicks inward = positive/clockwise */
+@keyframes earIdleL {
+  0%        { opacity: 0;   transform: rotate(0deg); }
+  4%        { opacity: 1;   transform: rotate(8deg) translateY(-1px); }
+  10%       { opacity: 0.8; transform: rotate(3deg); }
+  16%       { opacity: 0;   transform: rotate(0deg); }
+  16%, 100% { opacity: 0;   transform: rotate(0deg); }
+}
+/* Right ear tip flicks inward = negative/anticlockwise */
+@keyframes earIdleR {
+  0%        { opacity: 0;   transform: rotate(0deg); }
+  4%        { opacity: 1;   transform: rotate(-12deg) translateY(-1px); }
+  10%       { opacity: 0.8; transform: rotate(-4deg); }
+  16%       { opacity: 0;   transform: rotate(0deg); }
+  16%, 100% { opacity: 0;   transform: rotate(0deg); }
+}
+
+/* Poke wiggle: inward flick, bigger bounce */
+.ear-wig-l {
+  animation: earWigL 0.6s ease-out forwards !important;
+}
+.ear-wig-r {
+  animation: earWigR 0.6s ease-out forwards !important;
+}
+@keyframes earWigL {
+  0%   { opacity: 0;   transform: rotate(0deg); }
+  15%  { opacity: 1;   transform: rotate(22deg) translateY(-2px); }
+  40%  { opacity: 0.9; transform: rotate(8deg); }
+  65%  { opacity: 0.7; transform: rotate(14deg); }
+  85%  { opacity: 0.3; transform: rotate(3deg); }
+  100% { opacity: 0;   transform: rotate(0deg); }
+}
+@keyframes earWigR {
+  0%   { opacity: 0;   transform: rotate(0deg); }
+  15%  { opacity: 1;   transform: rotate(-22deg) translateY(-2px); }
+  40%  { opacity: 0.9; transform: rotate(-8deg); }
+  65%  { opacity: 0.7; transform: rotate(-14deg); }
+  85%  { opacity: 0.3; transform: rotate(-3deg); }
+  100% { opacity: 0;   transform: rotate(0deg); }
+}
+
+/* ── Enhanced poke bounce: NO rotation — rotation fights the SVG ear overlay ── */
+@keyframes pokeBounce {
+  0%   { transform: translateY(0)   scale(1);    }
+  20%  { transform: translateY(-8px) scale(1.05); }
+  45%  { transform: translateY(2px)  scale(0.96); }
+  65%  { transform: translateY(-4px) scale(1.02); }
+  100% { transform: translateY(0)   scale(1);    }
+}
+
 /* Quick squash-and-stretch pop on the whole image when poked directly */
 .kitty-wrap.kitty-poked .kitty-image {
   animation: pokeBounce 0.42s ease;
-}
-
-@keyframes pokeBounce {
-  0% {
-    transform: translateY(0) rotate(0deg) scale(1);
-  }
-  35% {
-    transform: translateY(-10px) rotate(-3deg) scale(1.05);
-  }
-  100% {
-    transform: translateY(0) rotate(0deg) scale(1);
-  }
 }
 
 /* Floating +xp / +care / heart feedback that pops up and fades on every action */
@@ -616,14 +750,44 @@ h1 {
   animation: kittyFadeIn 380ms ease-out;
 }
 
+/* Stage 3 & 4 tail sway — only on poke/care, not idle */
+.kitty-wrap.kitty-stage-3 .kitty-image,
+.kitty-wrap.kitty-stage-4 .kitty-image {
+  transform-origin: bottom center !important;
+}
+.kitty-wrap.kitty-stage-3.kitty-poked .kitty-image,
+.kitty-wrap.kitty-stage-4.kitty-poked .kitty-image,
+.kitty-wrap.kitty-stage-3:not(.kitty-care-idle) .kitty-image,
+.kitty-wrap.kitty-stage-4:not(.kitty-care-idle) .kitty-image {
+  animation: kittyFadeIn 380ms ease-out, tailSwayCont 0.5s ease-in-out 3 !important;
+}
+
+@keyframes tailSwayCont {
+  0%, 100% { transform: rotate(-0.8deg); }
+  50%       { transform: rotate(0.8deg);  }
+}
+@keyframes tailSwaySmug {
+  0%, 100% { transform: rotate(-0.6deg); }
+  50%       { transform: rotate(0.6deg);  }
+}
+@keyframes tailSwayHungry {
+  0%, 100% { transform: rotate(-1.2deg); }
+  50%       { transform: rotate(1.2deg);  }
+}
+@keyframes tailSwayFeral {
+  0%, 100% { transform: rotate(-1.8deg); }
+  50%       { transform: rotate(1.8deg);  }
+}
+@keyframes tailSwaySleep {
+  0%, 100% { transform: rotate(-0.3deg); }
+  50%       { transform: rotate(0.3deg);  }
+}
+
 @keyframes kittyBreathe {
-  0%,
-  100% {
-    transform: scale(1) translateY(0);
-  }
-  50% {
-    transform: scale(1.015) translateY(-2px);
-  }
+  0%,  100% { transform: scale(1)     translateY(0)    rotate(0deg);    }
+  25%        { transform: scale(1.01)  translateY(-1px)  rotate(-0.5deg); }
+  50%        { transform: scale(1.015) translateY(-2px)  rotate(0deg);   }
+  75%        { transform: scale(1.01)  translateY(-1px)  rotate(0.5deg); }
 }
 
 /* Slight idle invitation so it doesn't feel static - very subtle, not distracting */
@@ -644,10 +808,12 @@ h1 {
 
 @media (prefers-reduced-motion: reduce) {
   .kitty-wrap,
-  .kitty-wrap * {
+  .kitty-wrap .kitty-image,
+  .kitty-wrap .kitty-shadow {
     animation: none !important;
     transition: none !important;
   }
+  /* eyelid blink is intentionally left running — it's a tiny motion, not vestibular */
 }
 
 /* Immediate tap-contact ripple - appears exactly under the finger on poke */
@@ -712,4 +878,231 @@ h1 {
 .speech span.has-bonus {
   color: #b9842f;
   font-weight: 800;
+}
+
+/* ── Check-in gate ─────────────────────────────────────────────────────────── */
+.checkin-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px 14px;
+  background: linear-gradient(135deg, rgba(255,247,237,0.9), rgba(252,235,213,0.7));
+  border-radius: 16px;
+  border: 1px solid rgba(216,148,92,0.25);
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.checkin-gate p {
+  margin: 0;
+  font-size: 0.83rem;
+  font-weight: 700;
+  color: #573c33;
+}
+
+.checkin-gate small {
+  font-size: 0.72rem;
+  color: #9a786a;
+}
+
+.checkin-btn {
+  background: linear-gradient(135deg, #d8945c, #c47a3e);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 11px 28px;
+  font-size: 0.88rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(196,122,62,0.35);
+  letter-spacing: 0.01em;
+  transition: transform 80ms, box-shadow 80ms;
+}
+
+.checkin-btn:active {
+  transform: scale(0.96);
+  box-shadow: 0 2px 8px rgba(196,122,62,0.25);
+}
+
+.actions-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 12px;
+}
+
+.actions-grid {
+  display: contents;
+}
+
+.actions-locked button {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+/* ── FAQ Modal ─────────────────────────────────────────────────────────────── */
+.faq-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(43, 33, 29, 0.45);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 0 0 0;
+  animation: faqFadeIn 200ms ease-out;
+}
+
+@keyframes faqFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.faq-sheet {
+  width: min(100%, 430px);
+  max-height: 82vh;
+  background: #fffdf8;
+  border-radius: 24px 24px 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 -8px 40px rgba(97, 57, 42, 0.18);
+  animation: faqSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes faqSlideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0);    }
+}
+
+.faq-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 20px 14px;
+  border-bottom: 1px solid rgba(99, 67, 54, 0.1);
+  flex-shrink: 0;
+}
+
+.faq-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #2b211d;
+}
+
+.faq-close {
+  background: rgba(99, 67, 54, 0.08);
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  font-size: 0.75rem;
+  color: #573c33;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.faq-body {
+  overflow-y: auto;
+  padding: 10px 16px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+}
+
+.faq-item {
+  border-radius: 12px;
+  border: 1px solid rgba(99, 67, 54, 0.09);
+  background: rgba(255,255,255,0.6);
+  flex-shrink: 0;
+}
+
+.faq-item-open {
+  border-color: rgba(99, 67, 54, 0.2);
+  background: rgba(255, 247, 237, 0.9);
+}
+
+.faq-q {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #2b211d;
+  text-align: left;
+  gap: 8px;
+  line-height: 1.3;
+}
+
+.faq-chevron {
+  font-size: 0.6rem;
+  color: #9a786a;
+  flex-shrink: 0;
+}
+
+.faq-a {
+  margin: 0;
+  padding: 0 14px 14px;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: #573c33;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+@keyframes bubblePop {
+  from { opacity: 0; transform: scale(0.85) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ── Stats collapsible ── */
+.stats-collapsible {
+  margin: 0 0 12px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.55);
+  border: 1.5px solid rgba(43,33,29,0.09);
+}
+
+.stats-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 18px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #49332d;
+  font-family: inherit;
+}
+
+.stats-chevron {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.stats-body {
+  padding: 0 0 8px;
+  animation: bubblePop 0.18s cubic-bezier(.4,1.4,.6,1) both;
+}
+
+/* ── Bubble pop animation ── */
+@keyframes bubblePop {
+  from { opacity: 0; transform: scale(0.85) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
 }

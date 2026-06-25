@@ -25,6 +25,7 @@ type PetState = {
   lastCheckInDay: string;
   checkinStreak: number;
   checkinHistory: string[]; // last 7 day-keys that were checked in
+  totalCheckIns: number; // lifetime check-in count, first 5 are free
 };
 
 type FloatingNumber = {
@@ -199,6 +200,7 @@ const defaultState: PetState = {
   lastCheckInDay: "",
   checkinStreak: 0,
   checkinHistory: [],
+  totalCheckIns: 0,
 };
 
 function clamp(value: number) {
@@ -321,8 +323,54 @@ export default function Home() {
     BOND_TAP_DAILY_CAP - ((state.lastTapDay ?? "") !== todayKey() ? 0 : state.tapsToday),
   );
   const [showFaq, setShowFaq] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
   const lastActionHasBonus = lastAction.includes("bond bonus");
   const checkedInToday = state.lastCheckInDay === todayKey();
+
+  // Action bubble — shows near buttons after each care action, fades after 2.5s
+  const [actionBubble, setActionBubble] = useState<string | null>(null);
+  const actionBubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function showActionBubble(msg: string) {
+    if (actionBubbleTimer.current) clearTimeout(actionBubbleTimer.current);
+    setActionBubble(msg);
+    actionBubbleTimer.current = setTimeout(() => setActionBubble(null), 2500);
+  }
+
+  // ── Check-in payment state ────────────────────────────────────────────────
+  const FREE_CHECKIN_DAYS = 5;
+  const CHECKIN_USD = 0.01; // $0.01 per check-in after the free period
+  const RECIPIENT = "0xCF8A44059652DB5Af8B4CB62938c5DC6916eB082" as const;
+
+  const totalCheckIns = state.totalCheckIns ?? 0;
+  const freeCheckInsLeft = Math.max(0, FREE_CHECKIN_DAYS - totalCheckIns);
+  const isFreeCheckin = freeCheckInsLeft > 0;
+
+  const [checkinPending, setCheckinPending] = useState(false);
+  const [checkinError, setCheckinError] = useState<string | null>(null);
+
+  // Fetch live ETH price in USD, returns null on failure
+  async function fetchEthPriceUsd(): Promise<number | null> {
+    try {
+      const res = await fetch(
+        "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+      );
+      const json = await res.json();
+      return typeof json?.ethereum?.usd === "number" ? json.ethereum.usd : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Converts $0.01 USD → ETH amount string (e.g. "0.000003333"), for sendToken amount in wei string
+  async function centToEthWeiString(): Promise<string> {
+    const ethPrice = await fetchEthPriceUsd();
+    const price = ethPrice && ethPrice > 0 ? ethPrice : 3000; // safe fallback
+    const ethAmount = CHECKIN_USD / price;
+    // sendToken expects amount as wei (integer string) for native ETH: eip155:8453/slip44:60
+    const wei = BigInt(Math.floor(ethAmount * 1e18));
+    return wei.toString();
+  }
 
   // yesterday's date key
   function yesterdayKey() {
@@ -335,7 +383,8 @@ export default function Home() {
   const missedYesterday = !checkedInToday && state.lastCheckInDay !== "" && state.lastCheckInDay !== yesterdayKey() && state.lastCheckInDay !== todayKey();
   const streakRewardEarned = checkinStreak > 0 && checkinStreak % 7 === 0;
 
-  function doCheckIn() {
+  // Applies check-in to state after payment confirmed (or for free days)
+  function applyCheckIn() {
     setState((current) => {
       const isNewDay = current.lastCheckInDay !== todayKey();
       if (!isNewDay) return current;
@@ -345,7 +394,6 @@ export default function Home() {
       const consecutive = current.lastCheckInDay === yKey;
       const newCheckinStreak = consecutive ? (current.checkinStreak ?? 0) + 1 : 1;
       const streakBonus = newCheckinStreak % 7 === 0 ? 5 : 0;
-      // Keep last 7 checked-in day keys
       const history = [...(current.checkinHistory ?? []), todayKey()].slice(-7);
       return {
         ...current,
@@ -354,6 +402,7 @@ export default function Home() {
         checkinStreak: newCheckinStreak,
         xp: current.xp + streakBonus,
         checkinHistory: history,
+        totalCheckIns: (current.totalCheckIns ?? 0) + 1,
         actionsToday: { feed: 0, play: 0, groom: 0, nap: 0 },
       };
     });
@@ -361,6 +410,51 @@ export default function Home() {
     setLastAction(isSeventhDay
       ? "7-day streak! +5 XP bonus dropped. Keep it going!"
       : "Day started! Care for Grub to earn XP and keep your streak.");
+  }
+
+  async function doCheckIn() {
+    if (checkedInToday || checkinPending) return;
+    setCheckinError(null);
+
+    // Free check-in (first 5 days) — no payment needed
+    if (isFreeCheckin) {
+      applyCheckIn();
+      setLastAction(
+        freeCheckInsLeft === 1
+          ? `Day started! Last free check-in used. Tomorrow costs $0.01.`
+          : `Day started! ${freeCheckInsLeft - 1} free check-in${freeCheckInsLeft - 1 === 1 ? "" : "s"} remaining.`,
+      );
+      return;
+    }
+
+    // Paid check-in — send $0.01 in ETH on Base using sdk.actions.sendToken
+    setCheckinPending(true);
+    try {
+      const weiAmount = await centToEthWeiString();
+      // Native ETH on Base: token = eip155:8453/slip44:60
+      const result = await sdk.actions.sendToken({
+        token: "eip155:8453/slip44:60",
+        amount: weiAmount,
+        recipientAddress: RECIPIENT,
+      });
+
+      if (result.success) {
+        applyCheckIn();
+      } else if (result.reason === "rejected_by_user") {
+        setCheckinError("Cancelled. Tap Check In to try again.");
+      } else {
+        setCheckinError("Payment failed. Try again.");
+      }
+    } catch (err: any) {
+      const msg: string = err?.message ?? String(err);
+      if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
+        setCheckinError("No wallet connected. Open in Farcaster to pay.");
+      } else {
+        setCheckinError("Payment failed. Try again.");
+      }
+    } finally {
+      setCheckinPending(false);
+    }
   }
   const line = useMemo(() => {
     const pool = dialogue[mood];
@@ -404,6 +498,30 @@ export default function Home() {
     window.setTimeout(() => setCarePulse(""), 620);
     sdk.haptics.selectionChanged().catch(() => {});
 
+    // Compute labels outside setState to avoid double-fire in React Strict Mode
+    const baseXp = xpPerAction[action];
+    const bonusPct = bondXpBonusPct(state.bond);
+    const xpLabel = `+${baseXp} xp`;
+    const bonusNote = bonusPct > 0 ? ` (+${bonusPct}% bond bonus)` : "";
+
+    if (action === "feed") {
+      setLastAction(`Fed with warm moonmilk. Tiny trust increased.${bonusNote}`);
+      showActionBubble(`🍼 Fed! ${xpLabel}${bonusNote}`);
+      spawnFloat(xpLabel);
+    } else if (action === "play") {
+      setLastAction(`Played softly. The floof remembered joy.${bonusNote}`);
+      showActionBubble(`🎀 Played! ${xpLabel}${bonusNote}`);
+      spawnFloat(xpLabel);
+    } else if (action === "groom") {
+      setLastAction(`Brushed into cloud status. Extremely precious.${bonusNote}`);
+      showActionBubble(`✨ Groomed! ${xpLabel}${bonusNote}`);
+      spawnFloat(xpLabel);
+    } else if (action === "nap") {
+      setLastAction(`Nap complete. Purr engine recalibrated.${bonusNote}`);
+      showActionBubble(`💤 Napped! ${xpLabel}${bonusNote}`);
+      spawnFloat(xpLabel);
+    }
+
     setState((current) => {
       const isNewCareDay = current.lastCareDay !== todayKey();
       const next: PetState = {
@@ -417,16 +535,7 @@ export default function Home() {
         },
       };
 
-      // Bond gives a small, never-punishing XP bonus - bond 0 means no change from before.
-      // The exact (fractional) amount is what actually gets stored, so the bonus is real,
-      // not just a rounding-erased preview. The floating text always shows a clean whole
-      // number; the bonus itself is called out in the persistent speech-panel message below,
-      // since the floating text fades too fast to actually read.
-      const baseXp = xpPerAction[action];
-      const bonusPct = bondXpBonusPct(current.bond);
-      const exactXp = baseXp * bondXpMultiplier(current.bond);
-      const xpLabel = `+${baseXp} xp`;
-      const bonusNote = bonusPct > 0 ? ` (+${bonusPct}% bond bonus)` : "";
+      const exactXp = xpPerAction[action] * bondXpMultiplier(current.bond);
 
       if (action === "feed") {
         next.hunger = clamp(current.hunger + 28);
@@ -435,36 +544,22 @@ export default function Home() {
         next.care = clamp(current.care + 12);
         next.xp = current.xp + exactXp;
         next.glimmer = Math.max(0, current.glimmer - FEED_GLIMMER_COST);
-        setLastAction(`Fed with warm moonmilk. Tiny trust increased.${bonusNote}`);
-        spawnFloat(xpLabel);
-      }
-
-      if (action === "play") {
+      } else if (action === "play") {
         next.happiness = clamp(current.happiness + 24);
         next.energy = clamp(current.energy - 12);
         next.hunger = clamp(current.hunger - 8);
         next.care = clamp(current.care + 7);
         next.xp = current.xp + exactXp;
-        setLastAction(`Played softly. The floof remembered joy.${bonusNote}`);
-        spawnFloat(xpLabel);
-      }
-
-      if (action === "groom") {
+      } else if (action === "groom") {
         next.care = clamp(current.care + 26);
         next.happiness = clamp(current.happiness + 12);
         next.energy = clamp(current.energy + 2);
         next.xp = current.xp + exactXp;
-        setLastAction(`Brushed into cloud status. Extremely precious.${bonusNote}`);
-        spawnFloat(xpLabel);
-      }
-
-      if (action === "nap") {
+      } else if (action === "nap") {
         next.energy = clamp(current.energy + 34);
         next.hunger = clamp(current.hunger - 5);
         next.happiness = clamp(current.happiness + 4);
         next.xp = current.xp + exactXp;
-        setLastAction(`Nap complete. Purr engine recalibrated.${bonusNote}`);
-        spawnFloat(xpLabel);
       }
 
       return next;
@@ -539,11 +634,14 @@ export default function Home() {
           </button>
         </header>
 
+        {/* ── CAT SECTION ── */}
         <section className="hero">
           <div className="stage-copy">
-            <span>{stage.title}</span>
-            <h2>{stage.name}</h2>
-            <p>{stage.note}</p>
+            <div className="stage-oneline">
+              <span className="stage-title-pill">{stage.title}</span>
+              <span className="stage-name-inline">{stage.name}</span>
+            </div>
+            <p className="stage-note-text">{stage.note}</p>
           </div>
 
           <div className="kitty-stage-wrap" ref={kittyRef}>
@@ -556,18 +654,10 @@ export default function Home() {
               onPoke={pokeKitty}
             />
             {ripples.map((r) => (
-              <span
-                key={r.id}
-                className="tap-ripple"
-                style={{ left: r.x, top: r.y }}
-              />
+              <span key={r.id} className="tap-ripple" style={{ left: r.x, top: r.y }} />
             ))}
             {floats.map((f) => (
-              <span
-                key={f.id}
-                className="floating-number"
-                style={{ left: f.x, top: f.y }}
-              >
+              <span key={f.id} className="floating-number" style={{ left: f.x, top: f.y }}>
                 {f.text}
               </span>
             ))}
@@ -579,126 +669,35 @@ export default function Home() {
           </div>
         </section>
 
+        {/* ── SPEECH ── */}
         <section className="speech">
           <p>{line}</p>
           <span className={lastActionHasBonus ? "has-bonus" : ""}>{lastAction}</span>
         </section>
 
-        <section className="resource-row" aria-label="Kitty progress">
-          <div>
-            <span>Glimmer</span>
-            <strong>{state.glimmer}</strong>
-          </div>
-          <div>
-            <span>Streak</span>
-            <strong>{state.streak}d</strong>
-          </div>
-          <div>
-            <span>Bond</span>
-            <strong>{bondDisplay}%</strong>
-            <small className={`resource-subtext ${bondIsDecaying ? "is-warning" : ""}`}>
-              {bondIsDecaying
-                ? "fading - pat Grub soon"
-                : `+${bondBonusPct}% xp · ${tapsLeftToday} pats left`}
-            </small>
-          </div>
-        </section>
-
-        <section className="stats-grid">
-          <Stat label="Hunger" value={state.hunger} />
-          <Stat label="Joy" value={state.happiness} />
-          <Stat label="Energy" value={state.energy} />
-          <Stat label="Care" value={state.care} />
-        </section>
-
-        <section className="evolution">
-          <div>
-            <span>Evolution</span>
-            <strong>
-              {nextStage
-                ? `${Math.floor(state.xp)}/${nextStage.minXp} XP`
-                : `${Math.floor(state.xp)} XP`}
-            </strong>
-          </div>
-          <div className="progress-track">
-            <span style={{ width: `${progress}%` }} />
-          </div>
-          <div className="life-track" aria-label="Life stages">
-            {stages.map((item, index) => (
-              <span key={item.name} className={index + 1 <= stageIndex ? "is-unlocked" : ""}>
-                {item.title}
-              </span>
-            ))}
-          </div>
-        </section>
-
+        {/* ── CARE BUTTONS — right under cat ── */}
         <section className="actions-wrap" aria-label="Care actions">
-          {!checkedInToday && (
-            <div className="checkin-gate">
-              {missedYesterday && (
-                <p style={{ color: "#b5544f", fontSize: "0.78rem" }}>⚠️ You missed yesterday — streak reset</p>
-              )}
-              <p>Check in to unlock today's care actions</p>
-              {/* Streak dots — today leftmost, 6 days back to right. green=hit, red=missed, grey=future/before start */}
-              <div style={{ display: "flex", gap: 7, justifyContent: "center", alignItems: "center" }}>
-                {Array.from({ length: 7 }).map((_, i) => {
-                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); })();
-                  const history = state.checkinHistory ?? [];
-                  const firstDay = history[0] ?? todayKey();
-                  const hit = history.includes(dayKey);
-                  const isPast = dayKey < todayKey() && dayKey >= firstDay;
-                  const missed = isPast && !hit;
-                  return (
-                    <span key={i} title={dayKey} style={{
-                      width: 13, height: 13, borderRadius: "50%",
-                      background: hit ? "#4caf7d" : missed ? "#c0392b" : "rgba(43,33,29,0.22)",
-                      display: "inline-block",
-                      boxShadow: hit ? "0 2px 6px rgba(76,175,125,0.45)" : missed ? "0 2px 6px rgba(192,57,43,0.35)" : "none",
-                    }} />
-                  );
-                })}
-              </div>
-              <small>{checkinStreak % 7 === 0 && checkinStreak > 0
-                ? "🎉 7-day streak — +5 XP bonus on check-in!"
-                : checkinStreak === 0
-                ? "Start your streak → +5 XP bonus on day 7"
-                : `${checkinStreak % 7}/7 days — keep going for +5 XP bonus`}
-              </small>
-              <button type="button" className="checkin-btn" onClick={doCheckIn}>
-                {streakRewardEarned ? "✦ Check In · +5 XP bonus!" : "✦ Check In · $0.01"}
-              </button>
-              <small>Wallet payment coming soon — free for now</small>
+
+          {/* Action bubble result */}
+          {actionBubble && (
+            <div style={{
+              background: "rgba(255,255,255,0.96)",
+              border: "1.5px solid rgba(43,33,29,0.13)",
+              borderRadius: 16,
+              padding: "8px 18px",
+              marginBottom: 8,
+              textAlign: "center",
+              fontSize: "0.88rem",
+              fontWeight: 700,
+              color: "#49332d",
+              boxShadow: "0 4px 18px rgba(43,33,29,0.10)",
+              animation: "bubblePop 0.22s cubic-bezier(.4,1.6,.6,1) both",
+            }}>
+              {actionBubble}
             </div>
           )}
-          {checkedInToday && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, marginBottom: 8 }}>
-              <small style={{ color: "#49332d", fontSize: "0.75rem", fontWeight: 800 }}>
-                {checkinStreak === 0
-                  ? "Start your streak → +5 XP bonus on day 7"
-                  : checkinStreak % 7 === 0
-                  ? "🎉 7-day streak — +5 XP bonus earned!"
-                  : `${checkinStreak % 7}/7 days — keep going for +5 XP bonus`}
-              </small>
-              <div style={{ display: "flex", gap: 7 }}>
-                {Array.from({ length: 7 }).map((_, i) => {
-                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); })();
-                  const history = state.checkinHistory ?? [];
-                  const firstDay = history[0] ?? todayKey();
-                  const hit = history.includes(dayKey);
-                  const isPast = dayKey < todayKey() && dayKey >= firstDay;
-                  const missed = isPast && !hit;
-                  return (
-                    <span key={i} title={dayKey} style={{
-                      width: 14, height: 14, borderRadius: "50%",
-                      background: hit ? "#4caf7d" : missed ? "#c0392b" : "rgba(43,33,29,0.22)",
-                      display: "inline-block",
-                      boxShadow: hit ? "0 2px 6px rgba(76,175,125,0.45)" : missed ? "0 2px 6px rgba(192,57,43,0.35)" : "none",
-                    }} />
-                  );
-                })}
-              </div>
-            </div>
-          )}
+
+          {/* 4 care buttons — always visible, locked if not checked in */}
           <div className={`actions${!checkedInToday ? " actions-locked" : ""}`}>
             <button
               type="button"
@@ -741,8 +740,160 @@ export default function Home() {
               <small>{!checkedInToday ? "check in first" : `${Math.max(0, dailyLimits.nap - state.actionsToday.nap)} left today`}</small>
             </button>
           </div>
+
+          <p className="actions-hint" style={{ color: "#49332d", fontWeight: 700, marginTop: 6 }}>
+            Tap Grub anytime to build Bond.
+          </p>
+
+          {/* ── CHECK IN — below buttons ── */}
+          {!checkedInToday && (
+            <div className="checkin-gate">
+              {missedYesterday && (
+                <p style={{ color: "#b5544f", fontSize: "0.78rem" }}>⚠️ You missed yesterday — streak reset</p>
+              )}
+              <p>Check in to unlock today's care actions</p>
+              <div style={{ display: "flex", gap: 7, justifyContent: "center", alignItems: "center" }}>
+                {Array.from({ length: 7 }).map((_, i) => {
+                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); })();
+                  const history = state.checkinHistory ?? [];
+                  const firstDay = history[0] ?? todayKey();
+                  const hit = history.includes(dayKey);
+                  const isPast = dayKey < todayKey() && dayKey >= firstDay;
+                  const missed = isPast && !hit;
+                  return (
+                    <span key={i} title={dayKey} style={{
+                      width: 13, height: 13, borderRadius: "50%",
+                      background: hit ? "#4caf7d" : missed ? "#c0392b" : "rgba(43,33,29,0.22)",
+                      display: "inline-block",
+                      boxShadow: hit ? "0 2px 6px rgba(76,175,125,0.45)" : missed ? "0 2px 6px rgba(192,57,43,0.35)" : "none",
+                    }} />
+                  );
+                })}
+              </div>
+              <small>{checkinStreak % 7 === 0 && checkinStreak > 0
+                ? "🎉 7-day streak — +5 XP bonus on check-in!"
+                : checkinStreak === 0
+                ? "Start your streak → +5 XP bonus on day 7"
+                : `${checkinStreak % 7}/7 days — keep going for +5 XP bonus`}
+              </small>
+              <button type="button" className="checkin-btn" onClick={doCheckIn} disabled={checkinPending}>
+                {checkinPending
+                  ? "⏳ Confirming..."
+                  : streakRewardEarned
+                  ? "✦ Check In · +5 XP bonus!"
+                  : isFreeCheckin
+                  ? `✦ Check In · Free (${freeCheckInsLeft} left)`
+                  : "✦ Check In · $0.01"}
+              </button>
+              {checkinError && (
+                <small style={{ color: "#b5544f", fontSize: "0.78rem", marginTop: 2 }}>
+                  {checkinError}
+                </small>
+              )}
+              <small>
+                {isFreeCheckin
+                  ? `First 5 days free · then $0.01/day on Base`
+                  : "Wallet payment on Base"}
+              </small>
+            </div>
+          )}
+
+          {/* Streak dots when checked in */}
+          {checkedInToday && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, marginTop: 8, marginBottom: 16 }}>
+              <small style={{ color: "#49332d", fontSize: "0.75rem", fontWeight: 800 }}>
+                {checkinStreak === 0
+                  ? "Start your streak → +5 XP bonus on day 7"
+                  : checkinStreak % 7 === 0
+                  ? "🎉 7-day streak — +5 XP bonus earned!"
+                  : `${checkinStreak % 7}/7 days — keep going for +5 XP bonus`}
+              </small>
+              <div style={{ display: "flex", gap: 7 }}>
+                {Array.from({ length: 7 }).map((_, i) => {
+                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); })();
+                  const history = state.checkinHistory ?? [];
+                  const firstDay = history[0] ?? todayKey();
+                  const hit = history.includes(dayKey);
+                  const isPast = dayKey < todayKey() && dayKey >= firstDay;
+                  const missed = isPast && !hit;
+                  return (
+                    <span key={i} title={dayKey} style={{
+                      width: 14, height: 14, borderRadius: "50%",
+                      background: hit ? "#4caf7d" : missed ? "#c0392b" : "rgba(43,33,29,0.22)",
+                      display: "inline-block",
+                      boxShadow: hit ? "0 2px 6px rgba(76,175,125,0.45)" : missed ? "0 2px 6px rgba(192,57,43,0.35)" : "none",
+                    }} />
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </section>
-        <p className="actions-hint" style={{ color: "#49332d", fontWeight: 700 }}>Care actions refresh tomorrow · Tap Grub anytime to build Bond.</p>
+
+        {/* ── STATS COLLAPSIBLE ── */}
+        <section className="stats-collapsible" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="stats-toggle"
+            onClick={() => setStatsOpen((o) => !o)}
+          >
+            <span>📊 Stats</span>
+            <span className="stats-chevron">{statsOpen ? "▲" : "▼"}</span>
+          </button>
+
+          {statsOpen && (
+            <div className="stats-body">
+              <section className="resource-row" aria-label="Kitty progress">
+                <div>
+                  <span>Glimmer</span>
+                  <strong>{state.glimmer}</strong>
+                </div>
+                <div>
+                  <span>Streak</span>
+                  <strong>{state.streak}d</strong>
+                </div>
+                <div>
+                  <span>Bond</span>
+                  <strong>{bondDisplay}%</strong>
+                  <small className={`resource-subtext ${bondIsDecaying ? "is-warning" : ""}`}>
+                    {bondIsDecaying
+                      ? "fading - pat Grub soon"
+                      : `+${bondBonusPct}% xp · ${tapsLeftToday} pats left`}
+                  </small>
+                </div>
+              </section>
+
+              <section className="stats-grid">
+                <Stat label="Hunger" value={state.hunger} />
+                <Stat label="Joy" value={state.happiness} />
+                <Stat label="Energy" value={state.energy} />
+                <Stat label="Care" value={state.care} />
+              </section>
+
+              <section className="evolution">
+                <div>
+                  <span>Evolution</span>
+                  <strong>
+                    {nextStage
+                      ? `${Math.floor(state.xp)}/${nextStage.minXp} XP`
+                      : `${Math.floor(state.xp)} XP`}
+                  </strong>
+                </div>
+                <div className="progress-track">
+                  <span style={{ width: `${progress}%` }} />
+                </div>
+                <div className="life-track" aria-label="Life stages">
+                  {stages.map((item, index) => (
+                    <span key={item.name} className={index + 1 <= stageIndex ? "is-unlocked" : ""}>
+                      {item.title}
+                    </span>
+                  ))}
+                </div>
+              </section>
+            </div>
+          )}
+        </section>
+
       </section>
       {showFaq && <FaqModal onClose={() => setShowFaq(false)} />}
     </main>

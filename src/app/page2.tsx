@@ -22,6 +22,10 @@ type PetState = {
   lastTapAt: number;
   actionsToday: Record<ActionType, number>;
   tapsToday: number;
+  lastCheckInDay: string;
+  checkinStreak: number;
+  checkinHistory: string[]; // last 7 day-keys that were checked in
+  totalCheckIns: number; // lifetime check-in count, first 5 are free
 };
 
 type FloatingNumber = {
@@ -50,21 +54,21 @@ const stages = [
   {
     name: "Pocket Purr",
     title: "Kitten",
-    minXp: 234,
+    minXp: 480,
     note: "Curious, playful, and starting to recognize your care.",
     world: "Soft playroom",
   },
   {
     name: "Pearl Floof",
     title: "Young Cat",
-    minXp: 676,
+    minXp: 960,
     note: "Graceful now, but still melts when you groom her.",
     world: "Pearl window",
   },
   {
     name: "Moonmilk Mythic",
     title: "Adult Mythic",
-    minXp: 1456,
+    minXp: 1440,
     note: "Fully bonded. This is the future NFT form, alive with traits.",
     world: "Moon garden",
   },
@@ -138,9 +142,9 @@ function unlockedMilestoneLines(bond: number): string[] {
   return bondTiers.filter((tier) => bond >= tier.threshold).flatMap((tier) => tier.lines);
 }
 
-// How many times each care action can be used per day - this is what makes
-// progress take roughly a month instead of one sitting. XP values are tuned
-// against these caps (see design notes: ~52 max xp/day -> ~28 days to Mythic).
+// How many times each care action can be used per day.
+// XP tuned for ~16 max XP/day → ~90 days to Mythic (3 months).
+// With max bond bonus (+20%): ~19/day. 7-day streak adds +5 XP bonus drop.
 const dailyLimits: Record<ActionType, number> = {
   feed: 3,
   play: 2,
@@ -149,10 +153,10 @@ const dailyLimits: Record<ActionType, number> = {
 };
 
 const xpPerAction: Record<ActionType, number> = {
-  feed: 8,
-  play: 6,
-  groom: 6,
-  nap: 4,
+  feed: 3,
+  play: 2,
+  groom: 2,
+  nap: 1,
 };
 
 // Stepped bond bonus - looks up the highest tier reached, rather than scaling
@@ -193,6 +197,10 @@ const defaultState: PetState = {
   lastTapAt: Date.now(),
   actionsToday: { feed: 0, play: 0, groom: 0, nap: 0 },
   tapsToday: 0,
+  lastCheckInDay: "",
+  checkinStreak: 0,
+  checkinHistory: [],
+  totalCheckIns: 0,
 };
 
 function clamp(value: number) {
@@ -314,7 +322,140 @@ export default function Home() {
     0,
     BOND_TAP_DAILY_CAP - ((state.lastTapDay ?? "") !== todayKey() ? 0 : state.tapsToday),
   );
+  const [showFaq, setShowFaq] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
   const lastActionHasBonus = lastAction.includes("bond bonus");
+  const checkedInToday = state.lastCheckInDay === todayKey();
+
+  // Action bubble — shows near buttons after each care action, fades after 2.5s
+  const [actionBubble, setActionBubble] = useState<string | null>(null);
+  const actionBubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function showActionBubble(msg: string) {
+    if (actionBubbleTimer.current) clearTimeout(actionBubbleTimer.current);
+    setActionBubble(msg);
+    actionBubbleTimer.current = setTimeout(() => setActionBubble(null), 2500);
+  }
+
+  // ── Check-in payment state ────────────────────────────────────────────────
+  const FREE_CHECKIN_DAYS = 5;
+  const CHECKIN_USD = 0.01; // $0.01 per check-in after the free period
+  const RECIPIENT = "0xCF8A44059652DB5Af8B4CB62938c5DC6916eB082" as const;
+
+  const totalCheckIns = state.totalCheckIns ?? 0;
+  const freeCheckInsLeft = Math.max(0, FREE_CHECKIN_DAYS - totalCheckIns);
+  const isFreeCheckin = freeCheckInsLeft > 0;
+
+  const [checkinPending, setCheckinPending] = useState(false);
+  const [checkinError, setCheckinError] = useState<string | null>(null);
+
+  // Fetch live ETH price in USD, returns null on failure
+  async function fetchEthPriceUsd(): Promise<number | null> {
+    try {
+      const res = await fetch(
+        "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+      );
+      const json = await res.json();
+      return typeof json?.ethereum?.usd === "number" ? json.ethereum.usd : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Converts $0.01 USD → ETH amount string (e.g. "0.000003333"), for sendToken amount in wei string
+  async function centToEthWeiString(): Promise<string> {
+    const ethPrice = await fetchEthPriceUsd();
+    const price = ethPrice && ethPrice > 0 ? ethPrice : 3000; // safe fallback
+    const ethAmount = CHECKIN_USD / price;
+    // sendToken expects amount as wei (integer string) for native ETH: eip155:8453/slip44:60
+    const wei = BigInt(Math.floor(ethAmount * 1e18));
+    return wei.toString();
+  }
+
+  // yesterday's date key
+  function yesterdayKey() {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  const checkinStreak = state.checkinStreak ?? 0;
+  const missedYesterday = !checkedInToday && state.lastCheckInDay !== "" && state.lastCheckInDay !== yesterdayKey() && state.lastCheckInDay !== todayKey();
+  const streakRewardEarned = checkinStreak > 0 && checkinStreak % 7 === 0;
+
+  // Applies check-in to state after payment confirmed (or for free days)
+  function applyCheckIn() {
+    setState((current) => {
+      const isNewDay = current.lastCheckInDay !== todayKey();
+      if (!isNewDay) return current;
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yKey = yesterday.toISOString().slice(0, 10);
+      const consecutive = current.lastCheckInDay === yKey;
+      const newCheckinStreak = consecutive ? (current.checkinStreak ?? 0) + 1 : 1;
+      const streakBonus = newCheckinStreak % 7 === 0 ? 5 : 0;
+      const history = [...(current.checkinHistory ?? []), todayKey()].slice(-7);
+      return {
+        ...current,
+        lastCheckInDay: todayKey(),
+        streak: current.streak + 1,
+        checkinStreak: newCheckinStreak,
+        xp: current.xp + streakBonus,
+        checkinHistory: history,
+        totalCheckIns: (current.totalCheckIns ?? 0) + 1,
+        actionsToday: { feed: 0, play: 0, groom: 0, nap: 0 },
+      };
+    });
+    const isSeventhDay = (state.checkinStreak + 1) % 7 === 0;
+    setLastAction(isSeventhDay
+      ? "7-day streak! +5 XP bonus dropped. Keep it going!"
+      : "Day started! Care for Grub to earn XP and keep your streak.");
+  }
+
+  async function doCheckIn() {
+    if (checkedInToday || checkinPending) return;
+    setCheckinError(null);
+
+    // Free check-in (first 5 days) — no payment needed
+    if (isFreeCheckin) {
+      applyCheckIn();
+      setLastAction(
+        freeCheckInsLeft === 1
+          ? `Day started! Last free check-in used. Tomorrow costs $0.01.`
+          : `Day started! ${freeCheckInsLeft - 1} free check-in${freeCheckInsLeft - 1 === 1 ? "" : "s"} remaining.`,
+      );
+      return;
+    }
+
+    // Paid check-in — send $0.01 in ETH on Base using sdk.actions.sendToken
+    setCheckinPending(true);
+    try {
+      const weiAmount = await centToEthWeiString();
+      // Native ETH on Base: token = eip155:8453/slip44:60
+      const result = await sdk.actions.sendToken({
+        token: "eip155:8453/slip44:60",
+        amount: weiAmount,
+        recipientAddress: RECIPIENT,
+      });
+
+      if (result.success) {
+        applyCheckIn();
+      } else if (result.reason === "rejected_by_user") {
+        setCheckinError("Cancelled. Tap Check In to try again.");
+      } else {
+        setCheckinError("Payment failed. Try again.");
+      }
+    } catch (err: any) {
+      const msg: string = err?.message ?? String(err);
+      if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
+        setCheckinError("No wallet connected. Open in Farcaster to pay.");
+      } else {
+        setCheckinError("Payment failed. Try again.");
+      }
+    } finally {
+      setCheckinPending(false);
+    }
+  }
   const line = useMemo(() => {
     const pool = dialogue[mood];
     return pool[Math.floor((state.xp + state.glimmer + state.hunger) % pool.length)];
@@ -389,6 +530,7 @@ export default function Home() {
         next.xp = current.xp + exactXp;
         next.glimmer = Math.max(0, current.glimmer - FEED_GLIMMER_COST);
         setLastAction(`Fed with warm moonmilk. Tiny trust increased.${bonusNote}`);
+        showActionBubble(`🍼 Fed! ${xpLabel}${bonusNote}`);
         spawnFloat(xpLabel);
       }
 
@@ -399,6 +541,7 @@ export default function Home() {
         next.care = clamp(current.care + 7);
         next.xp = current.xp + exactXp;
         setLastAction(`Played softly. The floof remembered joy.${bonusNote}`);
+        showActionBubble(`🎀 Played! ${xpLabel}${bonusNote}`);
         spawnFloat(xpLabel);
       }
 
@@ -408,6 +551,7 @@ export default function Home() {
         next.energy = clamp(current.energy + 2);
         next.xp = current.xp + exactXp;
         setLastAction(`Brushed into cloud status. Extremely precious.${bonusNote}`);
+        showActionBubble(`✨ Groomed! ${xpLabel}${bonusNote}`);
         spawnFloat(xpLabel);
       }
 
@@ -417,6 +561,7 @@ export default function Home() {
         next.happiness = clamp(current.happiness + 4);
         next.xp = current.xp + exactXp;
         setLastAction(`Nap complete. Purr engine recalibrated.${bonusNote}`);
+        showActionBubble(`💤 Napped! ${xpLabel}${bonusNote}`);
         spawnFloat(xpLabel);
       }
 
@@ -485,19 +630,21 @@ export default function Home() {
       <section className="phone-frame">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Farcaster Mini App</p>
             <h1>Grub</h1>
           </div>
-          <button className="ghost-button" type="button" onClick={shareKitty}>
-            Cast
+          <button className="ghost-button" type="button" onClick={() => setShowFaq(true)}>
+            ?
           </button>
         </header>
 
+        {/* ── CAT SECTION ── */}
         <section className="hero">
           <div className="stage-copy">
-            <span>{stage.title}</span>
-            <h2>{stage.name}</h2>
-            <p>{stage.note}</p>
+            <div className="stage-oneline">
+              <span className="stage-title-pill">{stage.title}</span>
+              <span className="stage-name-inline">{stage.name}</span>
+            </div>
+            <p className="stage-note-text">{stage.note}</p>
           </div>
 
           <div className="kitty-stage-wrap" ref={kittyRef}>
@@ -510,18 +657,10 @@ export default function Home() {
               onPoke={pokeKitty}
             />
             {ripples.map((r) => (
-              <span
-                key={r.id}
-                className="tap-ripple"
-                style={{ left: r.x, top: r.y }}
-              />
+              <span key={r.id} className="tap-ripple" style={{ left: r.x, top: r.y }} />
             ))}
             {floats.map((f) => (
-              <span
-                key={f.id}
-                className="floating-number"
-                style={{ left: f.x, top: f.y }}
-              >
+              <span key={f.id} className="floating-number" style={{ left: f.x, top: f.y }}>
                 {f.text}
               </span>
             ))}
@@ -533,101 +672,233 @@ export default function Home() {
           </div>
         </section>
 
+        {/* ── SPEECH ── */}
         <section className="speech">
           <p>{line}</p>
           <span className={lastActionHasBonus ? "has-bonus" : ""}>{lastAction}</span>
         </section>
 
-        <section className="resource-row" aria-label="Kitty progress">
-          <div>
-            <span>Glimmer</span>
-            <strong>{state.glimmer}</strong>
+        {/* ── CARE BUTTONS — right under cat ── */}
+        <section className="actions-wrap" aria-label="Care actions">
+
+          {/* Action bubble result */}
+          {actionBubble && (
+            <div style={{
+              background: "rgba(255,255,255,0.96)",
+              border: "1.5px solid rgba(43,33,29,0.13)",
+              borderRadius: 16,
+              padding: "8px 18px",
+              marginBottom: 8,
+              textAlign: "center",
+              fontSize: "0.88rem",
+              fontWeight: 700,
+              color: "#49332d",
+              boxShadow: "0 4px 18px rgba(43,33,29,0.10)",
+              animation: "bubblePop 0.22s cubic-bezier(.4,1.6,.6,1) both",
+            }}>
+              {actionBubble}
+            </div>
+          )}
+
+          {/* 4 care buttons — always visible, locked if not checked in */}
+          <div className={`actions${!checkedInToday ? " actions-locked" : ""}`}>
+            <button
+              type="button"
+              onClick={() => doCare("feed")}
+              disabled={!checkedInToday || state.actionsToday.feed >= dailyLimits.feed || state.glimmer < FEED_GLIMMER_COST}
+            >
+              <span>Feed</span>
+              <small>
+                {!checkedInToday
+                  ? "check in first"
+                  : state.actionsToday.feed >= dailyLimits.feed
+                    ? "0 left today"
+                    : state.glimmer < FEED_GLIMMER_COST
+                      ? "need glimmer"
+                      : `${dailyLimits.feed - state.actionsToday.feed} left today`}
+              </small>
+            </button>
+            <button
+              type="button"
+              onClick={() => doCare("play")}
+              disabled={!checkedInToday || state.actionsToday.play >= dailyLimits.play}
+            >
+              <span>Play</span>
+              <small>{!checkedInToday ? "check in first" : `${Math.max(0, dailyLimits.play - state.actionsToday.play)} left today`}</small>
+            </button>
+            <button
+              type="button"
+              onClick={() => doCare("groom")}
+              disabled={!checkedInToday || state.actionsToday.groom >= dailyLimits.groom}
+            >
+              <span>Groom</span>
+              <small>{!checkedInToday ? "check in first" : `${Math.max(0, dailyLimits.groom - state.actionsToday.groom)} left today`}</small>
+            </button>
+            <button
+              type="button"
+              onClick={() => doCare("nap")}
+              disabled={!checkedInToday || state.actionsToday.nap >= dailyLimits.nap}
+            >
+              <span>Nap</span>
+              <small>{!checkedInToday ? "check in first" : `${Math.max(0, dailyLimits.nap - state.actionsToday.nap)} left today`}</small>
+            </button>
           </div>
-          <div>
-            <span>Streak</span>
-            <strong>{state.streak}d</strong>
-          </div>
-          <div>
-            <span>Bond</span>
-            <strong>{bondDisplay}%</strong>
-            <small className={`resource-subtext ${bondIsDecaying ? "is-warning" : ""}`}>
-              {bondIsDecaying
-                ? "fading - pat Grub soon"
-                : `+${bondBonusPct}% xp · ${tapsLeftToday} pats left`}
-            </small>
-          </div>
+
+          <p className="actions-hint" style={{ color: "#49332d", fontWeight: 700, marginTop: 6 }}>
+            Tap Grub anytime to build Bond.
+          </p>
+
+          {/* ── CHECK IN — below buttons ── */}
+          {!checkedInToday && (
+            <div className="checkin-gate">
+              {missedYesterday && (
+                <p style={{ color: "#b5544f", fontSize: "0.78rem" }}>⚠️ You missed yesterday — streak reset</p>
+              )}
+              <p>Check in to unlock today's care actions</p>
+              <div style={{ display: "flex", gap: 7, justifyContent: "center", alignItems: "center" }}>
+                {Array.from({ length: 7 }).map((_, i) => {
+                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); })();
+                  const history = state.checkinHistory ?? [];
+                  const firstDay = history[0] ?? todayKey();
+                  const hit = history.includes(dayKey);
+                  const isPast = dayKey < todayKey() && dayKey >= firstDay;
+                  const missed = isPast && !hit;
+                  return (
+                    <span key={i} title={dayKey} style={{
+                      width: 13, height: 13, borderRadius: "50%",
+                      background: hit ? "#4caf7d" : missed ? "#c0392b" : "rgba(43,33,29,0.22)",
+                      display: "inline-block",
+                      boxShadow: hit ? "0 2px 6px rgba(76,175,125,0.45)" : missed ? "0 2px 6px rgba(192,57,43,0.35)" : "none",
+                    }} />
+                  );
+                })}
+              </div>
+              <small>{checkinStreak % 7 === 0 && checkinStreak > 0
+                ? "🎉 7-day streak — +5 XP bonus on check-in!"
+                : checkinStreak === 0
+                ? "Start your streak → +5 XP bonus on day 7"
+                : `${checkinStreak % 7}/7 days — keep going for +5 XP bonus`}
+              </small>
+              <button type="button" className="checkin-btn" onClick={doCheckIn} disabled={checkinPending}>
+                {checkinPending
+                  ? "⏳ Confirming..."
+                  : streakRewardEarned
+                  ? "✦ Check In · +5 XP bonus!"
+                  : isFreeCheckin
+                  ? `✦ Check In · Free (${freeCheckInsLeft} left)`
+                  : "✦ Check In · $0.01"}
+              </button>
+              {checkinError && (
+                <small style={{ color: "#b5544f", fontSize: "0.78rem", marginTop: 2 }}>
+                  {checkinError}
+                </small>
+              )}
+              <small>
+                {isFreeCheckin
+                  ? `First 5 days free · then $0.01/day on Base`
+                  : "Wallet payment on Base"}
+              </small>
+            </div>
+          )}
+
+          {/* Streak dots when checked in */}
+          {checkedInToday && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, marginTop: 8, marginBottom: 16 }}>
+              <small style={{ color: "#49332d", fontSize: "0.75rem", fontWeight: 800 }}>
+                {checkinStreak === 0
+                  ? "Start your streak → +5 XP bonus on day 7"
+                  : checkinStreak % 7 === 0
+                  ? "🎉 7-day streak — +5 XP bonus earned!"
+                  : `${checkinStreak % 7}/7 days — keep going for +5 XP bonus`}
+              </small>
+              <div style={{ display: "flex", gap: 7 }}>
+                {Array.from({ length: 7 }).map((_, i) => {
+                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); })();
+                  const history = state.checkinHistory ?? [];
+                  const firstDay = history[0] ?? todayKey();
+                  const hit = history.includes(dayKey);
+                  const isPast = dayKey < todayKey() && dayKey >= firstDay;
+                  const missed = isPast && !hit;
+                  return (
+                    <span key={i} title={dayKey} style={{
+                      width: 14, height: 14, borderRadius: "50%",
+                      background: hit ? "#4caf7d" : missed ? "#c0392b" : "rgba(43,33,29,0.22)",
+                      display: "inline-block",
+                      boxShadow: hit ? "0 2px 6px rgba(76,175,125,0.45)" : missed ? "0 2px 6px rgba(192,57,43,0.35)" : "none",
+                    }} />
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </section>
 
-        <section className="stats-grid">
-          <Stat label="Hunger" value={state.hunger} />
-          <Stat label="Joy" value={state.happiness} />
-          <Stat label="Energy" value={state.energy} />
-          <Stat label="Care" value={state.care} />
+        {/* ── STATS COLLAPSIBLE ── */}
+        <section className="stats-collapsible" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="stats-toggle"
+            onClick={() => setStatsOpen((o) => !o)}
+          >
+            <span>📊 Stats</span>
+            <span className="stats-chevron">{statsOpen ? "▲" : "▼"}</span>
+          </button>
+
+          {statsOpen && (
+            <div className="stats-body">
+              <section className="resource-row" aria-label="Kitty progress">
+                <div>
+                  <span>Glimmer</span>
+                  <strong>{state.glimmer}</strong>
+                </div>
+                <div>
+                  <span>Streak</span>
+                  <strong>{state.streak}d</strong>
+                </div>
+                <div>
+                  <span>Bond</span>
+                  <strong>{bondDisplay}%</strong>
+                  <small className={`resource-subtext ${bondIsDecaying ? "is-warning" : ""}`}>
+                    {bondIsDecaying
+                      ? "fading - pat Grub soon"
+                      : `+${bondBonusPct}% xp · ${tapsLeftToday} pats left`}
+                  </small>
+                </div>
+              </section>
+
+              <section className="stats-grid">
+                <Stat label="Hunger" value={state.hunger} />
+                <Stat label="Joy" value={state.happiness} />
+                <Stat label="Energy" value={state.energy} />
+                <Stat label="Care" value={state.care} />
+              </section>
+
+              <section className="evolution">
+                <div>
+                  <span>Evolution</span>
+                  <strong>
+                    {nextStage
+                      ? `${Math.floor(state.xp)}/${nextStage.minXp} XP`
+                      : `${Math.floor(state.xp)} XP`}
+                  </strong>
+                </div>
+                <div className="progress-track">
+                  <span style={{ width: `${progress}%` }} />
+                </div>
+                <div className="life-track" aria-label="Life stages">
+                  {stages.map((item, index) => (
+                    <span key={item.name} className={index + 1 <= stageIndex ? "is-unlocked" : ""}>
+                      {item.title}
+                    </span>
+                  ))}
+                </div>
+              </section>
+            </div>
+          )}
         </section>
 
-        <section className="evolution">
-          <div>
-            <span>Evolution</span>
-            <strong>
-              {nextStage
-                ? `${Math.floor(state.xp)}/${nextStage.minXp} XP`
-                : `${Math.floor(state.xp)} XP`}
-            </strong>
-          </div>
-          <div className="progress-track">
-            <span style={{ width: `${progress}%` }} />
-          </div>
-          <div className="life-track" aria-label="Life stages">
-            {stages.map((item, index) => (
-              <span key={item.name} className={index + 1 <= stageIndex ? "is-unlocked" : ""}>
-                {item.title}
-              </span>
-            ))}
-          </div>
-        </section>
-
-        <section className="actions" aria-label="Care actions">
-          <button
-            type="button"
-            onClick={() => doCare("feed")}
-            disabled={state.actionsToday.feed >= dailyLimits.feed || state.glimmer < FEED_GLIMMER_COST}
-          >
-            <span>Feed</span>
-            <small>
-              {state.actionsToday.feed >= dailyLimits.feed
-                ? "0 left today"
-                : state.glimmer < FEED_GLIMMER_COST
-                  ? "need glimmer"
-                  : `${dailyLimits.feed - state.actionsToday.feed} left today`}
-            </small>
-          </button>
-          <button
-            type="button"
-            onClick={() => doCare("play")}
-            disabled={state.actionsToday.play >= dailyLimits.play}
-          >
-            <span>Play</span>
-            <small>{Math.max(0, dailyLimits.play - state.actionsToday.play)} left today</small>
-          </button>
-          <button
-            type="button"
-            onClick={() => doCare("groom")}
-            disabled={state.actionsToday.groom >= dailyLimits.groom}
-          >
-            <span>Groom</span>
-            <small>{Math.max(0, dailyLimits.groom - state.actionsToday.groom)} left today</small>
-          </button>
-          <button
-            type="button"
-            onClick={() => doCare("nap")}
-            disabled={state.actionsToday.nap >= dailyLimits.nap}
-          >
-            <span>Nap</span>
-            <small>{Math.max(0, dailyLimits.nap - state.actionsToday.nap)} left today</small>
-          </button>
-        </section>
-        <p className="actions-hint">Care actions refresh tomorrow. Tap Grub anytime to build Bond.</p>
       </section>
+      {showFaq && <FaqModal onClose={() => setShowFaq(false)} />}
     </main>
   );
 }
@@ -647,7 +918,62 @@ function catImageSrc(stage: number, mood: Mood): string {
   return `/cats/stage${stage}${suffix}.webp`;
 }
 
-// Per-stage eye positions — coordinate space matches each stage's actual pixel size.
+// Per-stage ear configs — Stage 1 coords measured directly from the live page
+// using F12 click-mapper (viewBox 168×168, scale ratio ~0.952).
+// Left ear:  tip(42,33) base-L(40,61) base-R(52,46)
+// Right ear: tip(126,37) base-L(118,52) base-R(126,61)
+// Colors pixel-sampled from the actual webp:
+//   Left outer:  rgb(196,125,91)  = #c47d5b  (warm brown, matches actual left ear)
+//   Left inner:  rgb(214,140,105) = #d68c69  (lighter brown centre)
+//   Right outer: rgb(148,96,66)   = #946042  (darker shadow side)
+//   Right inner: rgb(220,149,114) = #dc9572  (pink-brown centre)
+const earConfig: Record<number, {
+  lOuter: string; lInner: string; lPx: number; lPy: number;
+  rOuter: string; rInner: string; rPx: number; rPy: number;
+  lOuterFill: string; lInnerFill: string;
+  rOuterFill: string; rInnerFill: string;
+}> = {
+  1: {
+    lOuter: "M42,37 L40,61 L48,50 Z",
+    lInner: "M42,41 L41,56 L47,50 Z",
+    lPx: 44, lPy: 58,
+    rOuter: "M126,37 L118,52 L126,61 Z",
+    rInner: "M126,41 L120,52 L125,57 Z",
+    rPx: 122, rPy: 58,
+    lOuterFill: "#c47d5b", lInnerFill: "#d68c69",
+    rOuterFill: "#946042", rInnerFill: "#dc9572",
+  },
+  2: {
+    lOuter: "M47,37 L45,68 L58,51 Z",
+    lInner: "M47,43 L46,63 L55,51 Z",
+    lPx: 49, lPy: 65,
+    rOuter: "M141,41 L132,58 L141,68 Z",
+    rInner: "M141,46 L134,58 L140,64 Z",
+    rPx: 137, rPy: 65,
+    lOuterFill: "#c47d5b", lInnerFill: "#d68c69",
+    rOuterFill: "#946042", rInnerFill: "#dc9572",
+  },
+  3: {
+    lOuter: "M59,23 L53,50 L76,34 Z",
+    lInner: "M59,28 L55,45 L72,34 Z",
+    lPx: 55, lPy: 47,
+    rOuter: "M138,23 L127,33 L142,51 Z",
+    rInner: "M138,28 L129,34 L140,46 Z",
+    rPx: 132, rPy: 44,
+    lOuterFill: "#c47d5b", lInnerFill: "#d68c69",
+    rOuterFill: "#946042", rInnerFill: "#dc9572",
+  },
+  4: {
+    lOuter: "M74,19 L69,53 L94,31 Z",
+    lInner: "M74,24 L71,48 L90,31 Z",
+    lPx: 79, lPy: 34,
+    rOuter: "M149,27 L134,37 L146,57 Z",
+    rInner: "M149,32 L136,38 L145,52 Z",
+    rPx: 145, rPy: 39,
+    lOuterFill: "#c47d5b", lInnerFill: "#d68c69",
+    rOuterFill: "#946042", rInnerFill: "#dc9572",
+  },
+};
 // Stage 1 image = 168×168px. Eyes are roughly at 38% and 62% across, 52% down.
 // Tune lx/ly/rx/ry if eyelids don't land perfectly; rx2/ry2 control ellipse size.
 const eyeConfig: Record<number, {
@@ -658,8 +984,8 @@ const eyeConfig: Record<number, {
 }> = {
   1: { lx: 58,  ly: 86,  rx: 108, ry: 86,  rx2: 17, ry2: 18, fill: "#f5ebe0", size: 168 },
   2: { lx: 65,  ly: 96,  rx: 121, ry: 96,  rx2: 19, ry2: 20, fill: "#f5ebe0", size: 188 },
-  3: { lx: 72,  ly: 106, rx: 134, ry: 106, rx2: 21, ry2: 22, fill: "#f5ebe0", size: 208 },
-  4: { lx: 80,  ly: 118, rx: 150, ry: 118, rx2: 23, ry2: 24, fill: "#f5ebe0", size: 232 },
+  3: { lx: 81,  ly: 73,  rx: 116, ry: 72,  rx2: 18, ry2: 16, fill: "#f5ebe0", size: 208 },
+  4: { lx: 94,  ly: 64,  rx: 123, ry: 69,  rx2: 9, ry2: 9, fill: "#f5ebe0", size: 232 },
 };
 
 function Kitty({
@@ -680,12 +1006,16 @@ function Kitty({
   const growthRatio = growth / 100;
   const src = catImageSrc(stage, mood);
   const eye = eyeConfig[stage] ?? eyeConfig[1];
+  const ear = earConfig[stage] ?? earConfig[1];
 
-  // Track blink state separately from poke so idle blinks don't interfere
+  // Blink state — idle timer fires every 3–5s, poke also triggers it
   const [blinking, setBlinking] = useState(false);
   const blinkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Idle blink: fires every 3–5 seconds
+  // Ear wiggle state — set true on poke, cleared after animation
+  const [earWiggle, setEarWiggle] = useState(false);
+
+  // Idle blink scheduler
   useEffect(() => {
     function scheduleBlink() {
       blinkTimer.current = setTimeout(() => {
@@ -700,11 +1030,13 @@ function Kitty({
     };
   }, []);
 
-  // Force a blink on every poke as well
+  // Poke triggers both blink and ear wiggle
   useEffect(() => {
     if (poked) {
       setBlinking(true);
       setTimeout(() => setBlinking(false), 220);
+      setEarWiggle(true);
+      setTimeout(() => setEarWiggle(false), 520);
     }
   }, [poked]);
 
@@ -742,7 +1074,25 @@ function Kitty({
         viewBox={`0 0 ${eye.size} ${eye.size}`}
         aria-hidden="true"
       >
-        {/* Left eyelid */}
+        {/* LEFT EAR — hidden in sleepy mode */}
+        {mood !== "sleepy" && (
+          <g className={`kitty-ear-l${earWiggle ? " ear-wig-l" : ""}`}>
+            <path d={ear.lOuter} fill={ear.lOuterFill} opacity={0.95} />
+            <path d={ear.lInner} fill={ear.lInnerFill} opacity={0.85} />
+          </g>
+        )}
+
+        {/* RIGHT EAR */}
+        {mood !== "sleepy" && (
+          <g className={`kitty-ear-r${earWiggle ? " ear-wig-r" : ""}`}>
+            <path d={ear.rOuter} fill={ear.rOuterFill} opacity={0.95} />
+            <path d={ear.rInner} fill={ear.rInnerFill} opacity={0.85} />
+          </g>
+        )}
+
+        {/* TAIL — stage 3+ animated via CSS image sway on .kitty-image, no SVG overlay needed */}
+
+        {/* LEFT EYELID */}
         <clipPath id={`clip-l-${stage}`}>
           <ellipse cx={eye.lx} cy={eye.ly} rx={eye.rx2} ry={eye.ry2} />
         </clipPath>
@@ -756,7 +1106,7 @@ function Kitty({
           className={`kitty-eyelid kitty-eyelid-l${blinking ? " eyelid-blink-l" : ""}`}
         />
 
-        {/* Right eyelid */}
+        {/* RIGHT EYELID */}
         <clipPath id={`clip-r-${stage}`}>
           <ellipse cx={eye.rx} cy={eye.ry} rx={eye.rx2} ry={eye.ry2} />
         </clipPath>
@@ -770,6 +1120,84 @@ function Kitty({
           className={`kitty-eyelid kitty-eyelid-r${blinking ? " eyelid-blink-r" : ""}`}
         />
       </svg>
+    </div>
+  );
+}
+
+const faqSections = [
+  {
+    title: "🐾 What is Grub?",
+    content: "Grub is your tiny white kitty companion who lives on-chain. She grows, reacts to your daily care, and evolves through 4 stages over roughly a month of visits. She has real feelings — ignore her and she goes feral. At max stage she becomes a Moonmilk Mythic, your future NFT with unique traits shaped by how you raised her.",
+  },
+  {
+    title: "✦ Daily Check-In",
+    content: "Every day starts with a Check-In. This unlocks all your care actions for that day and counts toward your streak.\n\nCheck-in costs $0.01 (one cent in USD) worth of ETH on Base — not 0.01 ETH. Wallet payment is coming soon — it is free for now.\n\nCheck in 7 days in a row and your next check-in drops a +5 XP bonus straight into Grub. Miss a day and your streak resets to 0 and you start counting again.\n\nYou must check in each day to feed, play, groom, or nap. Missing a day does not hurt Grub directly, but your streak and the 7-day bonus reset.",
+  },
+  {
+    title: "🍼 Feeding",
+    content: "Feed Grub up to 3 times per day. Each feed costs 8 Glimmer and gives +3 XP (plus any Bond bonus). Feeding raises Hunger by 28, Happiness by 9, and Care by 12. If Hunger drops below 38 she gets grumpy. Below 18 she goes feral. Always keep her fed.",
+  },
+  {
+    title: "✨ Glimmer",
+    content: "Glimmer is the resource used to feed Grub. It mines passively while you are away — about 4 Glimmer per hour, up to 72 hours stored (288 max). You do not need to do anything — just come back and it is waiting. Each feed costs 8 Glimmer, so 3 feeds per day costs 24 total.",
+  },
+  {
+    title: "🎮 Care Actions",
+    content: "After checking in you get these daily actions:\n\n• Feed x3 — costs 8 Glimmer, +3 XP. Raises Hunger, Happiness, Care.\n• Play x2 — free, +2 XP. Raises Happiness, uses some Energy and Hunger.\n• Groom x2 — free, +2 XP. Raises Care and Happiness.\n• Nap x1 — free, +1 XP. Restores Energy.\n\nAll actions reset at midnight. Max XP per day is around 16, so reaching Mythic takes about 90 days of consistent care — roughly 3 months. Check in 7 days in a row for a +5 XP bonus drop.",
+  },
+  {
+    title: "💛 Bond & XP Bonus",
+    content: "Tap Grub directly (tap the cat itself, not the buttons) to build Bond. Up to 20 taps per day count toward Bond. Higher Bond gives a permanent XP bonus on all care actions:\n\n• Bond 25 → +5% XP on every action\n• Bond 50 → +10% XP on every action\n• Bond 75 → +15% XP on every action\n• Bond 100 → +20% XP on every action\n\nBond also unlocks special dialogue. If you stop tapping for more than 24 hours, Bond decays 1 point per hour after that. Tap daily to keep it high.",
+  },
+  {
+    title: "😺 Moods",
+    content: "Grub has 5 moods that change her look and dialogue:\n\n• Content — well fed and happy, all is fine\n• Smug — thriving, Happiness above 82 and Care above 74\n• Hungry — Hunger dropped below 38, feed her soon\n• Feral — neglected 72+ hours, or Hunger under 18, or Care under 16\n• Sleepy — late night only, between 11pm and 5am\n\nEach mood changes her image, her reactions when tapped, and her idle dialogue.",
+  },
+  {
+    title: "🔥 Streak",
+    content: "Your streak counts consecutive days you have checked in. It goes up by 1 each time you check in on a new day. Missing a day resets your streak to 0. Streak contributes to your Growth score, which tracks how well-raised Grub is overall. Consistent daily visits are the fastest path to Mythic.",
+  },
+  {
+    title: "🌱 Evolution Stages",
+    content: "Grub evolves through 4 stages as you earn XP:\n\n• Tiny Cloud (Newborn) — 0 XP\n• Pocket Purr (Kitten) — 480 XP (~30 days)\n• Pearl Floof (Young Cat) — 960 XP (~60 days)\n• Moonmilk Mythic (Adult) — 1440 XP (~90 days)\n\nEach stage has unique artwork for all moods. At full Bond (+20% bonus) you earn slightly more XP per day and can reach Mythic a few days sooner. Check in 7 days in a row for a +5 XP bonus each cycle.",
+  },
+  {
+    title: "🌙 Moonmilk Mythic",
+    content: "The final stage is Moonmilk Mythic — a fully bonded adult cat. This will become your NFT on-chain, with traits influenced by how you raised her: your streak, Bond level, care choices, and total XP all shape what she looks like. More details coming soon.",
+  },
+  {
+    title: "⚠️ Going Feral",
+    content: "Grub goes feral if:\n• You have been away for 72+ hours\n• Her Hunger drops below 18\n• Her Care score drops below 16\n\nShe will not die — but she will be unhappy and unresponsive. To recover: check in, feed her 2-3 times over a day, and groom her. Stats will climb back up. Feral is fully recoverable with a little patience.",
+  },
+];
+
+function FaqModal({ onClose }: { onClose: () => void }) {
+  const [open, setOpen] = useState<number | null>(0);
+  return (
+    <div className="faq-backdrop" onClick={onClose}>
+      <div className="faq-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="faq-header">
+          <h2>How to care for Grub</h2>
+          <button className="faq-close" type="button" onClick={onClose}>✕</button>
+        </div>
+        <div className="faq-body">
+          {faqSections.map((sec, i) => (
+            <div key={i} className={`faq-item${open === i ? " faq-item-open" : ""}`}>
+              <button
+                type="button"
+                className="faq-q"
+                onClick={() => setOpen(open === i ? null : i)}
+              >
+                <span>{sec.title}</span>
+                <span className="faq-chevron">{open === i ? "▲" : "▼"}</span>
+              </button>
+              {open === i && (
+                <p className="faq-a">{sec.content}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

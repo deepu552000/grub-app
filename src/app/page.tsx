@@ -237,7 +237,7 @@ function loadState(): PetState {
 
     const parsed = JSON.parse(saved) as PetState;
     const hoursAway = Math.max(0, (Date.now() - parsed.lastVisit) / 36e5);
-    const mined = Math.min(72, Math.floor(hoursAway * 4));
+    const mined = Math.min(48, Math.floor(hoursAway * 1));
     const isNewCareDay = parsed.lastCareDay !== todayKey();
     const isNewTapDay = (parsed.lastTapDay ?? "") !== todayKey();
 
@@ -498,6 +498,30 @@ export default function Home() {
     window.setTimeout(() => setCarePulse(""), 620);
     sdk.haptics.selectionChanged().catch(() => {});
 
+    // Compute labels outside setState to avoid double-fire in React Strict Mode
+    const baseXp = xpPerAction[action];
+    const bonusPct = bondXpBonusPct(state.bond);
+    const xpLabel = `+${baseXp} xp`;
+    const bonusNote = bonusPct > 0 ? ` (+${bonusPct}% bond bonus)` : "";
+
+    if (action === "feed") {
+      setLastAction(`Fed with warm moonmilk. Tiny trust increased.${bonusNote}`);
+      showActionBubble(`🍼 Fed! ${xpLabel}${bonusNote}`);
+      spawnFloat(xpLabel);
+    } else if (action === "play") {
+      setLastAction(`Played softly. The floof remembered joy.${bonusNote}`);
+      showActionBubble(`🎀 Played! ${xpLabel}${bonusNote}`);
+      spawnFloat(xpLabel);
+    } else if (action === "groom") {
+      setLastAction(`Brushed into cloud status. Extremely precious.${bonusNote}`);
+      showActionBubble(`✨ Groomed! ${xpLabel}${bonusNote}`);
+      spawnFloat(xpLabel);
+    } else if (action === "nap") {
+      setLastAction(`Nap complete. Purr engine recalibrated.${bonusNote}`);
+      showActionBubble(`💤 Napped! ${xpLabel}${bonusNote}`);
+      spawnFloat(xpLabel);
+    }
+
     setState((current) => {
       const isNewCareDay = current.lastCareDay !== todayKey();
       const next: PetState = {
@@ -511,16 +535,7 @@ export default function Home() {
         },
       };
 
-      // Bond gives a small, never-punishing XP bonus - bond 0 means no change from before.
-      // The exact (fractional) amount is what actually gets stored, so the bonus is real,
-      // not just a rounding-erased preview. The floating text always shows a clean whole
-      // number; the bonus itself is called out in the persistent speech-panel message below,
-      // since the floating text fades too fast to actually read.
-      const baseXp = xpPerAction[action];
-      const bonusPct = bondXpBonusPct(current.bond);
-      const exactXp = baseXp * bondXpMultiplier(current.bond);
-      const xpLabel = `+${baseXp} xp`;
-      const bonusNote = bonusPct > 0 ? ` (+${bonusPct}% bond bonus)` : "";
+      const exactXp = xpPerAction[action] * bondXpMultiplier(current.bond);
 
       if (action === "feed") {
         next.hunger = clamp(current.hunger + 28);
@@ -529,40 +544,22 @@ export default function Home() {
         next.care = clamp(current.care + 12);
         next.xp = current.xp + exactXp;
         next.glimmer = Math.max(0, current.glimmer - FEED_GLIMMER_COST);
-        setLastAction(`Fed with warm moonmilk. Tiny trust increased.${bonusNote}`);
-        showActionBubble(`🍼 Fed! ${xpLabel}${bonusNote}`);
-        spawnFloat(xpLabel);
-      }
-
-      if (action === "play") {
+      } else if (action === "play") {
         next.happiness = clamp(current.happiness + 24);
         next.energy = clamp(current.energy - 12);
         next.hunger = clamp(current.hunger - 8);
         next.care = clamp(current.care + 7);
         next.xp = current.xp + exactXp;
-        setLastAction(`Played softly. The floof remembered joy.${bonusNote}`);
-        showActionBubble(`🎀 Played! ${xpLabel}${bonusNote}`);
-        spawnFloat(xpLabel);
-      }
-
-      if (action === "groom") {
+      } else if (action === "groom") {
         next.care = clamp(current.care + 26);
         next.happiness = clamp(current.happiness + 12);
         next.energy = clamp(current.energy + 2);
         next.xp = current.xp + exactXp;
-        setLastAction(`Brushed into cloud status. Extremely precious.${bonusNote}`);
-        showActionBubble(`✨ Groomed! ${xpLabel}${bonusNote}`);
-        spawnFloat(xpLabel);
-      }
-
-      if (action === "nap") {
+      } else if (action === "nap") {
         next.energy = clamp(current.energy + 34);
         next.hunger = clamp(current.hunger - 5);
         next.happiness = clamp(current.happiness + 4);
         next.xp = current.xp + exactXp;
-        setLastAction(`Nap complete. Purr engine recalibrated.${bonusNote}`);
-        showActionBubble(`💤 Napped! ${xpLabel}${bonusNote}`);
-        spawnFloat(xpLabel);
       }
 
       return next;
@@ -640,9 +637,11 @@ export default function Home() {
         {/* ── CAT SECTION ── */}
         <section className="hero">
           <div className="stage-copy">
-            <span>{stage.title}</span>
-            <h2>{stage.name}</h2>
-            <p>{stage.note}</p>
+            <div className="stage-oneline">
+              <span className="stage-title-pill">{stage.title}</span>
+              <span className="stage-name-inline">{stage.name}</span>
+            </div>
+            <p className="stage-note-text">{stage.note}</p>
           </div>
 
           <div className="kitty-stage-wrap" ref={kittyRef}>
@@ -1137,7 +1136,7 @@ const faqSections = [
   },
   {
     title: "✨ Glimmer",
-    content: "Glimmer is the resource used to feed Grub. It mines passively while you are away — about 4 Glimmer per hour, up to 72 hours stored (288 max). You do not need to do anything — just come back and it is waiting. Each feed costs 8 Glimmer, so 3 feeds per day costs 24 total.",
+    content: "Glimmer is the resource used to feed Grub. It mines passively while you are away — about 1 Glimmer per hour, up to 48 hours stored (48 max). You do not need to do anything — just come back and it is waiting. Each feed costs 8 Glimmer, so 3 feeds per day costs 24 total.",
   },
   {
     title: "🎮 Care Actions",
