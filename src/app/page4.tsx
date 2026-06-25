@@ -323,19 +323,8 @@ export default function Home() {
     BOND_TAP_DAILY_CAP - ((state.lastTapDay ?? "") !== todayKey() ? 0 : state.tapsToday),
   );
   const [showFaq, setShowFaq] = useState(false);
-  const [statsOpen, setStatsOpen] = useState(false);
   const lastActionHasBonus = lastAction.includes("bond bonus");
   const checkedInToday = state.lastCheckInDay === todayKey();
-
-  // Action bubble — shows near buttons after each care action, fades after 2.5s
-  const [actionBubble, setActionBubble] = useState<string | null>(null);
-  const actionBubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  function showActionBubble(msg: string) {
-    if (actionBubbleTimer.current) clearTimeout(actionBubbleTimer.current);
-    setActionBubble(msg);
-    actionBubbleTimer.current = setTimeout(() => setActionBubble(null), 2500);
-  }
 
   // ── Check-in payment state ────────────────────────────────────────────────
   const FREE_CHECKIN_DAYS = 5;
@@ -530,7 +519,6 @@ export default function Home() {
         next.xp = current.xp + exactXp;
         next.glimmer = Math.max(0, current.glimmer - FEED_GLIMMER_COST);
         setLastAction(`Fed with warm moonmilk. Tiny trust increased.${bonusNote}`);
-        showActionBubble(`🍼 Fed! ${xpLabel}${bonusNote}`);
         spawnFloat(xpLabel);
       }
 
@@ -541,7 +529,6 @@ export default function Home() {
         next.care = clamp(current.care + 7);
         next.xp = current.xp + exactXp;
         setLastAction(`Played softly. The floof remembered joy.${bonusNote}`);
-        showActionBubble(`🎀 Played! ${xpLabel}${bonusNote}`);
         spawnFloat(xpLabel);
       }
 
@@ -551,7 +538,6 @@ export default function Home() {
         next.energy = clamp(current.energy + 2);
         next.xp = current.xp + exactXp;
         setLastAction(`Brushed into cloud status. Extremely precious.${bonusNote}`);
-        showActionBubble(`✨ Groomed! ${xpLabel}${bonusNote}`);
         spawnFloat(xpLabel);
       }
 
@@ -561,7 +547,6 @@ export default function Home() {
         next.happiness = clamp(current.happiness + 4);
         next.xp = current.xp + exactXp;
         setLastAction(`Nap complete. Purr engine recalibrated.${bonusNote}`);
-        showActionBubble(`💤 Napped! ${xpLabel}${bonusNote}`);
         spawnFloat(xpLabel);
       }
 
@@ -637,7 +622,6 @@ export default function Home() {
           </button>
         </header>
 
-        {/* ── CAT SECTION ── */}
         <section className="hero">
           <div className="stage-copy">
             <span>{stage.title}</span>
@@ -655,10 +639,18 @@ export default function Home() {
               onPoke={pokeKitty}
             />
             {ripples.map((r) => (
-              <span key={r.id} className="tap-ripple" style={{ left: r.x, top: r.y }} />
+              <span
+                key={r.id}
+                className="tap-ripple"
+                style={{ left: r.x, top: r.y }}
+              />
             ))}
             {floats.map((f) => (
-              <span key={f.id} className="floating-number" style={{ left: f.x, top: f.y }}>
+              <span
+                key={f.id}
+                className="floating-number"
+                style={{ left: f.x, top: f.y }}
+              >
                 {f.text}
               </span>
             ))}
@@ -670,89 +662,67 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ── SPEECH ── */}
         <section className="speech">
           <p>{line}</p>
           <span className={lastActionHasBonus ? "has-bonus" : ""}>{lastAction}</span>
         </section>
 
-        {/* ── CARE BUTTONS — right under cat ── */}
-        <section className="actions-wrap" aria-label="Care actions">
-
-          {/* Action bubble result */}
-          {actionBubble && (
-            <div style={{
-              background: "rgba(255,255,255,0.96)",
-              border: "1.5px solid rgba(43,33,29,0.13)",
-              borderRadius: 16,
-              padding: "8px 18px",
-              marginBottom: 8,
-              textAlign: "center",
-              fontSize: "0.88rem",
-              fontWeight: 700,
-              color: "#49332d",
-              boxShadow: "0 4px 18px rgba(43,33,29,0.10)",
-              animation: "bubblePop 0.22s cubic-bezier(.4,1.6,.6,1) both",
-            }}>
-              {actionBubble}
-            </div>
-          )}
-
-          {/* 4 care buttons — always visible, locked if not checked in */}
-          <div className={`actions${!checkedInToday ? " actions-locked" : ""}`}>
-            <button
-              type="button"
-              onClick={() => doCare("feed")}
-              disabled={!checkedInToday || state.actionsToday.feed >= dailyLimits.feed || state.glimmer < FEED_GLIMMER_COST}
-            >
-              <span>Feed</span>
-              <small>
-                {!checkedInToday
-                  ? "check in first"
-                  : state.actionsToday.feed >= dailyLimits.feed
-                    ? "0 left today"
-                    : state.glimmer < FEED_GLIMMER_COST
-                      ? "need glimmer"
-                      : `${dailyLimits.feed - state.actionsToday.feed} left today`}
-              </small>
-            </button>
-            <button
-              type="button"
-              onClick={() => doCare("play")}
-              disabled={!checkedInToday || state.actionsToday.play >= dailyLimits.play}
-            >
-              <span>Play</span>
-              <small>{!checkedInToday ? "check in first" : `${Math.max(0, dailyLimits.play - state.actionsToday.play)} left today`}</small>
-            </button>
-            <button
-              type="button"
-              onClick={() => doCare("groom")}
-              disabled={!checkedInToday || state.actionsToday.groom >= dailyLimits.groom}
-            >
-              <span>Groom</span>
-              <small>{!checkedInToday ? "check in first" : `${Math.max(0, dailyLimits.groom - state.actionsToday.groom)} left today`}</small>
-            </button>
-            <button
-              type="button"
-              onClick={() => doCare("nap")}
-              disabled={!checkedInToday || state.actionsToday.nap >= dailyLimits.nap}
-            >
-              <span>Nap</span>
-              <small>{!checkedInToday ? "check in first" : `${Math.max(0, dailyLimits.nap - state.actionsToday.nap)} left today`}</small>
-            </button>
+        <section className="resource-row" aria-label="Kitty progress">
+          <div>
+            <span>Glimmer</span>
+            <strong>{state.glimmer}</strong>
           </div>
+          <div>
+            <span>Streak</span>
+            <strong>{state.streak}d</strong>
+          </div>
+          <div>
+            <span>Bond</span>
+            <strong>{bondDisplay}%</strong>
+            <small className={`resource-subtext ${bondIsDecaying ? "is-warning" : ""}`}>
+              {bondIsDecaying
+                ? "fading - pat Grub soon"
+                : `+${bondBonusPct}% xp · ${tapsLeftToday} pats left`}
+            </small>
+          </div>
+        </section>
 
-          <p className="actions-hint" style={{ color: "#49332d", fontWeight: 700, marginTop: 6 }}>
-            Tap Grub anytime to build Bond.
-          </p>
+        <section className="stats-grid">
+          <Stat label="Hunger" value={state.hunger} />
+          <Stat label="Joy" value={state.happiness} />
+          <Stat label="Energy" value={state.energy} />
+          <Stat label="Care" value={state.care} />
+        </section>
 
-          {/* ── CHECK IN — below buttons ── */}
+        <section className="evolution">
+          <div>
+            <span>Evolution</span>
+            <strong>
+              {nextStage
+                ? `${Math.floor(state.xp)}/${nextStage.minXp} XP`
+                : `${Math.floor(state.xp)} XP`}
+            </strong>
+          </div>
+          <div className="progress-track">
+            <span style={{ width: `${progress}%` }} />
+          </div>
+          <div className="life-track" aria-label="Life stages">
+            {stages.map((item, index) => (
+              <span key={item.name} className={index + 1 <= stageIndex ? "is-unlocked" : ""}>
+                {item.title}
+              </span>
+            ))}
+          </div>
+        </section>
+
+        <section className="actions-wrap" aria-label="Care actions">
           {!checkedInToday && (
             <div className="checkin-gate">
               {missedYesterday && (
                 <p style={{ color: "#b5544f", fontSize: "0.78rem" }}>⚠️ You missed yesterday — streak reset</p>
               )}
               <p>Check in to unlock today's care actions</p>
+              {/* Streak dots — today leftmost, 6 days back to right. green=hit, red=missed, grey=future/before start */}
               <div style={{ display: "flex", gap: 7, justifyContent: "center", alignItems: "center" }}>
                 {Array.from({ length: 7 }).map((_, i) => {
                   const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); })();
@@ -798,10 +768,8 @@ export default function Home() {
               </small>
             </div>
           )}
-
-          {/* Streak dots when checked in */}
           {checkedInToday && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, marginTop: 8, marginBottom: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, marginBottom: 8 }}>
               <small style={{ color: "#49332d", fontSize: "0.75rem", fontWeight: 800 }}>
                 {checkinStreak === 0
                   ? "Start your streak → +5 XP bonus on day 7"
@@ -829,72 +797,50 @@ export default function Home() {
               </div>
             </div>
           )}
+          <div className={`actions${!checkedInToday ? " actions-locked" : ""}`}>
+            <button
+              type="button"
+              onClick={() => doCare("feed")}
+              disabled={!checkedInToday || state.actionsToday.feed >= dailyLimits.feed || state.glimmer < FEED_GLIMMER_COST}
+            >
+              <span>Feed</span>
+              <small>
+                {!checkedInToday
+                  ? "check in first"
+                  : state.actionsToday.feed >= dailyLimits.feed
+                    ? "0 left today"
+                    : state.glimmer < FEED_GLIMMER_COST
+                      ? "need glimmer"
+                      : `${dailyLimits.feed - state.actionsToday.feed} left today`}
+              </small>
+            </button>
+            <button
+              type="button"
+              onClick={() => doCare("play")}
+              disabled={!checkedInToday || state.actionsToday.play >= dailyLimits.play}
+            >
+              <span>Play</span>
+              <small>{!checkedInToday ? "check in first" : `${Math.max(0, dailyLimits.play - state.actionsToday.play)} left today`}</small>
+            </button>
+            <button
+              type="button"
+              onClick={() => doCare("groom")}
+              disabled={!checkedInToday || state.actionsToday.groom >= dailyLimits.groom}
+            >
+              <span>Groom</span>
+              <small>{!checkedInToday ? "check in first" : `${Math.max(0, dailyLimits.groom - state.actionsToday.groom)} left today`}</small>
+            </button>
+            <button
+              type="button"
+              onClick={() => doCare("nap")}
+              disabled={!checkedInToday || state.actionsToday.nap >= dailyLimits.nap}
+            >
+              <span>Nap</span>
+              <small>{!checkedInToday ? "check in first" : `${Math.max(0, dailyLimits.nap - state.actionsToday.nap)} left today`}</small>
+            </button>
+          </div>
         </section>
-
-        {/* ── STATS COLLAPSIBLE ── */}
-        <section className="stats-collapsible" style={{ marginTop: 8 }}>
-          <button
-            type="button"
-            className="stats-toggle"
-            onClick={() => setStatsOpen((o) => !o)}
-          >
-            <span>📊 Stats</span>
-            <span className="stats-chevron">{statsOpen ? "▲" : "▼"}</span>
-          </button>
-
-          {statsOpen && (
-            <div className="stats-body">
-              <section className="resource-row" aria-label="Kitty progress">
-                <div>
-                  <span>Glimmer</span>
-                  <strong>{state.glimmer}</strong>
-                </div>
-                <div>
-                  <span>Streak</span>
-                  <strong>{state.streak}d</strong>
-                </div>
-                <div>
-                  <span>Bond</span>
-                  <strong>{bondDisplay}%</strong>
-                  <small className={`resource-subtext ${bondIsDecaying ? "is-warning" : ""}`}>
-                    {bondIsDecaying
-                      ? "fading - pat Grub soon"
-                      : `+${bondBonusPct}% xp · ${tapsLeftToday} pats left`}
-                  </small>
-                </div>
-              </section>
-
-              <section className="stats-grid">
-                <Stat label="Hunger" value={state.hunger} />
-                <Stat label="Joy" value={state.happiness} />
-                <Stat label="Energy" value={state.energy} />
-                <Stat label="Care" value={state.care} />
-              </section>
-
-              <section className="evolution">
-                <div>
-                  <span>Evolution</span>
-                  <strong>
-                    {nextStage
-                      ? `${Math.floor(state.xp)}/${nextStage.minXp} XP`
-                      : `${Math.floor(state.xp)} XP`}
-                  </strong>
-                </div>
-                <div className="progress-track">
-                  <span style={{ width: `${progress}%` }} />
-                </div>
-                <div className="life-track" aria-label="Life stages">
-                  {stages.map((item, index) => (
-                    <span key={item.name} className={index + 1 <= stageIndex ? "is-unlocked" : ""}>
-                      {item.title}
-                    </span>
-                  ))}
-                </div>
-              </section>
-            </div>
-          )}
-        </section>
-
+        <p className="actions-hint" style={{ color: "#49332d", fontWeight: 700 }}>Care actions refresh tomorrow · Tap Grub anytime to build Bond.</p>
       </section>
       {showFaq && <FaqModal onClose={() => setShowFaq(false)} />}
     </main>
