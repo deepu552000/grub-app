@@ -552,11 +552,11 @@ h1 {
 .kitty-stage-wrap::before {
   content: "";
   position: absolute;
-  width: 260px;
-  height: 260px;
-  border-radius: 26px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
   background: var(--cream);
-  filter: blur(18px);
+  filter: blur(32px);
   z-index: 0;
 }
 
@@ -796,13 +796,11 @@ h1 {
 }
 
 @keyframes idleInvite {
-  0%,
-  88%,
-  100% {
-    filter: brightness(1);
+  0%, 88%, 100% {
+    transform: translateY(0);
   }
   92% {
-    filter: brightness(1.04);
+    transform: translateY(-2px);
   }
 }
 

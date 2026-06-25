@@ -1106,3 +1106,77 @@ h1 {
   from { opacity: 0; transform: scale(0.85) translateY(6px); }
   to   { opacity: 1; transform: scale(1) translateY(0); }
 }
+
+/* ── Compact stage header ── */
+.stage-oneline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.stage-title-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #a8907a;
+  background: rgba(168,144,122,0.13);
+  border-radius: 20px;
+  padding: 2px 10px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.stage-name-inline {
+  font-size: 1.18rem;
+  font-weight: 800;
+  color: #2b211d;
+  letter-spacing: -0.01em;
+}
+
+.stage-note-text {
+  font-size: 0.78rem;
+  color: #8a756b;
+  text-align: center;
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* ── Stats collapsible ── */
+.stats-collapsible {
+  margin: 0 0 12px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.55);
+  border: 1.5px solid rgba(43,33,29,0.09);
+}
+
+.stats-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 18px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #49332d;
+  font-family: inherit;
+}
+
+.stats-chevron {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.stats-body {
+  padding: 0 0 8px;
+  animation: bubblePop 0.18s cubic-bezier(.4,1.4,.6,1) both;
+}
+
+@keyframes bubblePop {
+  from { opacity: 0; transform: scale(0.85) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
