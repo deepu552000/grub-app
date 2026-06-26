@@ -412,15 +412,10 @@ export default function Home() {
   };
   const [todayEvent, setTodayEvent] = useState<DailyEvent | null>(null);
   const [eventVisible, setEventVisible] = useState(false);
-  const [eventDismissing, setEventDismissing] = useState(false);
-
-  function dismissEvent() {
-    setEventDismissing(true);
-    setTimeout(() => setEventVisible(false), 600); // matches animation duration
-  }
 
   useEffect(() => {
     if (!hydrated) return;
+    // Already applied today's event — don't re-fetch
     if (state.lastEventDay === todayKey()) return;
 
     fetch("/api/event")
@@ -429,9 +424,6 @@ export default function Home() {
         if (!event) return;
         setTodayEvent(event);
         setEventVisible(true);
-        setEventDismissing(false);
-        // Auto-dismiss after 5 seconds
-        setTimeout(() => dismissEvent(), 5000);
         // Apply effect to state
         setState((cur) => {
           const fx = event.effect ?? {};
@@ -448,7 +440,7 @@ export default function Home() {
           };
         });
       })
-      .catch(() => {});
+      .catch(() => {}); // silent fail — events are cosmetic bonus
   }, [hydrated]);
 
   // Action bubble — shows near buttons after each care action, fades after 2.5s
@@ -803,23 +795,17 @@ export default function Home() {
 
         {/* ── DAILY EVENT BANNER ── */}
         {eventVisible && todayEvent && (
-          <div
-            onClick={dismissEvent}
-            style={{
-              margin: "0 0 10px 0",
-              padding: "10px 14px",
-              background: "rgba(255,255,255,0.72)",
-              border: "1.5px solid rgba(43,33,29,0.13)",
-              borderRadius: 14,
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 10,
-              position: "relative",
-              cursor: "pointer",
-              animation: eventDismissing
-                ? "eventBubblePop 0.6s cubic-bezier(.4,1.4,.6,1) forwards"
-                : "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
-            }}>
+          <div style={{
+            margin: "0 0 10px 0",
+            padding: "10px 14px",
+            background: "rgba(255,255,255,0.72)",
+            border: "1.5px solid rgba(43,33,29,0.13)",
+            borderRadius: 14,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            position: "relative",
+          }}>
             <span style={{ fontSize: "1.6rem", lineHeight: 1 }}>{todayEvent.emoji}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 800, fontSize: "0.82rem", color: "#49332d", marginBottom: 2 }}>
@@ -835,6 +821,15 @@ export default function Home() {
                   .join(" · ")}
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setEventVisible(false)}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "#b5a49a", fontSize: "1rem", padding: "0 2px", lineHeight: 1,
+              }}
+              aria-label="Dismiss event"
+            >✕</button>
           </div>
         )}
 
