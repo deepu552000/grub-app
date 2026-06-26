@@ -457,7 +457,7 @@ export default function Home() {
         }
       })
       .catch(() => {});
-  }, [hydrated]);
+  }, [hydrated, state.lastCheckInDay]);
 
   // Action bubble — shows near buttons after each care action, fades after 2.5s
   const [actionBubble, setActionBubble] = useState<string | null>(null);
