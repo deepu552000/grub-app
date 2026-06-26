@@ -1,9 +1,8 @@
 {
-  "crons": 
- [
+  "crons": [
     {
       "path": "/api/cron/hunger-alert",
-      "schedule": "0 */2 * * *"
+      "schedule": "0 9 * * *"
     }
   ]
 }
