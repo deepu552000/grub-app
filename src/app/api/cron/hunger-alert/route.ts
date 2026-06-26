@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
     targetUrl: APP_URL,
   }, excludeFids);
 
-  checkinNotified = reminderResult?.sent ?? 0;
+  checkinNotified = reminderResult?.totalsent ?? 0;
 
   return NextResponse.json({
     ok: true,
