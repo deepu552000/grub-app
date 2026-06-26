@@ -1,30 +1,23 @@
 // app/api/cron/hunger-alert/route.ts
 //
-// Smart hunger notification — runs every 2 hours via Vercel Cron.
-// Reads each user's pet state from Redis, calculates current hunger
-// (applying the same time-decay logic as the client), and sends a
-// notification only if Grub is actually hungry (hunger < 38).
-//
-// Skips users who already received a hunger alert today so we don't
-// spam them multiple times in one day.
-//
-// vercel.json entry:
-// { "path": "/api/cron/hunger-alert", "schedule": "0 */2 * * *" }
+// Combined daily cron — runs once at 9am UTC via Vercel Cron.
+// 1. Sends a check-in reminder to ALL users (everyone gets a nudge)
+// 2. Sends a hunger alert to users whose Grub is actually hungry (hunger < 38)
+//    — skips users who already received a hunger alert today
 
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
-import { sendNotificationToUser } from "@/lib/send-notification";
+import { sendNotificationToUser, sendNotificationToAll } from "@/lib/send-notification";
 
 const APP_FID = 9152;
 const APP_URL = "https://grub-app-eight.vercel.app";
-const HUNGRY_THRESHOLD = 38;  // same as client moodFor()
-const FERAL_THRESHOLD = 18;   // below this = feral
+const HUNGRY_THRESHOLD = 38;
+const FERAL_THRESHOLD = 18;
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
-// Mirror of client-side hunger decay logic
 function currentHunger(savedHunger: number, lastVisit: number): number {
   const hoursAway = Math.max(0, (Date.now() - lastVisit) / 36e5);
   const decayed = savedHunger - hoursAway * 3;
@@ -37,13 +30,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Get all pet keys from Redis
-  const keys = await kv.keys("grub:pet:*");
-  if (keys.length === 0) {
-    return NextResponse.json({ ok: true, checked: 0, notified: 0 });
-  }
-
   const today = todayKey();
+
+  // ── 1. CHECK-IN REMINDER — broadcast to all users ─────────────────────────
+  const reminderResult = await sendNotificationToAll(APP_FID, {
+    notificationId: `checkin-reminder-${today}`,
+    title: "Grub is waiting 🐾",
+    body: "Check in to keep your streak alive and care for Grub today.",
+    targetUrl: APP_URL,
+  });
+
+  // ── 2. HUNGER ALERTS — per user, only if actually hungry ──────────────────
+  const keys = await kv.keys("grub:pet:*");
   let notified = 0;
   let skipped = 0;
   let alreadyAlerted = 0;
@@ -54,15 +52,11 @@ export async function GET(request: NextRequest) {
 
     if (!state || !fid) { skipped++; continue; }
 
-    // Skip if already sent hunger alert today
     const alertKey = `grub:hunger-alert:${fid}:${today}`;
     const alreadySent = await kv.get(alertKey);
     if (alreadySent) { alreadyAlerted++; continue; }
 
-    // Calculate actual current hunger with time decay
     const hunger = currentHunger(state.hunger ?? 100, state.lastVisit ?? Date.now());
-
-    // Only notify if truly hungry or feral
     if (hunger >= HUNGRY_THRESHOLD) { skipped++; continue; }
 
     const isFeral = hunger < FERAL_THRESHOLD;
@@ -80,8 +74,7 @@ export async function GET(request: NextRequest) {
       });
 
       if (result.sent) {
-        // Mark as alerted today so we don't send again
-        await kv.set(alertKey, "1", { ex: 86400 }); // expires in 24h
+        await kv.set(alertKey, "1", { ex: 86400 });
         notified++;
       }
     } catch {
@@ -91,9 +84,13 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    checked: keys.length,
-    notified,
-    skipped,
-    alreadyAlerted,
+    checkinReminderSent: reminderResult,
+    hungerAlerts: {
+      checked: keys.length,
+      notified,
+      skipped,
+      alreadyAlerted,
+    },
   });
 }
+
