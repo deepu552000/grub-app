@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendNotificationToAll } from "@/lib/send-notification";
 
-const APP_FID = 777804;
+const APP_FID = 9152;
 const APP_URL = "https://grub-app-eight.vercel.app";
 
 export async function GET(request: NextRequest) {
