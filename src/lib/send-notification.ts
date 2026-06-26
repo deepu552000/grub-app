@@ -87,12 +87,15 @@ export async function sendNotificationToUser(
 export async function sendNotificationToAll(
   appFid: number,
   params: SendNotificationParams,
+  excludeFids: number[] = [],
 ): Promise<{ totalSent: number; totalInvalid: number; totalFailed: number }> {
   const all = await getAllNotificationDetailsForApp(appFid);
+  const excludeSet = new Set(excludeFids);
 
-  // Group by url (the relay endpoint) since a batch request goes to one url.
+  // Group by url, skipping excluded FIDs (those who already got hunger alert)
   const byUrl = new Map<string, { fid: number; token: string }[]>();
   for (const { fid, details } of all) {
+    if (excludeSet.has(fid)) continue;
     const list = byUrl.get(details.url) ?? [];
     list.push({ fid, token: details.token });
     byUrl.set(details.url, list);

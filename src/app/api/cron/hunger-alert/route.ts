@@ -31,21 +31,17 @@ export async function GET(request: NextRequest) {
   }
 
   const today = todayKey();
-
-  // ── 1. CHECK-IN REMINDER — broadcast to all users ─────────────────────────
-  const reminderResult = await sendNotificationToAll(APP_FID, {
-    notificationId: `checkin-reminder-${today}`,
-    title: "Grub is waiting 🐾",
-    body: "Check in to keep your streak alive and care for Grub today.",
-    targetUrl: APP_URL,
-  });
-
-  // ── 2. HUNGER ALERTS — per user, only if actually hungry ──────────────────
   const keys = await kv.keys("grub:pet:*");
-  let notified = 0;
+
+  let hungerNotified = 0;
+  let checkinNotified = 0;
   let skipped = 0;
   let alreadyAlerted = 0;
 
+  // Track FIDs that got a hunger alert so we can exclude from checkin broadcast
+  const hungryFids = new Set<number>();
+
+  // ── 1. HUNGER ALERTS — per user, only if actually hungry ──────────────────
   for (const key of keys) {
     const state = await kv.get<any>(key);
     const fid = Number(key.replace("grub:pet:", ""));
@@ -54,10 +50,10 @@ export async function GET(request: NextRequest) {
 
     const alertKey = `grub:hunger-alert:${fid}:${today}`;
     const alreadySent = await kv.get(alertKey);
-    if (alreadySent) { alreadyAlerted++; continue; }
+    if (alreadySent) { alreadyAlerted++; hungryFids.add(fid); continue; }
 
     const hunger = currentHunger(state.hunger ?? 100, state.lastVisit ?? Date.now());
-    if (hunger >= HUNGRY_THRESHOLD) { skipped++; continue; }
+    if (hunger >= HUNGRY_THRESHOLD) continue; // not hungry — will get checkin reminder
 
     const isFeral = hunger < FERAL_THRESHOLD;
     const title = isFeral ? "Grub has gone feral 😾" : "Grub is hungry 🍼";
@@ -75,22 +71,31 @@ export async function GET(request: NextRequest) {
 
       if (result.sent) {
         await kv.set(alertKey, "1", { ex: 86400 });
-        notified++;
+        hungryFids.add(fid);
+        hungerNotified++;
       }
     } catch {
       skipped++;
     }
   }
 
+  // ── 2. CHECK-IN REMINDER — only users who didn't get hunger alert ──────────
+  // Build exclusion list from hungryFids
+  const excludeFids = Array.from(hungryFids);
+
+  const reminderResult = await sendNotificationToAll(APP_FID, {
+    notificationId: `checkin-reminder-${today}`,
+    title: "Grub is waiting 🐾",
+    body: "Check in to keep your streak alive and care for Grub today.",
+    targetUrl: APP_URL,
+  }, excludeFids);
+
+  checkinNotified = reminderResult?.sent ?? 0;
+
   return NextResponse.json({
     ok: true,
-    checkinReminderSent: reminderResult,
-    hungerAlerts: {
-      checked: keys.length,
-      notified,
-      skipped,
-      alreadyAlerted,
-    },
+    hungerAlerts: { notified: hungerNotified, skipped, alreadyAlerted },
+    checkinReminders: { notified: checkinNotified, excluded: excludeFids.length },
   });
 }
 
