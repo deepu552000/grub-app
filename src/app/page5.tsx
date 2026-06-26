@@ -237,7 +237,7 @@ function loadState(): PetState {
 
     const parsed = JSON.parse(saved) as PetState;
     const hoursAway = Math.max(0, (Date.now() - parsed.lastVisit) / 36e5);
-    const mined = Math.min(72, Math.floor(hoursAway * 4));
+    const mined = Math.min(48, Math.floor(hoursAway * 1));
     const isNewCareDay = parsed.lastCareDay !== todayKey();
     const isNewTapDay = (parsed.lastTapDay ?? "") !== todayKey();
 
@@ -273,12 +273,47 @@ function loadState(): PetState {
   }
 }
 
+// Same decay logic as loadState() but takes a saved PetState directly
+// instead of reading from localStorage — used when loading from the DB.
+function loadStateFromSaved(parsed: PetState): PetState {
+  const hoursAway = Math.max(0, (Date.now() - parsed.lastVisit) / 36e5);
+  const mined = Math.min(48, Math.floor(hoursAway * 1));
+  const isNewCareDay = parsed.lastCareDay !== todayKey();
+  const isNewTapDay = (parsed.lastTapDay ?? "") !== todayKey();
+
+  const lastTapAt = parsed.lastTapAt ?? parsed.lastVisit ?? Date.now();
+  const hoursSinceTap = Math.max(0, (Date.now() - lastTapAt) / 36e5);
+  const hoursPastGrace = Math.max(0, hoursSinceTap - BOND_DECAY_GRACE_HOURS);
+  const bondAfterDecay = clamp(
+    (typeof parsed.bond === "number" && !Number.isNaN(parsed.bond)
+      ? parsed.bond
+      : defaultState.bond) - hoursPastGrace * BOND_DECAY_PER_HOUR,
+  );
+
+  return {
+    ...defaultState,
+    ...parsed,
+    bond: bondAfterDecay,
+    glimmer: parsed.glimmer + mined,
+    hunger: clamp(parsed.hunger - hoursAway * 3),
+    happiness: clamp(parsed.happiness - hoursAway * 1.4),
+    energy: clamp(parsed.energy + hoursAway * 5),
+    care: clamp(parsed.care - hoursAway * 1.8),
+    lastVisit: Date.now(),
+    actionsToday: isNewCareDay
+      ? { feed: 0, play: 0, groom: 0, nap: 0 }
+      : { ...defaultState.actionsToday, ...parsed.actionsToday },
+    tapsToday: isNewTapDay ? 0 : parsed.tapsToday ?? 0,
+  };
+}
+
 let floatId = 0;
 
 export default function Home() {
   // Server and first client render both use defaultState - no mismatch possible.
   const [state, setState] = useState<PetState>(defaultState);
   const [hydrated, setHydrated] = useState(false);
+  const [fid, setFid] = useState<number | null>(null);
   const [lastAction, setLastAction] = useState("You found a tiny white kitty.");
   const [carePulse, setCarePulse] = useState<ActionType | "">("");
   const [poked, setPoked] = useState(false);
@@ -286,22 +321,60 @@ export default function Home() {
   const [ripples, setRipples] = useState<Ripple[]>([]);
   const kittyRef = useRef<HTMLDivElement>(null);
 
-  // Real save data only loads after mount, in the browser.
+  // Load state from DB using FID — falls back to localStorage if API fails or no FID yet.
   useEffect(() => {
-    setState(loadState());
-    setHydrated(true);
-  }, []);
+    if (fid === null) return; // wait until FID is known from SDK context
+    fetch(`/api/pet?fid=${fid}`)
+      .then((r) => r.json())
+      .then((saved) => {
+        if (!saved) {
+          setState({ ...defaultState, lastVisit: Date.now() });
+        } else {
+          setState(loadStateFromSaved(saved));
+        }
+        setHydrated(true);
+      })
+      .catch(() => {
+        // API failed — fall back to localStorage so app still works
+        setState(loadState());
+        setHydrated(true);
+      });
+  }, [fid]);
 
   useEffect(() => {
     sdk.actions.ready().catch(() => {
       // Local browser testing is expected to land here.
+      // Also load from localStorage when running outside Farcaster (no FID available).
+      setState(loadState());
+      setHydrated(true);
     });
+    // Extract the viewer's FID from the Farcaster mini app context
+    sdk.context
+      .then((ctx) => {
+        if (ctx?.user?.fid) setFid(ctx.user.fid);
+      })
+      .catch(() => {
+        // Outside Farcaster — no FID, use localStorage fallback (triggered in ready() catch above)
+      });
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
+
+    // Always keep localStorage as offline fallback
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state, hydrated]);
+
+    // Save to DB if we have a FID — debounced 800ms to avoid hammering on rapid taps
+    if (!fid) return;
+    const timer = setTimeout(() => {
+      fetch("/api/pet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fid, state }),
+      }).catch(() => {}); // silent fail — localStorage already has it
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [state, hydrated, fid]);
 
   const mood = useMemo(() => moodFor(state), [state]);
   const stage = getStage(state.xp);
@@ -1136,7 +1209,7 @@ const faqSections = [
   },
   {
     title: "✨ Glimmer",
-    content: "Glimmer is the resource used to feed Grub. It mines passively while you are away — about 4 Glimmer per hour, up to 72 hours stored (288 max). You do not need to do anything — just come back and it is waiting. Each feed costs 8 Glimmer, so 3 feeds per day costs 24 total.",
+    content: "Glimmer is the resource used to feed Grub. It mines passively while you are away — about 1 Glimmer per hour, up to 48 hours stored (48 max). You do not need to do anything — just come back and it is waiting. Each feed costs 8 Glimmer, so 3 feeds per day costs 24 total.",
   },
   {
     title: "🎮 Care Actions",

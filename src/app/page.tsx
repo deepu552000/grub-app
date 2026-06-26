@@ -601,7 +601,8 @@ export default function Home() {
         ...current,
         lastVisit: Date.now(),
         lastCareDay: todayKey(),
-        streak: isNewCareDay ? current.streak + 1 : current.streak,
+        // streak is managed by applyCheckIn only — do NOT increment here
+        // to avoid double-counting (check-in + first care action both firing on same day)
         actionsToday: {
           ...current.actionsToday,
           [action]: (current.actionsToday[action] ?? 0) + 1,
