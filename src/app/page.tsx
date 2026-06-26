@@ -344,20 +344,27 @@ export default function Home() {
   }, [fid]);
 
   useEffect(() => {
+    // Timeout fallback — if SDK doesn't respond in 2s (e.g. plain browser), load from localStorage
+    const fallbackTimer = setTimeout(() => {
+      if (!hydrated) {
+        setState(loadState());
+        setHydrated(true);
+      }
+    }, 2000);
+
     sdk.actions.ready().catch(() => {
-      // Local browser testing is expected to land here.
-      // Also load from localStorage when running outside Farcaster (no FID available).
+      clearTimeout(fallbackTimer);
       setState(loadState());
       setHydrated(true);
     });
-    // Extract the viewer's FID from the Farcaster mini app context
+
     sdk.context
       .then((ctx) => {
         if (ctx?.user?.fid) setFid(ctx.user.fid);
       })
-      .catch(() => {
-        // Outside Farcaster — no FID, use localStorage fallback (triggered in ready() catch above)
-      });
+      .catch(() => {});
+
+    return () => clearTimeout(fallbackTimer);
   }, []);
 
   useEffect(() => {
@@ -428,25 +435,26 @@ export default function Home() {
       .then(({ event }: { event: DailyEvent }) => {
         if (!event) return;
         setTodayEvent(event);
-        setEventVisible(true);
-        setEventDismissing(false);
-        // Auto-dismiss after 5 seconds
-        setTimeout(() => dismissEvent(), 5000);
-        // Apply effect to state
-        setState((cur) => {
-          const fx = event.effect ?? {};
-          return {
-            ...cur,
-            lastEventDay: todayKey(),
-            glimmer: fx.glimmer ? clamp(cur.glimmer + fx.glimmer) : cur.glimmer,
-            xp: fx.xp ? cur.xp + fx.xp : cur.xp,
-            energy: fx.energy ? clamp(cur.energy + fx.energy) : cur.energy,
-            hunger: fx.hunger ? clamp(cur.hunger + fx.hunger) : cur.hunger,
-            happiness: fx.happiness ? clamp(cur.happiness + fx.happiness) : cur.happiness,
-            care: fx.care ? clamp(cur.care + fx.care) : cur.care,
-            bond: fx.bond ? clamp(cur.bond + fx.bond) : cur.bond,
-          };
-        });
+        // Only show banner and apply effects if user has checked in today
+        if (state.lastCheckInDay === todayKey()) {
+          setEventVisible(true);
+          setEventDismissing(false);
+          setTimeout(() => dismissEvent(), 5000);
+          setState((cur) => {
+            const fx = event.effect ?? {};
+            return {
+              ...cur,
+              lastEventDay: todayKey(),
+              glimmer: fx.glimmer ? clamp(cur.glimmer + fx.glimmer) : cur.glimmer,
+              xp: fx.xp ? cur.xp + fx.xp : cur.xp,
+              energy: fx.energy ? clamp(cur.energy + fx.energy) : cur.energy,
+              hunger: fx.hunger ? clamp(cur.hunger + fx.hunger) : cur.hunger,
+              happiness: fx.happiness ? clamp(cur.happiness + fx.happiness) : cur.happiness,
+              care: fx.care ? clamp(cur.care + fx.care) : cur.care,
+              bond: fx.bond ? clamp(cur.bond + fx.bond) : cur.bond,
+            };
+          });
+        }
       })
       .catch(() => {});
   }, [hydrated]);
