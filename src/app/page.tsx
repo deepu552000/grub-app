@@ -26,6 +26,7 @@ type PetState = {
   checkinStreak: number;
   checkinHistory: string[]; // last 7 day-keys that were checked in
   totalCheckIns: number; // lifetime check-in count, first 5 are free
+  lastEventDay: string;  // date key of last applied daily event
 };
 
 type FloatingNumber = {
@@ -201,6 +202,7 @@ const defaultState: PetState = {
   checkinStreak: 0,
   checkinHistory: [],
   totalCheckIns: 0,
+  lastEventDay: "",
 };
 
 function clamp(value: number) {
@@ -399,6 +401,47 @@ export default function Home() {
   const [statsOpen, setStatsOpen] = useState(false);
   const lastActionHasBonus = lastAction.includes("bond bonus");
   const checkedInToday = state.lastCheckInDay === todayKey();
+
+  // ── Daily Event ───────────────────────────────────────────────────────────
+  type DailyEvent = {
+    id: string;
+    emoji: string;
+    title: string;
+    message: string;
+    effect: Partial<Record<string, number>>;
+  };
+  const [todayEvent, setTodayEvent] = useState<DailyEvent | null>(null);
+  const [eventVisible, setEventVisible] = useState(false);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    // Already applied today's event — don't re-fetch
+    if (state.lastEventDay === todayKey()) return;
+
+    fetch("/api/event")
+      .then((r) => r.json())
+      .then(({ event }: { event: DailyEvent }) => {
+        if (!event) return;
+        setTodayEvent(event);
+        setEventVisible(true);
+        // Apply effect to state
+        setState((cur) => {
+          const fx = event.effect ?? {};
+          return {
+            ...cur,
+            lastEventDay: todayKey(),
+            glimmer: fx.glimmer ? clamp(cur.glimmer + fx.glimmer) : cur.glimmer,
+            xp: fx.xp ? cur.xp + fx.xp : cur.xp,
+            energy: fx.energy ? clamp(cur.energy + fx.energy) : cur.energy,
+            hunger: fx.hunger ? clamp(cur.hunger + fx.hunger) : cur.hunger,
+            happiness: fx.happiness ? clamp(cur.happiness + fx.happiness) : cur.happiness,
+            care: fx.care ? clamp(cur.care + fx.care) : cur.care,
+            bond: fx.bond ? clamp(cur.bond + fx.bond) : cur.bond,
+          };
+        });
+      })
+      .catch(() => {}); // silent fail — events are cosmetic bonus
+  }, [hydrated]);
 
   // Action bubble — shows near buttons after each care action, fades after 2.5s
   const [actionBubble, setActionBubble] = useState<string | null>(null);
@@ -696,6 +739,13 @@ export default function Home() {
       });
   }
 
+  if (!hydrated) return (
+    <main className="app-shell" style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", minHeight: "100dvh" }}>
+      <img src="/cats/stage1.webp" alt="Grub loading" style={{ width: 80, opacity: 0.55 }} />
+      <p style={{ color: "#b5a49a", fontSize: "0.8rem", marginTop: 12, fontWeight: 600 }}>Loading Grub...</p>
+    </main>
+  );
+
   return (
     <main className={`app-shell mood-${mood}`}>
       <section className="phone-frame">
@@ -742,6 +792,46 @@ export default function Home() {
             <strong>{growth}% grown</strong>
           </div>
         </section>
+
+        {/* ── DAILY EVENT BANNER ── */}
+        {eventVisible && todayEvent && (
+          <div style={{
+            margin: "0 0 10px 0",
+            padding: "10px 14px",
+            background: "rgba(255,255,255,0.72)",
+            border: "1.5px solid rgba(43,33,29,0.13)",
+            borderRadius: 14,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            position: "relative",
+          }}>
+            <span style={{ fontSize: "1.6rem", lineHeight: 1 }}>{todayEvent.emoji}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: "0.82rem", color: "#49332d", marginBottom: 2 }}>
+                {todayEvent.title}
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "#7a5c4f", lineHeight: 1.4 }}>
+                {todayEvent.message}
+              </div>
+              <div style={{ fontSize: "0.7rem", color: "#4caf7d", fontWeight: 700, marginTop: 4 }}>
+                {Object.entries(todayEvent.effect ?? {})
+                  .filter(([, v]) => v !== 0)
+                  .map(([k, v]) => `${(v as number) > 0 ? "+" : ""}${v} ${k}`)
+                  .join(" · ")}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEventVisible(false)}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "#b5a49a", fontSize: "1rem", padding: "0 2px", lineHeight: 1,
+              }}
+              aria-label="Dismiss event"
+            >✕</button>
+          </div>
+        )}
 
         {/* ── SPEECH ── */}
         <section className="speech">
