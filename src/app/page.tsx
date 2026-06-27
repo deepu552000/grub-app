@@ -500,31 +500,17 @@ export default function Home() {
   const [checkinPending, setCheckinPending] = useState(false);
   const [checkinError, setCheckinError] = useState<string | null>(null);
 
-  // Fetch live ETH price in USD, returns null on failure
-  async function fetchEthPriceUsd(): Promise<number | null> {
-    try {
-      const res = await fetch(
-        "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
-      );
-      const json = await res.json();
-      return typeof json?.ethereum?.usd === "number" ? json.ethereum.usd : null;
-    } catch {
-      return null;
-    }
+  // USDC on Base — CAIP-19 token id and 6-decimal amount conversion
+  const USDC_TOKEN = "eip155:8453/erc20:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+
+  // Converts a USD amount → USDC amount string (6 decimals, e.g. $0.01 → "10000", $0.10 → "100000")
+  function usdToUsdcString(usdAmount: number): string {
+    return Math.round(usdAmount * 1_000_000).toString();
   }
 
-  // Converts a USD amount → wei string for sendToken (native ETH on Base: eip155:8453/slip44:60)
-  async function usdToWeiString(usdAmount: number): Promise<string> {
-    const ethPrice = await fetchEthPriceUsd();
-    const price = ethPrice && ethPrice > 0 ? ethPrice : 3000; // safe fallback
-    const ethAmount = usdAmount / price;
-    const wei = BigInt(Math.floor(ethAmount * 1e18));
-    return wei.toString();
-  }
-
-  // Keep old name as alias so check-in call below still compiles
-  async function centToEthWeiString(): Promise<string> {
-    return usdToWeiString(CHECKIN_USD);
+  // Alias used by check-in
+  function checkinUsdcAmount(): string {
+    return usdToUsdcString(CHECKIN_USD);
   }
 
   // yesterday's date key
@@ -582,14 +568,13 @@ export default function Home() {
       return;
     }
 
-    // Paid check-in — send $0.01 in ETH on Base using sdk.actions.sendToken
+    // Paid check-in — send $0.01 USDC on Base
     setCheckinPending(true);
     try {
-      const weiAmount = await centToEthWeiString();
-      // Native ETH on Base: token = eip155:8453/slip44:60
+      const usdcAmount = checkinUsdcAmount(); // returns USDC micro-units string
       const result = await sdk.actions.sendToken({
-        token: "eip155:8453/slip44:60",
-        amount: weiAmount,
+        token: USDC_TOKEN,
+        amount: usdcAmount,
         recipientAddress: RECIPIENT,
       });
 
@@ -794,11 +779,11 @@ export default function Home() {
     setClosetMessage(null);
 
     try {
-      const weiAmount = await usdToWeiString(ACCESSORY_UNLOCK_USD);
+      const usdcAmount = usdToUsdcString(ACCESSORY_UNLOCK_USD);
 
       const result = await sdk.actions.sendToken({
-        token: "eip155:8453/slip44:60",
-        amount: weiAmount,
+        token: USDC_TOKEN,
+        amount: usdcAmount,
         recipientAddress: RECIPIENT,
       });
 
