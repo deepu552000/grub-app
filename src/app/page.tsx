@@ -528,9 +528,9 @@ export default function Home() {
     const txHash: string = await provider.request({
       method: "eth_sendTransaction",
       params: [{
-        from: accounts[0],
+        from: accounts[0] as `0x${string}`,
         to: USDC_CONTRACT,
-        data,
+        data: data as `0x${string}`,
       }],
     });
     return txHash;
