@@ -513,14 +513,18 @@ export default function Home() {
     }
   }
 
-  // Converts $0.01 USD → ETH amount string (e.g. "0.000003333"), for sendToken amount in wei string
-  async function centToEthWeiString(): Promise<string> {
+  // Converts a USD amount → wei string for sendToken (native ETH on Base: eip155:8453/slip44:60)
+  async function usdToWeiString(usdAmount: number): Promise<string> {
     const ethPrice = await fetchEthPriceUsd();
     const price = ethPrice && ethPrice > 0 ? ethPrice : 3000; // safe fallback
-    const ethAmount = CHECKIN_USD / price;
-    // sendToken expects amount as wei (integer string) for native ETH: eip155:8453/slip44:60
+    const ethAmount = usdAmount / price;
     const wei = BigInt(Math.floor(ethAmount * 1e18));
     return wei.toString();
+  }
+
+  // Keep old name as alias so check-in call below still compiles
+  async function centToEthWeiString(): Promise<string> {
+    return usdToWeiString(CHECKIN_USD);
   }
 
   // yesterday's date key
@@ -790,10 +794,7 @@ export default function Home() {
     setClosetMessage(null);
 
     try {
-      const ethPrice = await fetchEthPriceUsd();
-      const price = ethPrice && ethPrice > 0 ? ethPrice : 3000;
-      const ethAmount = ACCESSORY_UNLOCK_USD / price;
-      const weiAmount = BigInt(Math.floor(ethAmount * 1e18)).toString();
+      const weiAmount = await usdToWeiString(ACCESSORY_UNLOCK_USD);
 
       const result = await sdk.actions.sendToken({
         token: "eip155:8453/slip44:60",
@@ -813,15 +814,11 @@ export default function Home() {
       } else if (result.reason === "rejected_by_user") {
         setClosetMessage("Cancelled. Tap Unlock to try again.");
       } else {
-        setClosetMessage("Payment failed. Try again.");
+        setClosetMessage(`Payment failed (${result.reason ?? "unknown"}). Try again.`);
       }
     } catch (err: any) {
       const msg: string = err?.message ?? String(err);
-      if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
-        setClosetMessage("No wallet connected. Open in Farcaster to pay.");
-      } else {
-        setClosetMessage("Payment failed. Try again.");
-      }
+      setClosetMessage(`Error: ${msg.slice(0, 120)}`);
     } finally {
       setUnlockPending(null);
     }
