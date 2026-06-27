@@ -25,20 +25,19 @@ export function isEquipped(state: AccessoryState, accessoryId: string): boolean 
   return state.equipped[acc.slot] === accessoryId;
 }
 
+// Payment is now handled outside (ETH on Base) — this function just records
+// the unlock after a successful payment. No Glimmer deducted.
 export function unlockAccessory(
   state: AccessoryState,
   accessoryId: string,
-  currentGlimmer: number,
-): { ok: true; newState: AccessoryState; glimmerSpent: number } | { ok: false; reason: string } {
+): { ok: true; newState: AccessoryState } | { ok: false; reason: string } {
   const acc = getAccessory(accessoryId);
   if (!acc) return { ok: false, reason: "Unknown accessory" };
   if (isUnlocked(state, accessoryId)) return { ok: false, reason: "Already unlocked" };
-  if (currentGlimmer < acc.cost) return { ok: false, reason: "Not enough Glimmer" };
 
   return {
     ok: true,
     newState: { ...state, unlocked: [...state.unlocked, accessoryId] },
-    glimmerSpent: acc.cost,
   };
 }
 

@@ -424,7 +424,6 @@ export default function Home() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [closetOpen, setClosetOpen] = useState(false);
   const [closetMessage, setClosetMessage] = useState<string | null>(null);
-  const [unlockPending, setUnlockPending] = useState<string | null>(null); // accessory id being unlocked
   const lastActionHasBonus = lastAction.includes("bond bonus");
   const checkedInToday = state.lastCheckInDay === todayKey();
 
@@ -774,56 +773,17 @@ export default function Home() {
       });
   }
 
-  // Accessory unlock cost — $0.10 in ETH on Base, one-time per item
-  const ACCESSORY_UNLOCK_USD = 0.10;
-
-  async function handleUnlockAccessory(accessoryId: string) {
-    if (unlockPending) return; // prevent double-tap
-
-    // Guard: already unlocked
-    if (isUnlocked(state.accessories, accessoryId)) {
-      setClosetMessage("Already unlocked.");
-      return;
-    }
-
-    setUnlockPending(accessoryId);
-    setClosetMessage(null);
-
-    try {
-      const ethPrice = await fetchEthPriceUsd();
-      const price = ethPrice && ethPrice > 0 ? ethPrice : 3000;
-      const ethAmount = ACCESSORY_UNLOCK_USD / price;
-      const weiAmount = BigInt(Math.floor(ethAmount * 1e18)).toString();
-
-      const result = await sdk.actions.sendToken({
-        token: "eip155:8453/slip44:60",
-        amount: weiAmount,
-        recipientAddress: RECIPIENT,
-      });
-
-      if (result.success) {
-        const unlockResult = unlockAccessory(state.accessories, accessoryId);
-        if (unlockResult.ok === true) {
-          setState((prev) => ({ ...prev, accessories: unlockResult.newState }));
-          setClosetMessage(null);
-          setLastAction("New accessory unlocked! Head to the Closet to equip it.");
-        } else {
-          setClosetMessage(unlockResult.reason);
-        }
-      } else if (result.reason === "rejected_by_user") {
-        setClosetMessage("Cancelled. Tap Unlock to try again.");
-      } else {
-        setClosetMessage("Payment failed. Try again.");
-      }
-    } catch (err: any) {
-      const msg: string = err?.message ?? String(err);
-      if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
-        setClosetMessage("No wallet connected. Open in Farcaster to pay.");
-      } else {
-        setClosetMessage("Payment failed. Try again.");
-      }
-    } finally {
-      setUnlockPending(null);
+  function handleUnlockAccessory(accessoryId: string) {
+    const result = unlockAccessory(state.accessories, accessoryId, state.glimmer);
+    if (result.ok === true) {
+      setState((prev) => ({
+        ...prev,
+        glimmer: prev.glimmer - result.glimmerSpent,
+        accessories: result.newState,
+      }));
+      setClosetMessage(null);
+    } else {
+      setClosetMessage(result.reason);
     }
   }
 
@@ -1186,7 +1146,7 @@ export default function Home() {
               )}
 
               <p style={{ fontSize: "0.72rem", color: "#8a7a70", textAlign: "center", marginBottom: 8 }}>
-                Unlock accessories for $0.10 on Base · 1 head + 1 face at a time
+                Glimmer: <strong>{state.glimmer}</strong> · 1 head item + 1 face item at a time
               </p>
 
               <div
@@ -1227,19 +1187,17 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => handleUnlockAccessory(accessory.id)}
-                          disabled={!!unlockPending}
                           style={{
                             fontSize: 11,
                             padding: "3px 8px",
                             borderRadius: 8,
                             border: "none",
-                            background: unlockPending === accessory.id ? "#8a7a70" : "#2b211d",
+                            background: "#2b211d",
                             color: "white",
-                            cursor: unlockPending ? "not-allowed" : "pointer",
-                            opacity: unlockPending && unlockPending !== accessory.id ? 0.5 : 1,
+                            cursor: "pointer",
                           }}
                         >
-                          {unlockPending === accessory.id ? "⏳ Confirming..." : "Unlock · $0.10"}
+                          Unlock · {accessory.cost}✦
                         </button>
                       )}
 
