@@ -14,34 +14,12 @@
 // Accessories are ONLY rendered on the plain "content/smug" cat image for each
 // stage (stage1.webp, stage2.webp). Not on hungry/feral/sleepy variants.
 
-export type AccessorySlot =
-  | "head"
-  | "face"
-  | "crown"
-  | "cape"
-  | "wand"
-  | "wings"
-  | "aura"
-  | "circle"
-  | "necklace"
-  | "halo";
-
-// Render layer — controls draw order relative to the cat image, NOT slot
-// exclusivity (slot still handles "only one hat at a time" type rules).
-//
-//   background  → drawn first, fully behind the cat (e.g. magic circles)
-//   behindCat   → drawn after background, still behind the cat (capes, wings, aura)
-//   front       → drawn last, on top of the cat (glasses, hats, crowns, wands, etc.)
-//
-// This is the ONLY thing that determines visual stacking order. Adding a new
-// accessory never requires touching render logic — just pick the right layer.
-export type AccessoryLayer = "background" | "behindCat" | "front";
+export type AccessorySlot = "head" | "face" | "crown" | "cape" | "wand";
 
 export type Accessory = {
   id: string;
   name: string;
   slot: AccessorySlot;
-  layer: AccessoryLayer; // draw order relative to the cat image
   stage: number;      // which cat stage this accessory belongs to
   costUsd: number;    // USD price (stage1=$0.10, stage2=$0.20, stage3=$0.30, stage4=$0.40)
   imageUrl: string;
@@ -53,7 +31,6 @@ export const STAGE1_ACCESSORIES: Accessory[] = [
     id: "bow-black",
     name: "Black Bow",
     slot: "head",
-    layer: "front",
     stage: 1,
     costUsd: 0.10,
     imageUrl: "/accessories/bow-black.webp",
@@ -62,7 +39,6 @@ export const STAGE1_ACCESSORIES: Accessory[] = [
     id: "bow-red",
     name: "Red Bow",
     slot: "head",
-    layer: "front",
     stage: 1,
     costUsd: 0.10,
     imageUrl: "/accessories/bow-red.webp",
@@ -71,7 +47,6 @@ export const STAGE1_ACCESSORIES: Accessory[] = [
     id: "party-hat-pink",
     name: "Pink Party Hat",
     slot: "head",
-    layer: "front",
     stage: 1,
     costUsd: 0.10,
     imageUrl: "/accessories/party-hat-pink.webp",
@@ -80,7 +55,6 @@ export const STAGE1_ACCESSORIES: Accessory[] = [
     id: "party-hat-blue",
     name: "Blue Party Hat",
     slot: "head",
-    layer: "front",
     stage: 1,
     costUsd: 0.10,
     imageUrl: "/accessories/party-hat-blue.webp",
@@ -89,7 +63,6 @@ export const STAGE1_ACCESSORIES: Accessory[] = [
     id: "glasses-gold",
     name: "Gold Glasses",
     slot: "face",
-    layer: "front",
     stage: 1,
     costUsd: 0.10,
     imageUrl: "/accessories/glasses-gold.webp",
@@ -98,7 +71,6 @@ export const STAGE1_ACCESSORIES: Accessory[] = [
     id: "glasses-black",
     name: "Black Glasses",
     slot: "face",
-    layer: "front",
     stage: 1,
     costUsd: 0.10,
     imageUrl: "/accessories/glasses-black.webp",
@@ -111,7 +83,6 @@ export const STAGE2_ACCESSORIES: Accessory[] = [
     id: "crown-gold",
     name: "Gold Crown",
     slot: "crown",
-    layer: "front",
     stage: 2,
     costUsd: 0.20,
     imageUrl: "/accessories/crown-gold.webp",
@@ -120,7 +91,6 @@ export const STAGE2_ACCESSORIES: Accessory[] = [
     id: "crown-silver",
     name: "Silver Crown",
     slot: "crown",
-    layer: "front",
     stage: 2,
     costUsd: 0.20,
     imageUrl: "/accessories/crown-silver.webp",
@@ -129,7 +99,6 @@ export const STAGE2_ACCESSORIES: Accessory[] = [
     id: "cape-red",
     name: "Red Cape",
     slot: "cape",
-    layer: "behindCat",
     stage: 2,
     costUsd: 0.20,
     imageUrl: "/accessories/cape-red.webp",
@@ -138,7 +107,6 @@ export const STAGE2_ACCESSORIES: Accessory[] = [
     id: "cape-blue",
     name: "Blue Cape",
     slot: "cape",
-    layer: "behindCat",
     stage: 2,
     costUsd: 0.20,
     imageUrl: "/accessories/cape-blue.webp",
@@ -147,7 +115,6 @@ export const STAGE2_ACCESSORIES: Accessory[] = [
     id: "wand-star",
     name: "Star Wand",
     slot: "wand",
-    layer: "front",
     stage: 2,
     costUsd: 0.20,
     imageUrl: "/accessories/wand-star.webp",
@@ -156,7 +123,6 @@ export const STAGE2_ACCESSORIES: Accessory[] = [
     id: "wand-moon",
     name: "Moon Wand",
     slot: "wand",
-    layer: "front",
     stage: 2,
     costUsd: 0.20,
     imageUrl: "/accessories/wand-moon.webp",
@@ -175,33 +141,6 @@ export function getAccessory(id: string): Accessory | undefined {
 
 export function getAccessoriesForStage(stage: number): Accessory[] {
   return ACCESSORIES.filter((a) => a.stage === stage);
-}
-
-// Render order, back-most to front-most. The Kitty component draws three
-// passes in exactly this order — background, behindCat, [cat image],
-// front — so a brand new accessory only ever needs a `layer` value here,
-// never a new pass or a code change in page.tsx.
-export const LAYER_ORDER: AccessoryLayer[] = ["background", "behindCat", "front"];
-
-// Given a list of equipped accessory ids, group + order them by layer so the
-// caller can render them in up to 3 simple passes without re-deriving order
-// itself each time.
-export function groupEquippedByLayer(
-  equippedIds: string[]
-): Record<AccessoryLayer, Accessory[]> {
-  const groups: Record<AccessoryLayer, Accessory[]> = {
-    background: [],
-    behindCat: [],
-    front: [],
-  };
-
-  for (const id of equippedIds) {
-    const accessory = getAccessory(id);
-    if (!accessory) continue;
-    groups[accessory.layer].push(accessory);
-  }
-
-  return groups;
 }
 
 // ── Positions ────────────────────────────────────────────────────────────────
@@ -223,16 +162,11 @@ const STAGE1_POSITIONS: Record<string, AccessoryPosition> = {
 
 // Stage 2 positions (stage2.webp content/smug).
 // Images are now pre-sized to match cat proportions so width% can stay modest.
-//
-// Cape width/top were re-tuned after stage2.webp got a transparent background
-// (see lib note above) — the cape needs to be large/high enough that its
-// flared sides actually extend past the cat's silhouette, or it's invisible
-// even though it's correctly drawn behind the cat in z-order.
 const STAGE2_POSITIONS: Record<string, AccessoryPosition> = {
   "crown-gold":   { top: 13, left: 50, width: 32 },
   "crown-silver": { top: 13, left: 50, width: 32 },
-  "cape-red":     { top: 70, left: 50, width: 105 },
-  "cape-blue":    { top: 70, left: 50, width: 105 },
+  "cape-red":     { top: 80, left: 50, width: 62 },
+  "cape-blue":    { top: 80, left: 50, width: 62 },
   "wand-star":    { top: 68, left: 86, width: 32 },
   "wand-moon":    { top: 68, left: 86, width: 32 },
 };

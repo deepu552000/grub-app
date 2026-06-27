@@ -231,8 +231,8 @@ const STAGE1_POSITIONS: Record<string, AccessoryPosition> = {
 const STAGE2_POSITIONS: Record<string, AccessoryPosition> = {
   "crown-gold":   { top: 13, left: 50, width: 32 },
   "crown-silver": { top: 13, left: 50, width: 32 },
-  "cape-red":     { top: 70, left: 50, width: 105 },
-  "cape-blue":    { top: 70, left: 50, width: 105 },
+  "cape-red":     { top: 78, left: 50, width: 88 },
+  "cape-blue":    { top: 78, left: 50, width: 88 },
   "wand-star":    { top: 68, left: 86, width: 32 },
   "wand-moon":    { top: 68, left: 86, width: 32 },
 };

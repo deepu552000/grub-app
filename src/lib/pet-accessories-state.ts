@@ -1,14 +1,18 @@
 // lib/pet-accessories-state.ts
 //
-// Unlock/equip/remove logic for accessories. Pure functions, no UI, no
-// rendering — this just tracks what's unlocked and what's equipped per
-// slot. Designed to slot into your existing PetState as one new field.
+// Unlock/equip/remove logic for accessories across all stages.
+// Pure functions, no UI, no rendering.
+//
+// Slots by stage:
+//   Stage 1: "head" | "face"
+//   Stage 2: "crown" | "cape" | "wand"
+//   (Stage 3/4 slots to be added later — same pattern)
 
-import { ACCESSORIES, getAccessory, type AccessorySlot } from "./accessories";
+import { ACCESSORIES, getAccessory, canEquipForStage, type AccessorySlot } from "./accessories";
 
 export type AccessoryState = {
-  unlocked: string[]; // accessory ids the player has paid Glimmer to unlock
-  equipped: Partial<Record<AccessorySlot, string>>; // slot -> accessory id
+  unlocked: string[];                              // accessory ids the player has paid to unlock
+  equipped: Partial<Record<AccessorySlot, string>>; // slot -> accessory id currently equipped
 };
 
 export function createEmptyAccessoryState(): AccessoryState {
@@ -25,8 +29,8 @@ export function isEquipped(state: AccessoryState, accessoryId: string): boolean 
   return state.equipped[acc.slot] === accessoryId;
 }
 
-// Payment is now handled outside (ETH on Base) — this function just records
-// the unlock after a successful payment. No Glimmer deducted.
+// Records unlock after a successful payment (ETH/USDC on Base).
+// No in-game currency deducted — payment is handled externally.
 export function unlockAccessory(
   state: AccessoryState,
   accessoryId: string,
@@ -41,16 +45,24 @@ export function unlockAccessory(
   };
 }
 
-// Equipping a new item in a slot automatically swaps out whatever was
-// there before in that same slot (e.g. equipping black glasses while gold
-// is equipped removes gold — both are "face" slot).
+// Equip an accessory. Requires:
+//  1. The accessory is unlocked.
+//  2. The cat is currently at the matching stage (currentCatStage must match accessory.stage).
+// Equipping into a slot auto-removes whatever was there before.
 export function equipAccessory(
   state: AccessoryState,
   accessoryId: string,
+  currentCatStage: number,
 ): { ok: true; newState: AccessoryState } | { ok: false; reason: string } {
   const acc = getAccessory(accessoryId);
   if (!acc) return { ok: false, reason: "Unknown accessory" };
   if (!isUnlocked(state, accessoryId)) return { ok: false, reason: "Not unlocked yet" };
+  if (!canEquipForStage(currentCatStage, acc.stage)) {
+    return {
+      ok: false,
+      reason: `This accessory is for Stage ${acc.stage} cats. Your cat is Stage ${currentCatStage}.`,
+    };
+  }
 
   return {
     ok: true,
@@ -70,4 +82,13 @@ export function removeAccessory(state: AccessoryState, slot: AccessorySlot): Acc
 
 export function getEquippedList(state: AccessoryState): string[] {
   return Object.values(state.equipped).filter(Boolean) as string[];
+}
+
+// Returns only the equipped accessories that belong to a specific stage.
+// Used to filter which accessories are visible on the cat at render time.
+export function getEquippedForStage(state: AccessoryState, stage: number): string[] {
+  return getEquippedList(state).filter((id) => {
+    const acc = getAccessory(id);
+    return acc?.stage === stage;
+  });
 }

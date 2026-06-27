@@ -582,8 +582,6 @@ h1 {
   -webkit-user-drag: none;
   user-select: none;
   pointer-events: none;
-  position: relative;
-  z-index: 2;
 }
 
 .kitty-stage-1 { --kitty-size: 168px; }
@@ -615,33 +613,15 @@ h1 {
   height: 100%;
   pointer-events: none;
   overflow: visible;
-  z-index: 2;
 }
 
-/* ── Accessories: bows, hats, glasses, capes, wings etc. layered relative to
-   the cat image. Position/size come from inline styles (lib/accessories.ts).
-   z-index here is EXPLICIT and load-bearing — .kitty-image runs a continuous
-   transform animation (kittyBreathe) which gives it its own stacking
-   context, so plain DOM order is not reliable for layering against it.
-   Each accessory layer gets a fixed z-index instead:
-     behindCat (1)  <  kitty-image (2)  <  front (3)
-   background accessories (magic circles, stage 4+) sit below everything. ── */
+/* ── Accessories: bows, hats, glasses layered on top of the cat image.
+   Position/size come from inline styles (lib/accessories.ts), this just
+   handles the visual polish — smooth fade when equipping/removing and a
+   tiny drop shadow so flat art doesn't look pasted-on. ── */
 .kitty-accessory {
-  position: absolute;
   animation: accessoryFadeIn 180ms ease-out;
   filter: drop-shadow(0 2px 3px rgba(43, 33, 29, 0.18));
-}
-
-.kitty-accessory-background {
-  z-index: 0;
-}
-
-.kitty-accessory-behindCat {
-  z-index: 1;
-}
-
-.kitty-accessory-front {
-  z-index: 3;
 }
 
 @keyframes accessoryFadeIn {

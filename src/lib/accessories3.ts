@@ -223,16 +223,11 @@ const STAGE1_POSITIONS: Record<string, AccessoryPosition> = {
 
 // Stage 2 positions (stage2.webp content/smug).
 // Images are now pre-sized to match cat proportions so width% can stay modest.
-//
-// Cape width/top were re-tuned after stage2.webp got a transparent background
-// (see lib note above) — the cape needs to be large/high enough that its
-// flared sides actually extend past the cat's silhouette, or it's invisible
-// even though it's correctly drawn behind the cat in z-order.
 const STAGE2_POSITIONS: Record<string, AccessoryPosition> = {
   "crown-gold":   { top: 13, left: 50, width: 32 },
   "crown-silver": { top: 13, left: 50, width: 32 },
-  "cape-red":     { top: 70, left: 50, width: 105 },
-  "cape-blue":    { top: 70, left: 50, width: 105 },
+  "cape-red":     { top: 80, left: 50, width: 62 },
+  "cape-blue":    { top: 80, left: 50, width: 62 },
   "wand-star":    { top: 68, left: 86, width: 32 },
   "wand-moon":    { top: 68, left: 86, width: 32 },
 };

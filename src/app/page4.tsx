@@ -3,7 +3,7 @@
 import sdk from "@farcaster/miniapp-sdk";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState, useRef } from "react";
-import { ACCESSORIES, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage, groupEquippedByLayer, type Accessory, type AccessorySlot } from "@/lib/accessories";
+import { ACCESSORIES, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage } from "@/lib/accessories";
 import {
   type AccessoryState,
   createEmptyAccessoryState,
@@ -837,7 +837,7 @@ export default function Home() {
     }
   }
 
-  function handleRemoveAccessory(slot: AccessorySlot) {
+  function handleRemoveAccessory(slot: "head" | "face" | "crown" | "cape" | "wand") {
     setState((prev) => ({ ...prev, accessories: removeAccessory(prev.accessories, slot) }));
     setClosetMessage(null);
   }
@@ -1534,29 +1534,84 @@ function Kitty({
     >
       <div className="kitty-shadow" />
 
-      {/*
-        Layered accessory rendering — three passes, back-most to front-most:
-        background → behindCat → [cat image] → front. Each accessory carries
-        its own `layer` (see lib/accessories.ts), so adding a new one (wings,
-        aura, a magic circle, whatever) never means touching this component —
-        just tag it with the right layer in the catalog and it slots in.
-      */}
-      {(() => {
-        const showAccessories = accessoriesAllowedFor(stage, mood);
-        const layers = showAccessories
-          ? groupEquippedByLayer(equippedAccessoryIds)
-          : { background: [], behindCat: [], front: [] };
+      {/* Base artwork — key forces remount (and kittyFadeIn replay) on stage/mood change */}
+      <img key={src} src={src} alt="" className="kitty-image" draggable={false} />
 
-        const renderAccessory = (accessory: Accessory) => {
-          const position = getPosition(accessory.id);
-          if (!position) return null;
+      {/*
+        Overlay SVG — sits pixel-perfect on top of the webp.
+        viewBox must match the actual rendered image size for this stage.
+      */}
+      <svg
+        className="kitty-overlay"
+        viewBox={`0 0 ${eye.size} ${eye.size}`}
+        aria-hidden="true"
+      >
+        {/* LEFT EAR — hidden in sleepy mode */}
+        {mood !== "sleepy" && (
+          <g className={`kitty-ear-l${earWiggle ? " ear-wig-l" : ""}`}>
+            <path d={ear.lOuter} fill={ear.lOuterFill} opacity={0.95} />
+            <path d={ear.lInner} fill={ear.lInnerFill} opacity={0.85} />
+          </g>
+        )}
+
+        {/* RIGHT EAR */}
+        {mood !== "sleepy" && (
+          <g className={`kitty-ear-r${earWiggle ? " ear-wig-r" : ""}`}>
+            <path d={ear.rOuter} fill={ear.rOuterFill} opacity={0.95} />
+            <path d={ear.rInner} fill={ear.rInnerFill} opacity={0.85} />
+          </g>
+        )}
+
+        {/* TAIL — stage 3+ animated via CSS image sway on .kitty-image, no SVG overlay needed */}
+
+        {/* LEFT EYELID */}
+        <clipPath id={`clip-l-${stage}`}>
+          <ellipse cx={eye.lx} cy={eye.ly} rx={eye.rx2} ry={eye.ry2} />
+        </clipPath>
+        <rect
+          x={eye.lx - eye.rx2 - 2}
+          y={eye.ly - eye.ry2 - 2}
+          width={(eye.rx2 + 2) * 2}
+          height={(eye.ry2 + 2) * 2}
+          fill={eye.fill}
+          clipPath={`url(#clip-l-${stage})`}
+          className={`kitty-eyelid kitty-eyelid-l${blinking ? " eyelid-blink-l" : ""}`}
+        />
+
+        {/* RIGHT EYELID */}
+        <clipPath id={`clip-r-${stage}`}>
+          <ellipse cx={eye.rx} cy={eye.ry} rx={eye.rx2} ry={eye.ry2} />
+        </clipPath>
+        <rect
+          x={eye.rx - eye.rx2 - 2}
+          y={eye.ry - eye.ry2 - 2}
+          width={(eye.rx2 + 2) * 2}
+          height={(eye.ry2 + 2) * 2}
+          fill={eye.fill}
+          clipPath={`url(#clip-r-${stage})`}
+          className={`kitty-eyelid kitty-eyelid-r${blinking ? " eyelid-blink-r" : ""}`}
+        />
+      </svg>
+
+      {/*
+        Accessory overlay — only ever rendered for stage 1 + content/smug
+        mood (the plain stage1.webp). All other moods/stages use different
+        art files this accessory positioning was never fit against, so we
+        hide accessories entirely there rather than show a bad fit.
+      */}
+      {accessoriesAllowedFor(stage, mood) &&
+        equippedAccessoryIds.map((id) => {
+          const accessory = ACCESSORIES.find((a) => a.id === id);
+          const position = getPosition(id);
+          if (!accessory || !position) return null;
+
           return (
             <img
-              key={accessory.id}
+              key={id}
               src={accessory.imageUrl}
               alt={accessory.name}
               draggable={false}
-              className={`kitty-accessory kitty-accessory-${accessory.layer}`}
+              className="kitty-accessory"
               style={{
                 position: "absolute",
                 top: `${position.top}%`,
@@ -1568,80 +1623,7 @@ function Kitty({
               }}
             />
           );
-        };
-
-        return (
-          <>
-            {/* Pass 1 — background (e.g. magic circles) */}
-            {layers.background.map(renderAccessory)}
-
-            {/* Pass 2 — behind the cat (capes, wings, aura) */}
-            {layers.behindCat.map(renderAccessory)}
-
-            {/* Pass 3 — base artwork — key forces remount (and kittyFadeIn replay) on stage/mood change */}
-            <img key={src} src={src} alt="" className="kitty-image" draggable={false} />
-
-            {/*
-              Overlay SVG — sits pixel-perfect on top of the webp.
-              viewBox must match the actual rendered image size for this stage.
-            */}
-            <svg
-              className="kitty-overlay"
-              viewBox={`0 0 ${eye.size} ${eye.size}`}
-              aria-hidden="true"
-            >
-              {/* LEFT EAR — hidden in sleepy mode */}
-              {mood !== "sleepy" && (
-                <g className={`kitty-ear-l${earWiggle ? " ear-wig-l" : ""}`}>
-                  <path d={ear.lOuter} fill={ear.lOuterFill} opacity={0.95} />
-                  <path d={ear.lInner} fill={ear.lInnerFill} opacity={0.85} />
-                </g>
-              )}
-
-              {/* RIGHT EAR */}
-              {mood !== "sleepy" && (
-                <g className={`kitty-ear-r${earWiggle ? " ear-wig-r" : ""}`}>
-                  <path d={ear.rOuter} fill={ear.rOuterFill} opacity={0.95} />
-                  <path d={ear.rInner} fill={ear.rInnerFill} opacity={0.85} />
-                </g>
-              )}
-
-              {/* TAIL — stage 3+ animated via CSS image sway on .kitty-image, no SVG overlay needed */}
-
-              {/* LEFT EYELID */}
-              <clipPath id={`clip-l-${stage}`}>
-                <ellipse cx={eye.lx} cy={eye.ly} rx={eye.rx2} ry={eye.ry2} />
-              </clipPath>
-              <rect
-                x={eye.lx - eye.rx2 - 2}
-                y={eye.ly - eye.ry2 - 2}
-                width={(eye.rx2 + 2) * 2}
-                height={(eye.ry2 + 2) * 2}
-                fill={eye.fill}
-                clipPath={`url(#clip-l-${stage})`}
-                className={`kitty-eyelid kitty-eyelid-l${blinking ? " eyelid-blink-l" : ""}`}
-              />
-
-              {/* RIGHT EYELID */}
-              <clipPath id={`clip-r-${stage}`}>
-                <ellipse cx={eye.rx} cy={eye.ry} rx={eye.rx2} ry={eye.ry2} />
-              </clipPath>
-              <rect
-                x={eye.rx - eye.rx2 - 2}
-                y={eye.ry - eye.ry2 - 2}
-                width={(eye.rx2 + 2) * 2}
-                height={(eye.ry2 + 2) * 2}
-                fill={eye.fill}
-                clipPath={`url(#clip-r-${stage})`}
-                className={`kitty-eyelid kitty-eyelid-r${blinking ? " eyelid-blink-r" : ""}`}
-              />
-            </svg>
-
-            {/* Pass 4 — front (glasses, hats, bows, crowns, necklace, halo, wand) */}
-            {layers.front.map(renderAccessory)}
-          </>
-        );
-      })()}
+        })}
     </div>
 
   );
