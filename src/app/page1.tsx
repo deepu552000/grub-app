@@ -500,39 +500,17 @@ export default function Home() {
   const [checkinPending, setCheckinPending] = useState(false);
   const [checkinError, setCheckinError] = useState<string | null>(null);
 
-  // ── USDC contract payment ─────────────────────────────────────────────────
-  // USDC on Base mainnet
-  const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+  // USDC on Base — CAIP-19 token id and 6-decimal amount conversion
+  const USDC_TOKEN = "eip155:8453/erc20:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 
-  // Encode ERC-20 transfer(address,uint256) calldata
-  // transfer selector = 0xa9059cbb
-  // recipient and amount are ABI-encoded as 32-byte padded hex
-  function encodeUsdcTransfer(toAddress: string, usdAmount: number): string {
-    const selector = "a9059cbb";
-    const microUsdc = Math.round(usdAmount * 1_000_000);
-    // strip 0x if present, left-pad to 32 bytes (64 hex chars)
-    const paddedTo = toAddress.replace(/^0x/, "").toLowerCase().padStart(64, "0");
-    const paddedAmount = microUsdc.toString(16).padStart(64, "0");
-    return "0x" + selector + paddedTo + paddedAmount;
+  // Converts a USD amount → USDC amount string (6 decimals, e.g. $0.01 → "10000", $0.10 → "100000")
+  function usdToUsdcString(usdAmount: number): string {
+    return Math.round(usdAmount * 1_000_000).toString();
   }
 
-  // Sends exact USDC via direct contract call — no editable form, exact amount only.
-  // Returns txHash on success, throws on rejection or failure.
-  async function sendUsdcPayment(usdAmount: number): Promise<string> {
-    const provider = await sdk.wallet.getEthereumProvider();
-    const accounts: string[] = await provider.request({ method: "eth_requestAccounts" });
-    if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
-
-    const data = encodeUsdcTransfer(RECIPIENT, usdAmount);
-    const txHash: string = await provider.request({
-      method: "eth_sendTransaction",
-      params: [{
-        from: accounts[0],
-        to: USDC_CONTRACT,
-        data,
-      }],
-    });
-    return txHash;
+  // Alias used by check-in
+  function checkinUsdcAmount(): string {
+    return usdToUsdcString(CHECKIN_USD);
   }
 
   // yesterday's date key
@@ -590,19 +568,29 @@ export default function Home() {
       return;
     }
 
-    // Paid check-in — exact $0.01 USDC on Base via contract call
+    // Paid check-in — send $0.01 USDC on Base
     setCheckinPending(true);
     try {
-      await sendUsdcPayment(CHECKIN_USD);
-      applyCheckIn();
+      const usdcAmount = checkinUsdcAmount(); // returns USDC micro-units string
+      const result = await sdk.actions.sendToken({
+        token: USDC_TOKEN,
+        amount: usdcAmount,
+        recipientAddress: RECIPIENT,
+      });
+
+      if (result.success) {
+        applyCheckIn();
+      } else if (result.reason === "rejected_by_user") {
+        setCheckinError("Cancelled. Tap Check In to try again.");
+      } else {
+        setCheckinError("Payment failed. Try again.");
+      }
     } catch (err: any) {
       const msg: string = err?.message ?? String(err);
-      if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
-        setCheckinError("Cancelled. Tap Check In to try again.");
-      } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect") || msg.toLowerCase().includes("account")) {
+      if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
         setCheckinError("No wallet connected. Open in Farcaster to pay.");
       } else {
-        setCheckinError(`Payment failed: ${msg.slice(0, 80)}`);
+        setCheckinError("Payment failed. Try again.");
       }
     } finally {
       setCheckinPending(false);
@@ -791,24 +779,31 @@ export default function Home() {
     setClosetMessage(null);
 
     try {
-      await sendUsdcPayment(ACCESSORY_UNLOCK_USD);
-      const unlockResult = unlockAccessory(state.accessories, accessoryId);
-      if (unlockResult.ok === true) {
-        setState((prev) => ({ ...prev, accessories: unlockResult.newState }));
-        setClosetMessage(null);
-        setLastAction("New accessory unlocked! Tap Equip to dress up Grub.");
+      const usdcAmount = usdToUsdcString(ACCESSORY_UNLOCK_USD);
+
+      const result = await sdk.actions.sendToken({
+        token: USDC_TOKEN,
+        amount: usdcAmount,
+        recipientAddress: RECIPIENT,
+      });
+
+      if (result.success) {
+        const unlockResult = unlockAccessory(state.accessories, accessoryId);
+        if (unlockResult.ok === true) {
+          setState((prev) => ({ ...prev, accessories: unlockResult.newState }));
+          setClosetMessage(null);
+          setLastAction("New accessory unlocked! Head to the Closet to equip it.");
+        } else {
+          setClosetMessage(unlockResult.reason);
+        }
+      } else if (result.reason === "rejected_by_user") {
+        setClosetMessage("Cancelled. Tap Unlock to try again.");
       } else {
-        setClosetMessage(unlockResult.reason);
+        setClosetMessage(`Payment failed (${result.reason ?? "unknown"}). Try again.`);
       }
     } catch (err: any) {
       const msg: string = err?.message ?? String(err);
-      if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
-        setClosetMessage("Cancelled. Tap Unlock to try again.");
-      } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect") || msg.toLowerCase().includes("account")) {
-        setClosetMessage("No wallet connected. Open in Farcaster to pay.");
-      } else {
-        setClosetMessage(`Payment failed: ${msg.slice(0, 80)}`);
-      }
+      setClosetMessage(`Error: ${msg.slice(0, 120)}`);
     } finally {
       setUnlockPending(null);
     }
