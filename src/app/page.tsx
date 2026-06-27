@@ -520,6 +520,7 @@ export default function Home() {
   // Returns txHash on success, throws on rejection or failure.
   async function sendUsdcPayment(usdAmount: number): Promise<string> {
     const provider = await sdk.wallet.getEthereumProvider();
+    if (!provider) throw new Error("No wallet connected.");
     const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
     if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
 
