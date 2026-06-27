@@ -1550,12 +1550,6 @@ function Kitty({
         const renderAccessory = (accessory: Accessory) => {
           const position = getPosition(accessory.id);
           if (!position) return null;
-          // Center the accessory on its top/left point first, THEN rotate —
-          // order matters: translate(-50%,-50%) has to happen before rotate()
-          // or the image spins around its corner instead of its own center.
-          const transform = position.rotate
-            ? `translate(-50%, -50%) rotate(${position.rotate}deg)`
-            : "translate(-50%, -50%)";
           return (
             <img
               key={accessory.id}
@@ -1568,7 +1562,7 @@ function Kitty({
                 top: `${position.top}%`,
                 left: `${position.left}%`,
                 width: `${position.width}%`,
-                transform,
+                transform: "translate(-50%, -50%)",
                 pointerEvents: "none",
                 userSelect: "none",
               }}
