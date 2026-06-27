@@ -552,11 +552,11 @@ h1 {
 .kitty-stage-wrap::before {
   content: "";
   position: absolute;
-  width: 260px;
-  height: 260px;
-  border-radius: 26px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
   background: var(--cream);
-  filter: blur(18px);
+  filter: blur(32px);
   z-index: 0;
 }
 
@@ -796,13 +796,11 @@ h1 {
 }
 
 @keyframes idleInvite {
-  0%,
-  88%,
-  100% {
-    filter: brightness(1);
+  0%, 88%, 100% {
+    transform: translateY(0);
   }
   92% {
-    filter: brightness(1.04);
+    transform: translateY(-2px);
   }
 }
 
@@ -1179,4 +1177,16 @@ h1 {
 @keyframes bubblePop {
   from { opacity: 0; transform: scale(0.85) translateY(6px); }
   to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes eventBubbleIn {
+  0%   { opacity: 0; transform: scale(0.88) translateY(-8px); }
+  70%  { opacity: 1; transform: scale(1.03) translateY(2px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes eventBubblePop {
+  0%   { opacity: 1; transform: scale(1); filter: blur(0px); }
+  40%  { opacity: 0.6; transform: scale(1.08); filter: blur(1px); }
+  100% { opacity: 0; transform: scale(1.4); filter: blur(6px); }
 }

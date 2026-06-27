@@ -615,6 +615,26 @@ h1 {
   overflow: visible;
 }
 
+/* ── Accessories: bows, hats, glasses layered on top of the cat image.
+   Position/size come from inline styles (lib/accessories.ts), this just
+   handles the visual polish — smooth fade when equipping/removing and a
+   tiny drop shadow so flat art doesn't look pasted-on. ── */
+.kitty-accessory {
+  animation: accessoryFadeIn 180ms ease-out;
+  filter: drop-shadow(0 2px 3px rgba(43, 33, 29, 0.18));
+}
+
+@keyframes accessoryFadeIn {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
 /* ── Eyelids: fully open by default (scaleY 0 + opacity 0 = invisible rect) ── */
 .kitty-eyelid {
   transform-box: fill-box;

@@ -26,6 +26,7 @@ type PetState = {
   checkinStreak: number;
   checkinHistory: string[]; // last 7 day-keys that were checked in
   totalCheckIns: number; // lifetime check-in count, first 5 are free
+  lastEventDay: string;  // date key of last applied daily event
 };
 
 type FloatingNumber = {
@@ -201,6 +202,7 @@ const defaultState: PetState = {
   checkinStreak: 0,
   checkinHistory: [],
   totalCheckIns: 0,
+  lastEventDay: "",
 };
 
 function clamp(value: number) {
@@ -342,20 +344,27 @@ export default function Home() {
   }, [fid]);
 
   useEffect(() => {
+    // Timeout fallback — if SDK doesn't respond in 2s (e.g. plain browser), load from localStorage
+    const fallbackTimer = setTimeout(() => {
+      if (!hydrated) {
+        setState(loadState());
+        setHydrated(true);
+      }
+    }, 2000);
+
     sdk.actions.ready().catch(() => {
-      // Local browser testing is expected to land here.
-      // Also load from localStorage when running outside Farcaster (no FID available).
+      clearTimeout(fallbackTimer);
       setState(loadState());
       setHydrated(true);
     });
-    // Extract the viewer's FID from the Farcaster mini app context
+
     sdk.context
       .then((ctx) => {
         if (ctx?.user?.fid) setFid(ctx.user.fid);
       })
-      .catch(() => {
-        // Outside Farcaster — no FID, use localStorage fallback (triggered in ready() catch above)
-      });
+      .catch(() => {});
+
+    return () => clearTimeout(fallbackTimer);
   }, []);
 
   useEffect(() => {
@@ -399,6 +408,56 @@ export default function Home() {
   const [statsOpen, setStatsOpen] = useState(false);
   const lastActionHasBonus = lastAction.includes("bond bonus");
   const checkedInToday = state.lastCheckInDay === todayKey();
+
+  // ── Daily Event ───────────────────────────────────────────────────────────
+  type DailyEvent = {
+    id: string;
+    emoji: string;
+    title: string;
+    message: string;
+    effect: Partial<Record<string, number>>;
+  };
+  const [todayEvent, setTodayEvent] = useState<DailyEvent | null>(null);
+  const [eventVisible, setEventVisible] = useState(false);
+  const [eventDismissing, setEventDismissing] = useState(false);
+
+  function dismissEvent() {
+    setEventDismissing(true);
+    setTimeout(() => setEventVisible(false), 600); // matches animation duration
+  }
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (state.lastEventDay === todayKey()) return;
+
+    fetch("/api/event")
+      .then((r) => r.json())
+      .then(({ event }: { event: DailyEvent }) => {
+        if (!event) return;
+        setTodayEvent(event);
+        // Only show banner and apply effects if user has checked in today
+        if (state.lastCheckInDay === todayKey()) {
+          setEventVisible(true);
+          setEventDismissing(false);
+          setTimeout(() => dismissEvent(), 5000);
+          setState((cur) => {
+            const fx = event.effect ?? {};
+            return {
+              ...cur,
+              lastEventDay: todayKey(),
+              glimmer: fx.glimmer ? clamp(cur.glimmer + fx.glimmer) : cur.glimmer,
+              xp: fx.xp ? cur.xp + fx.xp : cur.xp,
+              energy: fx.energy ? clamp(cur.energy + fx.energy) : cur.energy,
+              hunger: fx.hunger ? clamp(cur.hunger + fx.hunger) : cur.hunger,
+              happiness: fx.happiness ? clamp(cur.happiness + fx.happiness) : cur.happiness,
+              care: fx.care ? clamp(cur.care + fx.care) : cur.care,
+              bond: fx.bond ? clamp(cur.bond + fx.bond) : cur.bond,
+            };
+          });
+        }
+      })
+      .catch(() => {});
+  }, [hydrated, state.lastCheckInDay]);
 
   // Action bubble — shows near buttons after each care action, fades after 2.5s
   const [actionBubble, setActionBubble] = useState<string | null>(null);
@@ -696,6 +755,13 @@ export default function Home() {
       });
   }
 
+  if (!hydrated) return (
+    <main className="app-shell" style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", minHeight: "100dvh" }}>
+      <img src="/cats/stage1.webp" alt="Grub loading" style={{ width: 80, opacity: 0.55 }} />
+      <p style={{ color: "#b5a49a", fontSize: "0.8rem", marginTop: 12, fontWeight: 600 }}>Loading Grub...</p>
+    </main>
+  );
+
   return (
     <main className={`app-shell mood-${mood}`}>
       <section className="phone-frame">
@@ -742,6 +808,43 @@ export default function Home() {
             <strong>{growth}% grown</strong>
           </div>
         </section>
+
+        {/* ── DAILY EVENT BANNER ── */}
+        {eventVisible && todayEvent && (
+          <div
+            onClick={dismissEvent}
+            style={{
+              margin: "0 0 10px 0",
+              padding: "10px 14px",
+              background: "rgba(255,255,255,0.72)",
+              border: "1.5px solid rgba(43,33,29,0.13)",
+              borderRadius: 14,
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 10,
+              position: "relative",
+              cursor: "pointer",
+              animation: eventDismissing
+                ? "eventBubblePop 0.6s cubic-bezier(.4,1.4,.6,1) forwards"
+                : "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
+            }}>
+            <span style={{ fontSize: "1.6rem", lineHeight: 1 }}>{todayEvent.emoji}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: "0.82rem", color: "#49332d", marginBottom: 2 }}>
+                {todayEvent.title}
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "#7a5c4f", lineHeight: 1.4 }}>
+                {todayEvent.message}
+              </div>
+              <div style={{ fontSize: "0.7rem", color: "#4caf7d", fontWeight: 700, marginTop: 4 }}>
+                {Object.entries(todayEvent.effect ?? {})
+                  .filter(([, v]) => v !== 0)
+                  .map(([k, v]) => `${(v as number) > 0 ? "+" : ""}${v} ${k}`)
+                  .join(" · ")}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── SPEECH ── */}
         <section className="speech">

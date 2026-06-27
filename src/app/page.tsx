@@ -3,6 +3,16 @@
 import sdk from "@farcaster/miniapp-sdk";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState, useRef } from "react";
+import { ACCESSORIES, getPosition, accessoriesAllowedFor } from "@/lib/accessories";
+import {
+  type AccessoryState,
+  createEmptyAccessoryState,
+  isUnlocked,
+  isEquipped,
+  unlockAccessory,
+  equipAccessory,
+  removeAccessory,
+} from "@/lib/pet-accessories-state";
 
 type Mood = "content" | "smug" | "hungry" | "feral" | "sleepy";
 type ActionType = "feed" | "play" | "groom" | "nap";
@@ -27,6 +37,7 @@ type PetState = {
   checkinHistory: string[]; // last 7 day-keys that were checked in
   totalCheckIns: number; // lifetime check-in count, first 5 are free
   lastEventDay: string;  // date key of last applied daily event
+  accessories: AccessoryState;
 };
 
 type FloatingNumber = {
@@ -203,6 +214,7 @@ const defaultState: PetState = {
   checkinHistory: [],
   totalCheckIns: 0,
   lastEventDay: "",
+  accessories: createEmptyAccessoryState(),
 };
 
 function clamp(value: number) {
@@ -269,6 +281,9 @@ function loadState(): PetState {
         : { ...defaultState.actionsToday, ...parsed.actionsToday },
       // Tap-day tracking is fully independent from care-button day tracking.
       tapsToday: isNewTapDay ? 0 : parsed.tapsToday ?? 0,
+      // Old saves won't have this field — fall back to empty so equip/unlock
+      // logic never crashes on undefined.
+      accessories: parsed.accessories ?? createEmptyAccessoryState(),
     };
   } catch {
     return { ...defaultState, lastVisit: Date.now() };
@@ -306,6 +321,7 @@ function loadStateFromSaved(parsed: PetState): PetState {
       ? { feed: 0, play: 0, groom: 0, nap: 0 }
       : { ...defaultState.actionsToday, ...parsed.actionsToday },
     tapsToday: isNewTapDay ? 0 : parsed.tapsToday ?? 0,
+    accessories: parsed.accessories ?? createEmptyAccessoryState(),
   };
 }
 
@@ -406,6 +422,8 @@ export default function Home() {
   );
   const [showFaq, setShowFaq] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [closetOpen, setClosetOpen] = useState(false);
+  const [closetMessage, setClosetMessage] = useState<string | null>(null);
   const lastActionHasBonus = lastAction.includes("bond bonus");
   const checkedInToday = state.lastCheckInDay === todayKey();
 
@@ -755,6 +773,35 @@ export default function Home() {
       });
   }
 
+  function handleUnlockAccessory(accessoryId: string) {
+    const result = unlockAccessory(state.accessories, accessoryId, state.glimmer);
+    if (result.ok === true) {
+      setState((prev) => ({
+        ...prev,
+        glimmer: prev.glimmer - result.glimmerSpent,
+        accessories: result.newState,
+      }));
+      setClosetMessage(null);
+    } else {
+      setClosetMessage(result.reason);
+    }
+  }
+
+  function handleEquipAccessory(accessoryId: string) {
+    const result = equipAccessory(state.accessories, accessoryId);
+    if (result.ok === true) {
+      setState((prev) => ({ ...prev, accessories: result.newState }));
+      setClosetMessage(null);
+    } else {
+      setClosetMessage(result.reason);
+    }
+  }
+
+  function handleRemoveAccessory(slot: "head" | "face") {
+    setState((prev) => ({ ...prev, accessories: removeAccessory(prev.accessories, slot) }));
+    setClosetMessage(null);
+  }
+
   if (!hydrated) return (
     <main className="app-shell" style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", minHeight: "100dvh" }}>
       <img src="/cats/stage1.webp" alt="Grub loading" style={{ width: 80, opacity: 0.55 }} />
@@ -792,6 +839,7 @@ export default function Home() {
               carePulse={carePulse}
               poked={poked}
               onPoke={pokeKitty}
+              equippedAccessoryIds={Object.values(state.accessories.equipped).filter(Boolean) as string[]}
             />
             {ripples.map((r) => (
               <span key={r.id} className="tap-ripple" style={{ left: r.x, top: r.y }} />
@@ -1071,6 +1119,132 @@ export default function Home() {
           )}
         </section>
 
+        {/* ── CLOSET — accessories, stage 1 normal mood only ── */}
+        <section className="closet-collapsible" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="closet-toggle stats-toggle"
+            onClick={() => setClosetOpen((o) => !o)}
+          >
+            <span>👒 Closet</span>
+            <span className="stats-chevron">{closetOpen ? "▲" : "▼"}</span>
+          </button>
+
+          {closetOpen && (
+            <div className="closet-body stats-body">
+              {!accessoriesAllowedFor(stageIndex, mood) && (
+                <p style={{ fontSize: "0.78rem", color: "#b5544f", textAlign: "center" }}>
+                  Grub needs to be content and well-cared-for to wear accessories.
+                  Check back when she's happy!
+                </p>
+              )}
+
+              {closetMessage && (
+                <p style={{ fontSize: "0.78rem", color: "#b5544f", textAlign: "center" }}>
+                  {closetMessage}
+                </p>
+              )}
+
+              <p style={{ fontSize: "0.72rem", color: "#8a7a70", textAlign: "center", marginBottom: 8 }}>
+                Glimmer: <strong>{state.glimmer}</strong> · 1 head item + 1 face item at a time
+              </p>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, 1fr)",
+                  gap: 10,
+                }}
+              >
+                {ACCESSORIES.map((accessory) => {
+                  const unlocked = isUnlocked(state.accessories, accessory.id);
+                  const equipped = isEquipped(state.accessories, accessory.id);
+
+                  return (
+                    <div
+                      key={accessory.id}
+                      style={{
+                        border: equipped ? "2px solid #4caf7d" : "1px solid rgba(43,33,29,0.15)",
+                        borderRadius: 12,
+                        padding: 8,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 4,
+                        background: "rgba(255,255,255,0.4)",
+                      }}
+                    >
+                      <img
+                        src={accessory.imageUrl}
+                        alt={accessory.name}
+                        style={{ width: 40, height: 40, objectFit: "contain" }}
+                      />
+                      <span style={{ fontSize: 11, fontWeight: 700, textAlign: "center" }}>
+                        {accessory.name}
+                      </span>
+
+                      {!unlocked && (
+                        <button
+                          type="button"
+                          onClick={() => handleUnlockAccessory(accessory.id)}
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 8px",
+                            borderRadius: 8,
+                            border: "none",
+                            background: "#2b211d",
+                            color: "white",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Unlock · {accessory.cost}✦
+                        </button>
+                      )}
+
+                      {unlocked && !equipped && (
+                        <button
+                          type="button"
+                          onClick={() => handleEquipAccessory(accessory.id)}
+                          disabled={!accessoriesAllowedFor(stageIndex, mood)}
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 8px",
+                            borderRadius: 8,
+                            border: "1px solid #2b211d",
+                            background: "white",
+                            cursor: accessoriesAllowedFor(stageIndex, mood) ? "pointer" : "not-allowed",
+                            opacity: accessoriesAllowedFor(stageIndex, mood) ? 1 : 0.5,
+                          }}
+                        >
+                          Equip
+                        </button>
+                      )}
+
+                      {equipped && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveAccessory(accessory.slot)}
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 8px",
+                            borderRadius: 8,
+                            border: "1px solid #b5544f",
+                            background: "white",
+                            color: "#b5544f",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </section>
+
       </section>
       {showFaq && <FaqModal onClose={() => setShowFaq(false)} />}
     </main>
@@ -1169,6 +1343,7 @@ function Kitty({
   carePulse,
   poked,
   onPoke,
+  equippedAccessoryIds,
 }: {
   stage: number;
   mood: Mood;
@@ -1176,6 +1351,7 @@ function Kitty({
   carePulse: ActionType | "";
   poked: boolean;
   onPoke: (point?: { x: number; y: number }) => void;
+  equippedAccessoryIds: string[];
 }) {
   const growthRatio = growth / 100;
   const src = catImageSrc(stage, mood);
@@ -1294,7 +1470,40 @@ function Kitty({
           className={`kitty-eyelid kitty-eyelid-r${blinking ? " eyelid-blink-r" : ""}`}
         />
       </svg>
+
+      {/*
+        Accessory overlay — only ever rendered for stage 1 + content/smug
+        mood (the plain stage1.webp). All other moods/stages use different
+        art files this accessory positioning was never fit against, so we
+        hide accessories entirely there rather than show a bad fit.
+      */}
+      {accessoriesAllowedFor(stage, mood) &&
+        equippedAccessoryIds.map((id) => {
+          const accessory = ACCESSORIES.find((a) => a.id === id);
+          const position = getPosition(id);
+          if (!accessory || !position) return null;
+
+          return (
+            <img
+              key={id}
+              src={accessory.imageUrl}
+              alt={accessory.name}
+              draggable={false}
+              className="kitty-accessory"
+              style={{
+                position: "absolute",
+                top: `${position.top}%`,
+                left: `${position.left}%`,
+                width: `${position.width}%`,
+                transform: "translate(-50%, -50%)",
+                pointerEvents: "none",
+                userSelect: "none",
+              }}
+            />
+          );
+        })}
     </div>
+
   );
 }
 
