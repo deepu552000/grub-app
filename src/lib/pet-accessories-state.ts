@@ -6,7 +6,7 @@
 // Slots by stage:
 //   Stage 1: "head" | "face"
 //   Stage 2: "crown" | "cape" | "wand"
-//   (Stage 3/4 slots to be added later — same pattern)
+//   Stage 3: "wings" | "hat" | "tail"
 
 import { ACCESSORIES, getAccessory, canEquipForStage, type AccessorySlot } from "./accessories";
 

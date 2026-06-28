@@ -4,6 +4,7 @@
 //
 // Stage 1 slots: "head" | "face"   (bow, glasses)
 // Stage 2 slots: "crown" | "cape" | "wand"  (crown, cape, magic wand)
+// Stage 3 slots: "wings" | "hat" | "tail"  (wings, wizard hat, tail charm)
 //
 // Positions are percentages of the .kitty-wrap box.
 // Stage 1 kitty-wrap = 168×168px. Stage 2 kitty-wrap = 200×200px (see globals.css).
@@ -23,8 +24,9 @@ export type AccessorySlot =
   | "wings"
   | "aura"
   | "circle"
-  | "necklace"
-  | "halo";
+  | "tail"
+  | "halo"
+  | "hat";
 
 // Render layer — controls draw order relative to the cat image, NOT slot
 // exclusivity (slot still handles "only one hat at a time" type rules).
@@ -163,10 +165,70 @@ export const STAGE2_ACCESSORIES: Accessory[] = [
   },
 ];
 
-// ── All accessories combined ─────────────────────────────────────────────────
+// ── Stage 3 accessories ──────────────────────────────────────────────────────
+// Three independent slots — wings, hat, necklace — same pattern as stage 2's
+// crown/cape/wand: 2 color options each, all freely combinable, no exclusions.
+export const STAGE3_ACCESSORIES: Accessory[] = [
+  {
+    id: "wings-white",
+    name: "White Angel Wings",
+    slot: "wings",
+    layer: "behindCat",
+    stage: 3,
+    costUsd: 0.30,
+    imageUrl: "/accessories/wings-white.webp",
+  },
+  {
+    id: "wings-pink",
+    name: "Iridescent Angel Wings",
+    slot: "wings",
+    layer: "behindCat",
+    stage: 3,
+    costUsd: 0.30,
+    imageUrl: "/accessories/wings-pink.webp",
+  },
+  {
+    id: "wizard-hat-purple",
+    name: "Purple Wizard Hat",
+    slot: "hat",
+    layer: "front",
+    stage: 3,
+    costUsd: 0.30,
+    imageUrl: "/accessories/wizard-hat-purple.webp",
+  },
+  {
+    id: "wizard-hat-blue",
+    name: "Blue Wizard Hat",
+    slot: "hat",
+    layer: "front",
+    stage: 3,
+    costUsd: 0.30,
+    imageUrl: "/accessories/wizard-hat-blue.webp",
+  },
+  {
+    id: "tail-charm-gold",
+    name: "Gold Star Tail Charm",
+    slot: "tail",
+    layer: "front",
+    stage: 3,
+    costUsd: 0.30,
+    imageUrl: "/accessories/tail-charm-gold.webp",
+  },
+  {
+    id: "tail-charm-sakura",
+    name: "Sakura Star Tail Charm",
+    slot: "tail",
+    layer: "front",
+    stage: 3,
+    costUsd: 0.30,
+    imageUrl: "/accessories/tail-charm-sakura.webp",
+  },
+];
+
 export const ACCESSORIES: Accessory[] = [
   ...STAGE1_ACCESSORIES,
   ...STAGE2_ACCESSORIES,
+  ...STAGE3_ACCESSORIES,
 ];
 
 export function getAccessory(id: string): Accessory | undefined {
@@ -238,9 +300,24 @@ const STAGE2_POSITIONS: Record<string, AccessoryPosition> = {
   "wand-moon":    { top: 88, left: 88, width: 32, rotate: 35 },
 };
 
+// Stage 3 positions (stage3.webp content/smug, 208×208px kitty-wrap).
+//
+// Wizard hat note: hat-blue's art is drawn at a jaunty tilted angle (unlike
+// hat-purple, which is front-facing), so its left/top differ from
+// hat-purple to visually compensate and land centered on the head either way.
+const STAGE3_POSITIONS: Record<string, AccessoryPosition> = {
+  "wings-white":       { top: 58, left: 50, width: 160 },
+  "wings-pink":        { top: 58, left: 50, width: 160 },
+  "wizard-hat-purple": { top: 10, left: 50, width: 68 },
+  "wizard-hat-blue":   { top: 14, left: 50, width: 68, rotate: -3 },
+  "tail-charm-gold":   { top: 78, left: 74, width: 14 },
+  "tail-charm-sakura": { top: 78, left: 74, width: 14 },
+};
+
 const ALL_POSITIONS: Record<string, AccessoryPosition> = {
   ...STAGE1_POSITIONS,
   ...STAGE2_POSITIONS,
+  ...STAGE3_POSITIONS,
 };
 
 export function getPosition(accessoryId: string): AccessoryPosition | null {
@@ -252,7 +329,7 @@ export function getPosition(accessoryId: string): AccessoryPosition | null {
 // Hungry (a), feral (b), sleepy (c) variants use different art — never overlay.
 export function accessoriesAllowedFor(stage: number, mood: string): boolean {
   if (mood !== "content" && mood !== "smug") return false;
-  return stage === 1 || stage === 2; // expand to 3/4 when those stages are added
+  return stage === 1 || stage === 2 || stage === 3; // expand to 4 when that stage is added
 }
 
 // Which stage's accessories can be EQUIPPED right now (cat must be at that stage).
@@ -261,3 +338,4 @@ export function accessoriesAllowedFor(stage: number, mood: string): boolean {
 export function canEquipForStage(currentCatStage: number, accessoryStage: number): boolean {
   return currentCatStage === accessoryStage;
 }
+
