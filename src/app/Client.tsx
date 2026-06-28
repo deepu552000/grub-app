@@ -340,44 +340,59 @@ export default function ClientPage() {
   const [ripples, setRipples] = useState<Ripple[]>([]);
   const kittyRef = useRef<HTMLDivElement>(null);
 
-  // Load state from DB using FID — falls back to localStorage if API fails or no FID yet.
+  // Load state from DB using FID.
+  // After loading, merge accessories.unlocked from localStorage so any unlock
+  // that was saved locally but not yet persisted to DB is never lost.
   useEffect(() => {
-    if (fid === null) return; // wait until FID is known from SDK context
+    if (fid === null) return;
     fetch(`/api/pet?fid=${fid}`)
       .then((r) => r.json())
       .then((saved) => {
-        if (!saved) {
-          setState({ ...defaultState, lastVisit: Date.now() });
-        } else {
-          setState(loadStateFromSaved(saved));
-        }
+        const dbState = saved ? loadStateFromSaved(saved) : { ...defaultState, lastVisit: Date.now() };
+
+        // Merge: take any accessory IDs that are in localStorage but not in DB
+        // (covers the window between a confirmed payment and the next DB sync)
+        try {
+          const local = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}");
+          const localUnlocked: string[] = local?.accessories?.unlocked ?? [];
+          const dbUnlocked: string[] = dbState.accessories?.unlocked ?? [];
+          const merged = Array.from(new Set([...dbUnlocked, ...localUnlocked]));
+          if (merged.length > dbUnlocked.length) {
+            dbState.accessories = { ...dbState.accessories, unlocked: merged };
+            // Immediately re-save the merged state to DB so it's not lost
+            fetch("/api/pet", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ fid, state: dbState }),
+            }).catch(() => {});
+          }
+        } catch {}
+
+        setState(dbState);
         setHydrated(true);
       })
       .catch(() => {
-        // API failed — fall back to localStorage so app still works
+        // DB failed — fall back to localStorage
         setState(loadState());
         setHydrated(true);
       });
   }, [fid]);
 
   useEffect(() => {
-    // Timeout fallback — if SDK doesn't respond in 2s (e.g. plain browser), load from localStorage
-    const fallbackTimer = setTimeout(() => {
+    // Only fall back to localStorage if SDK completely fails (plain browser / SDK error).
+    // Real Farcaster users always load from DB via FID — localStorage never races against it.
+    sdk.actions.ready().catch(() => {
+      // SDK errored — no FID coming, load from localStorage immediately
       if (!hydrated) {
         setState(loadState());
         setHydrated(true);
       }
-    }, 2000);
-
-    sdk.actions.ready().catch(() => {
-      clearTimeout(fallbackTimer);
-      setState(loadState());
-      setHydrated(true);
     });
 
     sdk.context
       .then((ctx) => {
         if (ctx?.user?.fid) {
+          // FID known — DB load useEffect takes over, loading screen stays until DB responds
           setFid(ctx.user.fid);
           // Check for referral link ?ref=<FID> and register if present
           const refParam = new URL(window.location.href).searchParams.get("ref");
@@ -405,7 +420,6 @@ export default function ClientPage() {
       })
       .catch(() => {});
 
-    return () => clearTimeout(fallbackTimer);
   }, []);
 
   useEffect(() => {
@@ -910,16 +924,34 @@ export default function ClientPage() {
       // (the async wait can be 10-60s; closure state is stale by then).
       // Also: force-add the id even if somehow already present — payment
       // succeeded so the user has earned it regardless.
+      // Build the new state directly so we can immediately persist it —
+      // don't rely on the debounced useEffect save which may lose the unlock
+      // if the DB-load useEffect fires again before the 800ms debounce completes.
       setState((prev) => {
         const alreadyUnlocked = prev.accessories.unlocked.includes(accessoryId);
-        if (alreadyUnlocked) return prev; // already in state, nothing to do
-        return {
+        const newState = alreadyUnlocked ? prev : {
           ...prev,
           accessories: {
             ...prev.accessories,
             unlocked: [...prev.accessories.unlocked, accessoryId],
           },
         };
+
+        // Immediately persist to localStorage so a DB-load overwrite can't wipe it
+        try {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+        } catch {}
+
+        // Immediately persist to DB — don't wait for the debounced useEffect
+        if (fid) {
+          fetch("/api/pet", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fid, state: newState }),
+          }).catch(() => {});
+        }
+
+        return newState;
       });
       // Log confirmed transaction — fire and forget
       const acc = ACCESSORIES.find((a) => a.id === accessoryId);
