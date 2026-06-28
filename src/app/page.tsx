@@ -9,7 +9,7 @@
 import type { Metadata } from "next";
 import ClientPage from "./Client";
 
-const BASE_URL = "https://grub.lat";
+const BASE_URL = "https://grub-app-eight.vercel.app";
 const IMAGE_URL = `${BASE_URL}/cats/stage1.webp`;
 
 type Props = {

@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      referralLink: `https://grub.lat/?ref=${fid}`,
+      referralLink: `https://grub-app-eight.vercel.app/?ref=${fid}`,
       friends,
       totalEarned,
     });

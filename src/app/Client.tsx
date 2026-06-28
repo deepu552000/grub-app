@@ -1428,7 +1428,7 @@ export default function ClientPage() {
                 <p style={{ fontSize: 12, color: "#888", margin: "0 0 4px" }}>Your referral link</p>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <code style={{ fontSize: 11, flex: 1, wordBreak: "break-all", color: "#444" }}>
-                    {fid ? `https://grub.lat/?ref=${fid}` : "Loading..."}
+                    {fid ? `https://grub-app-eight.vercel.app/?ref=${fid}` : "Loading..."}
                   </code>
                   <button
                     type="button"
@@ -1438,7 +1438,7 @@ export default function ClientPage() {
                       cursor: "pointer", whiteSpace: "nowrap"
                     }}
                     onClick={() => {
-                      navigator.clipboard.writeText(`https://grub.lat/?ref=${fid}`);
+                      navigator.clipboard.writeText(`https://grub-app-eight.vercel.app/?ref=${fid}`);
                     }}
                   >
                     Copy
@@ -1455,7 +1455,7 @@ export default function ClientPage() {
                   fontWeight: 700, cursor: "pointer", width: "100%"
                 }}
                 onClick={() => {
-                  const refLink = `https://grub.lat/?ref=${fid}`;
+                  const refLink = `https://grub-app-eight.vercel.app/?ref=${fid}`;
                   const text = `I'm raising Grub 🐱✨ — a virtual cat on Farcaster!\nJoin with my link and we both earn DEGEN 🎁`;
                   sdk.actions.composeCast({
                     text,
