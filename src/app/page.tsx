@@ -1455,10 +1455,17 @@ export default function Home() {
                   fontWeight: 700, cursor: "pointer", width: "100%"
                 }}
                 onClick={() => {
-                  const text = `I'm raising Grub 🐱✨ — a virtual cat on Farcaster!\nJoin with my link and we both earn DEGEN 🎁\nhttps://grub.lat/?ref=${fid}`;
-                  sdk.actions.openUrl(
-                    `https://warpcast.com/~/compose?text=${encodeURIComponent(text)}`
-                  );
+                  const refLink = `https://grub.lat/?ref=${fid}`;
+                  const text = `I'm raising Grub 🐱✨ — a virtual cat on Farcaster!\nJoin with my link and we both earn DEGEN 🎁`;
+                  sdk.actions.composeCast({
+                    text,
+                    embeds: [refLink],
+                  }).catch(() => {
+                    // fallback
+                    sdk.actions.openUrl(
+                      `https://warpcast.com/~/compose?text=${encodeURIComponent(text + "\n" + refLink)}`
+                    );
+                  });
                 }}
               >
                 🟣 Share on Farcaster
