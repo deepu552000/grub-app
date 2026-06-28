@@ -602,19 +602,26 @@ export default function ClientPage() {
     return txHash;
   }
 
+  // FC wallet provider does not support eth_getTransactionReceipt —
+  // poll via Etherscan v2 API instead (Base mainnet chainid=8453).
   async function waitForReceipt(
-    provider: any,
+    _provider: any,
     txHash: string,
     timeoutMs = 60_000,
-    pollMs = 2_000,
+    pollMs = 3_000,
   ): Promise<{ status: string } | null> {
+    const apiKey = process.env.NEXT_PUBLIC_BASESCAN_API_KEY ?? "";
+    const url = `https://api.etherscan.io/v2/api?chainid=8453&module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${apiKey}`;
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const receipt = await provider.request({
-        method: "eth_getTransactionReceipt",
-        params: [txHash],
-      });
-      if (receipt?.status) return receipt;
+      try {
+        const res = await fetch(url);
+        const json = await res.json();
+        const receipt = json?.result;
+        if (receipt?.status) return receipt;
+      } catch {
+        // network blip — keep polling
+      }
       await new Promise((r) => setTimeout(r, pollMs));
     }
     return null;
