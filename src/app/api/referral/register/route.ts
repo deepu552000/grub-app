@@ -27,6 +27,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, reason: "already registered" });
     }
 
+    // Guard: reject if this FID already has real game history. A genuinely
+    // new joiner clicking a referral link for the first time has never
+    // played before, so they won't have a grub:pet:<fid> record yet. Without
+    // this check, anyone could "refer" an existing active player (who never
+    // actually used a referral link) and still collect the DEGEN payout —
+    // plus the joiner would wrongly get a second "new member" XP bonus.
+    const existingPetState = await kv.get<any>(`grub:pet:${newUserFID}`);
+    if (existingPetState && (existingPetState.totalCheckIns ?? 0) > 0) {
+      return NextResponse.json({
+        ok: false,
+        reason: "fid already has existing game activity — not eligible as a new referral",
+      });
+    }
+
     // Store referral relationship
     await kv.set(`ref:${newUserFID}`, String(referrerFID));
     await kv.set(`ref:${newUserFID}:checkins`, 0);
