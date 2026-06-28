@@ -558,7 +558,7 @@ export default function ClientPage() {
 
   // Sends exact USDC via eth_sendTransaction (ERC-20 transfer calldata).
   // Shows the native single-step "Confirm transaction" box in Farcaster/FC wallet.
-  // Polls for on-chain receipt before returning — never unlocks on submission alone.
+  // eth_sendTransaction: user must explicitly confirm in wallet before txHash is returned.
   async function sendUsdcPayment(usdAmount: number, purpose: "checkin" | "accessory", accessoryId?: string): Promise<string> {
     console.log("[PAYMENT] start, amount:", usdAmount, "purpose:", purpose);
 
@@ -588,43 +588,12 @@ export default function ClientPage() {
     });
 
     if (!txHash) throw new Error("No transaction hash returned. Please try again.");
-    console.log("[PAYMENT] tx submitted:", txHash);
-
-    // Poll for receipt — submission is NOT confirmation
-    const receipt = await waitForReceipt(provider, txHash);
-    console.log("[PAYMENT] receipt:", JSON.stringify(receipt));
-
-    if (!receipt || receipt.status !== "0x1") {
-      throw new Error("Payment did not complete on-chain. No funds were taken — please try again.");
-    }
-
-    console.log("[PAYMENT] confirmed ✅", txHash);
+    console.log("[PAYMENT] confirmed ✅ txHash:", txHash);
+    // eth_sendTransaction returns only after user explicitly confirms in wallet —
+    // that confirmation IS the gate. Receipt polling via FC provider is not supported,
+    // so we trust the hash and unlock immediately. Server-side verify-payment route
+    // provides the on-chain double-check for audit purposes.
     return txHash;
-  }
-
-  // FC wallet provider does not support eth_getTransactionReceipt —
-  // poll via Etherscan v2 API instead (Base mainnet chainid=8453).
-  async function waitForReceipt(
-    _provider: any,
-    txHash: string,
-    timeoutMs = 60_000,
-    pollMs = 3_000,
-  ): Promise<{ status: string } | null> {
-    const apiKey = process.env.NEXT_PUBLIC_BASESCAN_API_KEY ?? "";
-    const url = `https://api.etherscan.io/v2/api?chainid=8453&module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${apiKey}`;
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      try {
-        const res = await fetch(url);
-        const json = await res.json();
-        const receipt = json?.result;
-        if (receipt?.status) return receipt;
-      } catch {
-        // network blip — keep polling
-      }
-      await new Promise((r) => setTimeout(r, pollMs));
-    }
-    return null;
   }
 
   // yesterday's date key
@@ -695,6 +664,25 @@ export default function ClientPage() {
     setCheckinPending(true);
     try {
       const txHash = await sendUsdcPayment(CHECKIN_USD, "checkin");
+
+      // Server-side verify before applying check-in
+      const microUsdc = Math.round(CHECKIN_USD * 1_000_000);
+      const verifyRes = await fetch("/api/verify-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          txHash,
+          expectedRecipient: RECIPIENT,
+          expectedMicroUsdc: microUsdc,
+          purpose: "checkin",
+          fid,
+        }),
+      });
+      const verifyData = await verifyRes.json().catch(() => ({}));
+      if (!verifyRes.ok || !verifyData.ok) {
+        throw new Error(verifyData.error ?? "Payment verification failed. If funds were deducted, contact support with your tx hash.");
+      }
+
       applyCheckIn();
       // Log confirmed check-in transaction — fire and forget
       logTransaction({
@@ -926,10 +914,33 @@ export default function ClientPage() {
     try {
       console.log("[UNLOCK] calling sendUsdcPayment...");
       txHash = await sendUsdcPayment(price, "accessory", accessoryId);
-      console.log("[UNLOCK] payment verified! txHash:", txHash);
+      console.log("[UNLOCK] tx submitted, txHash:", txHash);
 
       // Hard guard — if txHash is still null/empty somehow, bail before touching state
       if (!txHash) throw new Error("Payment returned no transaction hash. Unlock aborted.");
+
+      // Server-side verify — Etherscan checks the actual USDC Transfer log on Base.
+      // This runs server-side so no NEXT_PUBLIC env var needed, no provider limitations.
+      console.log("[UNLOCK] verifying on-chain via server...");
+      const microUsdc = Math.round(price * 1_000_000);
+      const verifyRes = await fetch("/api/verify-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          txHash,
+          expectedRecipient: RECIPIENT,
+          expectedMicroUsdc: microUsdc,
+          purpose: "accessory",
+          accessoryId,
+          fid,
+        }),
+      });
+      const verifyData = await verifyRes.json().catch(() => ({}));
+      console.log("[UNLOCK] verify result:", JSON.stringify(verifyData));
+      if (!verifyRes.ok || !verifyData.ok) {
+        throw new Error(verifyData.error ?? "Payment verification failed. If funds were deducted, contact support with your tx hash.");
+      }
+      console.log("[UNLOCK] verified ✅ — unlocking now");
       // Payment confirmed on-chain — now unlock.
       // Use functional setState so we always write to the freshest state
       // (the async wait can be 10-60s; closure state is stale by then).

@@ -63,16 +63,34 @@ export async function POST(req: Request) {
 
     console.log("[verify-payment] checking tx", txHash, "purpose:", purpose, "fid:", fid);
 
-    // ── Fetch receipt from Basescan ───────────────────────────────────────────
+    // ── Poll Etherscan until receipt appears (max 60s, every 3s) ────────────
+    // Etherscan can take 5-15s to index a tx after broadcast — one-shot fetch
+    // will return null and falsely fail. We poll server-side so the client just
+    // sees a spinner until confirmed.
     const receiptUrl = `${BASESCAN_API}?chainid=8453&module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${BASESCAN_KEY}`;
-    const receiptRes = await fetch(receiptUrl, { next: { revalidate: 0 } });
-    const receiptJson = await receiptRes.json();
-    const receipt = receiptJson?.result;
+
+    let receipt: any = null;
+    const pollStart = Date.now();
+    const POLL_TIMEOUT = 60_000; // 60s max
+    const POLL_INTERVAL = 3_000; // check every 3s
+
+    while (Date.now() - pollStart < POLL_TIMEOUT) {
+      try {
+        const receiptRes = await fetch(receiptUrl, { cache: "no-store" });
+        const receiptJson = await receiptRes.json();
+        receipt = receiptJson?.result;
+        if (receipt?.status) break; // got a confirmed receipt
+      } catch {
+        // network blip — keep polling
+      }
+      // wait before next poll
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+    }
 
     if (!receipt) {
-      console.warn("[verify-payment] no receipt returned for", txHash);
+      console.warn("[verify-payment] receipt still null after 60s for", txHash);
       return NextResponse.json(
-        { ok: false, error: "Transaction not found on-chain. It may still be pending — wait a moment and retry." },
+        { ok: false, error: "Transaction not confirmed within 60s. If funds were deducted, contact support with your tx hash." },
         { status: 200 }
       );
     }
