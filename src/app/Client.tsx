@@ -1456,7 +1456,7 @@ export default function ClientPage() {
                 }}
                 onClick={() => {
                   const refLink = `https://grub-app-eight.vercel.app/?ref=${fid}`;
-                  const text = `I'm raising Grub 🐱✨ — a virtual cat on Farcaster!\nJoin with my link and we both earn DEGEN 🎁`;
+                  const text = `I'm raising Grub 🐱✨ — a tiny white kitty on Farcaster!\nJoin me and help me earn DEGEN 🎁`;
                   sdk.actions.composeCast({
                     text,
                     embeds: [refLink],
@@ -1474,8 +1474,8 @@ export default function ClientPage() {
               {/* Rewards info */}
               <div style={{ background: "#fff8e7", borderRadius: 10, padding: "10px 12px", fontSize: 12 }}>
                 <p style={{ margin: "0 0 4px", fontWeight: 700, color: "#b45309" }}>How it works</p>
-                <p style={{ margin: "0 0 2px", color: "#555" }}>🎁 Friend joins → you get <strong>1 DEGEN</strong></p>
-                <p style={{ margin: 0, color: "#555" }}>🏆 Friend hits 5 check-ins → you get <strong>2 DEGEN</strong></p>
+                <p style={{ margin: "0 0 2px", color: "#555" }}>🎁 Friend joins → <strong>you</strong> get <strong>1 DEGEN</strong></p>
+                <p style={{ margin: 0, color: "#555" }}>🏆 Friend hits 5 check-ins → <strong>you</strong> get <strong>2 DEGEN</strong></p>
               </div>
 
               {/* Friends list */}
