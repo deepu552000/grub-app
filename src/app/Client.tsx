@@ -665,24 +665,17 @@ export default function ClientPage() {
     try {
       const txHash = await sendUsdcPayment(CHECKIN_USD, "checkin");
 
-      // Server-side verify before applying check-in
-      const microUsdc = Math.round(CHECKIN_USD * 1_000_000);
-      const verifyRes = await fetch("/api/verify-payment", {
+      // Verify checkin payment on-chain
+      const ciMicroUsdc = Math.round(CHECKIN_USD * 1_000_000);
+      const ciVerifyRes = await fetch("/api/verify-payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          txHash,
-          expectedRecipient: RECIPIENT,
-          expectedMicroUsdc: microUsdc,
-          purpose: "checkin",
-          fid,
-        }),
+        body: JSON.stringify({ txHash, expectedRecipient: RECIPIENT, expectedMicroUsdc: ciMicroUsdc, purpose: "checkin", fid }),
       });
-      const verifyData = await verifyRes.json().catch(() => ({}));
-      if (!verifyRes.ok || !verifyData.ok) {
-        throw new Error(verifyData.error ?? "Payment verification failed. If funds were deducted, contact support with your tx hash.");
+      const ciVerifyData = await ciVerifyRes.json().catch(() => ({}));
+      if (!ciVerifyRes.ok || !ciVerifyData.ok) {
+        throw new Error(ciVerifyData.error ?? "Payment verification failed. If funds were deducted, contact support with your tx hash.");
       }
-
       applyCheckIn();
       // Log confirmed check-in transaction — fire and forget
       logTransaction({
@@ -919,21 +912,14 @@ export default function ClientPage() {
       // Hard guard — if txHash is still null/empty somehow, bail before touching state
       if (!txHash) throw new Error("Payment returned no transaction hash. Unlock aborted.");
 
-      // Server-side verify — Etherscan checks the actual USDC Transfer log on Base.
-      // This runs server-side so no NEXT_PUBLIC env var needed, no provider limitations.
+      // Verify on-chain via server — checks Transfer log directly (not status field)
+      // so Etherscan API quirks with status=0x0 on valid ERC-20 txs don't affect us.
       console.log("[UNLOCK] verifying on-chain via server...");
       const microUsdc = Math.round(price * 1_000_000);
       const verifyRes = await fetch("/api/verify-payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          txHash,
-          expectedRecipient: RECIPIENT,
-          expectedMicroUsdc: microUsdc,
-          purpose: "accessory",
-          accessoryId,
-          fid,
-        }),
+        body: JSON.stringify({ txHash, expectedRecipient: RECIPIENT, expectedMicroUsdc: microUsdc, purpose: "accessory", accessoryId, fid }),
       });
       const verifyData = await verifyRes.json().catch(() => ({}));
       console.log("[UNLOCK] verify result:", JSON.stringify(verifyData));

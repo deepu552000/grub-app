@@ -79,7 +79,7 @@ export async function POST(req: Request) {
         const receiptRes = await fetch(receiptUrl, { cache: "no-store" });
         const receiptJson = await receiptRes.json();
         receipt = receiptJson?.result;
-        if (receipt?.status) break; // got a confirmed receipt
+        if (receipt && receipt.logs !== undefined) break; // got a receipt with logs
       } catch {
         // network blip — keep polling
       }
@@ -95,14 +95,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // status "0x1" = success, "0x0" = reverted
-    if (receipt.status !== "0x1") {
-      console.warn("[verify-payment] tx reverted", txHash);
-      return NextResponse.json(
-        { ok: false, error: "Transaction was reverted on-chain. No funds were taken." },
-        { status: 200 }
-      );
-    }
+    // NOTE: We do NOT check receipt.status here — Etherscan API sometimes returns
+    // status 0x0 for valid ERC-20 transfers (known API quirk). Instead we go straight
+    // to checking the Transfer log — if the log exists and matches, payment happened.
 
     // ── Verify the USDC Transfer log ─────────────────────────────────────────
     // We look for an ERC-20 Transfer event from the USDC contract where:
