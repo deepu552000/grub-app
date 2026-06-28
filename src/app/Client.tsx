@@ -87,41 +87,147 @@ const stages = [
   },
 ];
 
-const dialogue: Record<Mood, string[]> = {
-  content: [
-    "I saved one tiny purr for you. Do not waste it.",
-    "Fine. I am comfortable. This changes nothing.",
-    "You may continue being useful.",
-  ],
-  smug: [
-    "I evolved because I am excellent. You were also present.",
-    "Look at me. Carefully. This is premium floof.",
-    "I found sparkle. Naturally.",
-  ],
-  hungry: [
-    "My bowl is empty and somehow this is society now.",
-    "I am not mad. I am just extremely unfed.",
-    "A dramatic collapse is scheduled unless snacks arrive.",
-  ],
-  feral: [
-    "You vanished. I became folklore.",
-    "I no longer answer to names. Only offerings.",
-    "I hid a treat from myself and still blamed you.",
-  ],
-  sleepy: [
-    "Tiny nap. Major emotional recovery.",
-    "Purring in low power mode.",
-    "I dreamed I was a very expensive cloud.",
-  ],
+const dialogue: Record<number, Record<Mood, string[]>> = {
+  1: {
+    content: [
+      "I saved one tiny purr for you. Do not waste it.",
+      "Fine. I am comfortable. This changes nothing.",
+      "You may continue being useful.",
+    ],
+    smug: [
+      "I evolved because I am excellent. You were also present.",
+      "Look at me. Carefully. This is premium floof.",
+      "I found sparkle. Naturally.",
+    ],
+    hungry: [
+      "My bowl is empty and somehow this is society now.",
+      "I am not mad. I am just extremely unfed.",
+      "A dramatic collapse is scheduled unless snacks arrive.",
+    ],
+    feral: [
+      "You vanished. I became folklore.",
+      "I no longer answer to names. Only offerings.",
+      "I hid a treat from myself and still blamed you.",
+    ],
+    sleepy: [
+      "Tiny nap. Major emotional recovery.",
+      "Purring in low power mode.",
+      "I dreamed I was a very expensive cloud.",
+    ],
+  },
+  2: {
+    content: [
+      "I am kitten-sized and already judging you.",
+      "Growing up is exhausting. Feed me.",
+      "I fit in your pocket but my opinions are full sized.",
+    ],
+    smug: [
+      "Pocket-sized and premium. Do not be fooled.",
+      "I have levelled up. My standards followed.",
+      "Small cat. Enormous expectations.",
+    ],
+    hungry: [
+      "I have graduated to medium hunger. This is a crisis.",
+      "A kitten this cute should never go unfed. Take notes.",
+      "I grew a little. My appetite grew more.",
+    ],
+    feral: [
+      "I was soft once. You changed that.",
+      "Kitten energy, but make it menacing.",
+      "I grew up fast when you stopped showing up.",
+    ],
+    sleepy: [
+      "Kitten dreams only. No adults allowed.",
+      "I am napping with intention.",
+      "Half asleep, fully adorable.",
+    ],
+  },
+  3: {
+    content: [
+      "Graceful now. Still emotionally high maintenance.",
+      "I have developed opinions about everything.",
+      "Young cat. Ancient grievances.",
+    ],
+    smug: [
+      "Pearl Floof does not seek approval. It arrives anyway.",
+      "I am at peak floof. Please acknowledge.",
+      "Thriving. Radiant. Mildly inconvenienced by your existence.",
+    ],
+    hungry: [
+      "I am too elegant for this hunger.",
+      "Pearl Floof does not beg. Pearl Floof stares until you comply.",
+      "My beauty requires regular fuel. This is science.",
+    ],
+    feral: [
+      "I was graceful. Then you left.",
+      "The pearls are gone. Only fangs remain.",
+      "Young cat, old rage.",
+    ],
+    sleepy: [
+      "I dream in slow motion now. Very cinematic.",
+      "Resting with full commitment.",
+      "The floof needs recharging. Do not disturb.",
+    ],
+  },
+  4: {
+    content: [
+      "I have reached my final form. You're welcome.",
+      "Mythic. Fully bonded. Slightly judgemental.",
+      "I have seen things. I have napped through most of them.",
+    ],
+    smug: [
+      "Moonmilk Mythic does not flex. The flex is simply visible.",
+      "Final form achieved. Still accepting compliments.",
+      "I am the rare one. The numbers confirm it.",
+    ],
+    hungry: [
+      "Even legends require dinner.",
+      "Mythic hunger is real and it is your fault.",
+      "I did not ascend this far to go unfed.",
+    ],
+    feral: [
+      "I reached my final form and you still abandoned me.",
+      "Mythic rage is a different category entirely.",
+      "The moon saw what you did.",
+    ],
+    sleepy: [
+      "Moonmilk dreams. You wouldn't understand.",
+      "Even mythic cats require rest. Especially mythic cats.",
+      "Sleeping on a cosmic level right now.",
+    ],
+  },
 };
 
 // Lines said specifically when you poke/pat the cat directly (not a care action)
-const pokeLines: Record<Mood, string[]> = {
-  content: ["hey.", "that's my head.", "...again, but gently."],
-  smug: ["yes, you may touch greatness.", "obviously."],
-  hungry: ["pet later. food now.", "this is not food."],
-  feral: ["do NOT.", "i bite now. i told you."],
-  sleepy: ["...zzz...what.", "five more minutes."],
+const pokeLines: Record<number, Record<Mood, string[]>> = {
+  1: {
+    content: ["hey.", "that's my head.", "...again, but gently."],
+    smug: ["yes, you may touch greatness.", "obviously."],
+    hungry: ["pet later. food now.", "this is not food."],
+    feral: ["do NOT.", "i bite now. i told you."],
+    sleepy: ["...zzz...what.", "five more minutes."],
+  },
+  2: {
+    content: ["hey tiny paws still scratch.", "I am small but my patience is smaller."],
+    smug: ["pocket-sized. handle with care.", "you may proceed."],
+    hungry: ["food first then pets.", "this paw will cost you a snack."],
+    feral: ["bold move.", "you touched the void."],
+    sleepy: ["...nope.", "kitten needs eight more hours."],
+  },
+  3: {
+    content: ["the floof is not a toy.", "respectful distance please."],
+    smug: ["you may admire. briefly.", "graceful AND approachable. rare."],
+    hungry: ["you dare touch me before feeding me.", "hands away. bowl first."],
+    feral: ["last warning.", "the floof bites back."],
+    sleepy: ["i will remember this intrusion.", "...the audacity."],
+  },
+  4: {
+    content: ["you may acknowledge greatness.", "yes. it is me. magnificent."],
+    smug: ["mythic AND touchable. lucky you.", "gentle. this is rare art."],
+    hungry: ["the mythic one is displeased.", "feed the legend."],
+    feral: ["you have made a historic mistake.", "the myth bites."],
+    sleepy: ["not now. not ever.", "the cosmos is resting."],
+  },
 };
 
 // Bond tiers - the single source of truth for both dialogue unlocks and the XP
@@ -332,6 +438,14 @@ export default function ClientPage() {
   // Server and first client render both use defaultState - no mismatch possible.
   const [state, setState] = useState<PetState>(defaultState);
   const [hydrated, setHydrated] = useState(false);
+  const hydratedRef = useRef(false);
+
+  function hydrateWith(s: PetState) {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+    setState(s);
+    setHydrated(true);
+  }
   const [fid, setFid] = useState<number | null>(null);
   const [lastAction, setLastAction] = useState("You found a tiny white kitty.");
   const [carePulse, setCarePulse] = useState<ActionType | "">("");
@@ -368,13 +482,11 @@ export default function ClientPage() {
           }
         } catch {}
 
-        setState(dbState);
-        setHydrated(true);
+        hydrateWith(dbState);
       })
       .catch(() => {
         // DB failed — fall back to localStorage
-        setState(loadState());
-        setHydrated(true);
+        hydrateWith(loadState());
       });
   }, [fid]);
 
@@ -383,15 +495,18 @@ export default function ClientPage() {
     // Real Farcaster users always load from DB via FID — localStorage never races against it.
     sdk.actions.ready().catch(() => {
       // SDK errored — no FID coming, load from localStorage immediately
-      if (!hydrated) {
-        setState(loadState());
-        setHydrated(true);
-      }
+      hydrateWith(loadState());
     });
+
+    // Timeout fallback for local dev / plain browser where SDK context never resolves
+    const fallbackTimer = setTimeout(() => {
+      hydrateWith(loadState());
+    }, 3000);
 
     sdk.context
       .then((ctx) => {
         if (ctx?.user?.fid) {
+          clearTimeout(fallbackTimer);
           // FID known — DB load useEffect takes over, loading screen stays until DB responds
           setFid(ctx.user.fid);
           // Check for referral link ?ref=<FID> and register if present
@@ -416,10 +531,18 @@ export default function ClientPage() {
               })
               .catch(() => {}); // fire and forget — never block app load on this
           }
+        } else {
+          // SDK resolved but no FID — plain browser, load from localStorage
+          clearTimeout(fallbackTimer);
+          hydrateWith(loadState());
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        clearTimeout(fallbackTimer);
+        hydrateWith(loadState());
+      });
 
+    return () => clearTimeout(fallbackTimer);
   }, []);
 
   useEffect(() => {
@@ -686,9 +809,10 @@ export default function ClientPage() {
     }
   }
   const line = useMemo(() => {
-    const pool = dialogue[mood];
+    const stageDialogue = dialogue[stageIndex] ?? dialogue[1];
+    const pool = stageDialogue[mood];
     return pool[Math.floor((state.xp + state.glimmer + state.hunger) % pool.length)];
-  }, [mood, state.glimmer, state.hunger, state.xp]);
+  }, [mood, stageIndex, state.glimmer, state.hunger, state.xp]);
 
   function spawnFloat(text: string, pos?: { x: number; y: number }) {
     const rect = kittyRef.current?.getBoundingClientRect();
@@ -812,7 +936,7 @@ export default function ClientPage() {
       }, 500);
     }
 
-    const moodPool = pokeLines[mood];
+    const moodPool = (pokeLines[stageIndex] ?? pokeLines[1])[mood];
     const milestonePool = unlockedMilestoneLines(state.bond);
     // Milestone lines are mixed in at roughly 1-in-3 odds once unlocked, so they feel
     // like a special surprise rather than replacing the mood-based reactions entirely.
@@ -1761,8 +1885,9 @@ function Kitty({
   // Ear wiggle state — set true on poke, cleared after animation
   const [earWiggle, setEarWiggle] = useState(false);
 
-  // Idle blink scheduler
+  // Idle blink scheduler — disabled for feral (frozen rage look)
   useEffect(() => {
+    if (mood === "feral") return;
     function scheduleBlink() {
       blinkTimer.current = setTimeout(() => {
         setBlinking(true);
@@ -1774,15 +1899,19 @@ function Kitty({
     return () => {
       if (blinkTimer.current) clearTimeout(blinkTimer.current);
     };
-  }, []);
+  }, [mood]);
 
-  // Poke triggers both blink and ear wiggle
+  // Poke triggers both blink and ear wiggle (not for feral — frozen rage expression)
   useEffect(() => {
     if (poked) {
-      setBlinking(true);
-      setTimeout(() => setBlinking(false), 220);
-      setEarWiggle(true);
-      setTimeout(() => setEarWiggle(false), 520);
+      if (mood !== "feral") {
+        setBlinking(true);
+        setTimeout(() => setBlinking(false), 220);
+      }
+      if (mood !== "feral" && mood !== "sleepy") {
+        setEarWiggle(true);
+        setTimeout(() => setEarWiggle(false), 520);
+      }
     }
   }, [poked]);
 
@@ -1870,8 +1999,8 @@ function Kitty({
               viewBox={`0 0 ${eye.size} ${eye.size}`}
               aria-hidden="true"
             >
-              {/* LEFT EAR — hidden in sleepy mode */}
-              {mood !== "sleepy" && (
+              {/* LEFT EAR — hidden in sleepy and feral mode */}
+              {mood !== "sleepy" && mood !== "feral" && (
                 <g className={`kitty-ear-l${earWiggle ? " ear-wig-l" : ""}`}>
                   <path d={ear.lOuter} fill={ear.lOuterFill} opacity={0.95} />
                   <path d={ear.lInner} fill={ear.lInnerFill} opacity={0.85} />
@@ -1879,7 +2008,7 @@ function Kitty({
               )}
 
               {/* RIGHT EAR */}
-              {mood !== "sleepy" && (
+              {mood !== "sleepy" && mood !== "feral" && (
                 <g className={`kitty-ear-r${earWiggle ? " ear-wig-r" : ""}`}>
                   <path d={ear.rOuter} fill={ear.rOuterFill} opacity={0.95} />
                   <path d={ear.rInner} fill={ear.rInnerFill} opacity={0.85} />
@@ -1888,6 +2017,8 @@ function Kitty({
 
               {/* TAIL — stage 3+ animated via CSS image sway on .kitty-image, no SVG overlay needed */}
 
+              {/* EYELIDS — hidden for feral (angry squint, no blink) */}
+              {mood !== "feral" && (<>
               {/* LEFT EYELID */}
               <clipPath id={`clip-l-${stage}`}>
                 <ellipse cx={eye.lx} cy={eye.ly} rx={eye.rx2} ry={eye.ry2} />
@@ -1915,6 +2046,7 @@ function Kitty({
                 clipPath={`url(#clip-r-${stage})`}
                 className={`kitty-eyelid kitty-eyelid-r${blinking ? " eyelid-blink-r" : ""}`}
               />
+              </>)}
             </svg>
 
             {/* Pass 4 — front (glasses, hats, bows, crowns, necklace, halo, wand) */}
