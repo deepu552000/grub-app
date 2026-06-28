@@ -7,7 +7,6 @@
 //   Stage 1: "head" | "face"
 //   Stage 2: "crown" | "cape" | "wand"
 //   Stage 3: "wings" | "hat" | "tail"
-//   Stage 4: "crown" | "wings" | "halo" | "aura" | "circle"  (legendary, 12 pcs)
 
 import { ACCESSORIES, getAccessory, canEquipForStage, type AccessorySlot } from "./accessories";
 

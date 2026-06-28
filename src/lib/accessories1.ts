@@ -5,7 +5,6 @@
 // Stage 1 slots: "head" | "face"   (bow, glasses)
 // Stage 2 slots: "crown" | "cape" | "wand"  (crown, cape, magic wand)
 // Stage 3 slots: "wings" | "hat" | "tail"  (wings, wizard hat, tail charm)
-// Stage 4 slots: "crown" | "wings" | "halo" | "aura" | "circle"  (legendary set, 12 pcs)
 //
 // Positions are percentages of the .kitty-wrap box.
 // Stage 1 kitty-wrap = 168×168px. Stage 2 kitty-wrap = 200×200px (see globals.css).
@@ -226,130 +225,10 @@ export const STAGE3_ACCESSORIES: Accessory[] = [
   },
 ];
 
-// ── Stage 4 accessories ──────────────────────────────────────────────────────
-// Legendary set — 5 independent slots, 12 total pieces, all freely combinable.
-// circle (background) → aura (behindCat) → wings (behindCat) → [cat] → crown/halo (front)
-export const STAGE4_ACCESSORIES: Accessory[] = [
-  // ── Crown (front) ──
-  {
-    id: "crown-flame-gold",
-    name: "Gold Flaming Crown",
-    slot: "crown",
-    layer: "front",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/crown-flame-gold.webp",
-  },
-  {
-    id: "crown-flame-dark",
-    name: "Dark Flaming Crown",
-    slot: "crown",
-    layer: "front",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/crown-flame-dark.webp",
-  },
-  // ── Wings (behindCat) ──
-  {
-    id: "wings-dragon-fire",
-    name: "Fire Dragon Wings",
-    slot: "wings",
-    layer: "behindCat",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/wings-dragon-fire.webp",
-  },
-  {
-    id: "wings-dragon-cosmic",
-    name: "Cosmic Dragon Wings",
-    slot: "wings",
-    layer: "behindCat",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/wings-dragon-cosmic.webp",
-  },
-  // ── Halo (front) ──
-  {
-    id: "halo-neon",
-    name: "Neon Halo",
-    slot: "halo",
-    layer: "front",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/halo-neon.webp",
-  },
-  {
-    id: "halo-ornate",
-    name: "Ornate Crystal Halo",
-    slot: "halo",
-    layer: "front",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/halo-ornate.webp",
-  },
-  // ── Aura (behindCat) ──
-  {
-    id: "aura-purple",
-    name: "Purple Flame Aura",
-    slot: "aura",
-    layer: "behindCat",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/aura-purple.webp",
-  },
-  {
-    id: "aura-blue",
-    name: "Blue Flame Aura",
-    slot: "aura",
-    layer: "behindCat",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/aura-blue.webp",
-  },
-  {
-    id: "aura-fire",
-    name: "Fire Aura",
-    slot: "aura",
-    layer: "behindCat",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/aura-fire.webp",
-  },
-  // ── Circle (background) ──
-  {
-    id: "circle-blue",
-    name: "Blue Magic Circle",
-    slot: "circle",
-    layer: "background",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/circle-blue.webp",
-  },
-  {
-    id: "circle-purple",
-    name: "Purple Magic Circle",
-    slot: "circle",
-    layer: "background",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/circle-purple.webp",
-  },
-  {
-    id: "circle-gold",
-    name: "Gold Magic Circle",
-    slot: "circle",
-    layer: "background",
-    stage: 4,
-    costUsd: 0.40,
-    imageUrl: "/accessories/circle-gold.webp",
-  },
-];
-
 export const ACCESSORIES: Accessory[] = [
   ...STAGE1_ACCESSORIES,
   ...STAGE2_ACCESSORIES,
   ...STAGE3_ACCESSORIES,
-  ...STAGE4_ACCESSORIES,
 ];
 
 export function getAccessory(id: string): Accessory | undefined {
@@ -435,28 +314,10 @@ const STAGE3_POSITIONS: Record<string, AccessoryPosition> = {
   "tail-charm-sakura": { top: 78, left: 74, width: 14 },
 };
 
-// Stage 4 positions (stage4.webp, larger cat — estimated, tune after testing).
-// circle sits at bottom (background), aura/wings wrap the body (behindCat),
-// crown/halo float above the head (front).
-const STAGE4_POSITIONS: Record<string, AccessoryPosition> = {
-  "crown-flame-gold":   { top: 2,  left: 50, width: 44 },
-  "crown-flame-dark":   { top: 2,  left: 50, width: 44 },
-  "wings-dragon-fire":  { top: 44, left: 50, width: 170 },
-  "wings-dragon-cosmic":{ top: 48, left: 50, width: 170 },
-  "halo-neon":          { top: 8,  left: 50, width: 72 },
-  "halo-ornate":        { top: 8,  left: 50, width: 45 },
-  "aura-purple":        { top: 60, left: 50, width: 130 },
-  "aura-blue":          { top: 60, left: 50, width: 130 },
-  "aura-fire":          { top: 60, left: 50, width: 130 },
-  "circle-blue":        { top: 88, left: 50, width: 155 },
-  "circle-purple":      { top: 88, left: 50, width: 155 },
-  "circle-gold":        { top: 88, left: 50, width: 155 },
-};
 const ALL_POSITIONS: Record<string, AccessoryPosition> = {
   ...STAGE1_POSITIONS,
   ...STAGE2_POSITIONS,
   ...STAGE3_POSITIONS,
-  ...STAGE4_POSITIONS,
 };
 
 export function getPosition(accessoryId: string): AccessoryPosition | null {
@@ -468,7 +329,7 @@ export function getPosition(accessoryId: string): AccessoryPosition | null {
 // Hungry (a), feral (b), sleepy (c) variants use different art — never overlay.
 export function accessoriesAllowedFor(stage: number, mood: string): boolean {
   if (mood !== "content" && mood !== "smug") return false;
-  return stage === 1 || stage === 2 || stage === 3 || stage === 4;
+  return stage === 1 || stage === 2 || stage === 3; // expand to 4 when that stage is added
 }
 
 // Which stage's accessories can be EQUIPPED right now (cat must be at that stage).

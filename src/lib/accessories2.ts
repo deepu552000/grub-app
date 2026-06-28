@@ -270,13 +270,13 @@ export const STAGE4_ACCESSORIES: Accessory[] = [
   },
   // ── Halo (front) ──
   {
-    id: "halo-neon",
-    name: "Neon Halo",
+    id: "halo-gold",
+    name: "Golden Halo",
     slot: "halo",
     layer: "front",
     stage: 4,
     costUsd: 0.40,
-    imageUrl: "/accessories/halo-neon.webp",
+    imageUrl: "/accessories/halo-gold.webp",
   },
   {
     id: "halo-ornate",
@@ -443,7 +443,7 @@ const STAGE4_POSITIONS: Record<string, AccessoryPosition> = {
   "crown-flame-dark":   { top: 2,  left: 50, width: 44 },
   "wings-dragon-fire":  { top: 44, left: 50, width: 170 },
   "wings-dragon-cosmic":{ top: 48, left: 50, width: 170 },
-  "halo-neon":          { top: 8,  left: 50, width: 72 },
+  "halo-gold":          { top: 8,  left: 50, width: 45 },
   "halo-ornate":        { top: 8,  left: 50, width: 45 },
   "aura-purple":        { top: 60, left: 50, width: 130 },
   "aura-blue":          { top: 60, left: 50, width: 130 },
