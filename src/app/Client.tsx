@@ -678,8 +678,14 @@ export default function ClientPage() {
     // Paid check-in — exact $0.01 USDC on Base via contract call
     setCheckinPending(true);
     try {
-      await sendUsdcPayment(CHECKIN_USD);
+      const txHash = await sendUsdcPayment(CHECKIN_USD);
       applyCheckIn();
+      // Log confirmed check-in transaction — fire and forget
+      logTransaction({
+        type: "checkin",
+        txHash,
+        amountUsd: CHECKIN_USD,
+      });
     } catch (err: any) {
       const msg: string = err?.message ?? String(err);
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
@@ -860,6 +866,23 @@ export default function ClientPage() {
       });
   }
 
+  // ── Transaction logger — fire and forget, never blocks the UI ───────────────
+  function logTransaction(entry: {
+    type: "accessory_unlock" | "checkin";
+    txHash: string;
+    amountUsd: number;
+    accessoryId?: string;
+    accessoryName?: string;
+    walletAddress?: string;
+  }) {
+    if (!fid) return;
+    fetch("/api/txn-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fid, ts: Date.now(), ...entry }),
+    }).catch(() => {}); // never block on logging failure
+  }
+
   // Accessory unlock cost — stage-aware pricing on Base
   function accessoryUnlockUsd(accessoryId: string): number {
     const acc = ACCESSORIES.find((a) => a.id === accessoryId);
@@ -881,25 +904,34 @@ export default function ClientPage() {
     const price = accessoryUnlockUsd(accessoryId);
 
     try {
-      await sendUsdcPayment(price);
-      // IMPORTANT: use functional setState here — payment confirmation can take
-      // 10-60s during which state.accessories is stale in the closure.
-      // Reading fresh prev.accessories inside the updater avoids the lost-update bug.
-      let unlockFailed: string | null = null;
+      const txHash = await sendUsdcPayment(price);
+      // Payment confirmed on-chain — now unlock.
+      // Use functional setState so we always write to the freshest state
+      // (the async wait can be 10-60s; closure state is stale by then).
+      // Also: force-add the id even if somehow already present — payment
+      // succeeded so the user has earned it regardless.
       setState((prev) => {
-        const unlockResult = unlockAccessory(prev.accessories, accessoryId);
-        if (unlockResult.ok === true) {
-          return { ...prev, accessories: unlockResult.newState };
-        }
-        unlockFailed = unlockResult.reason;
-        return prev;
+        const alreadyUnlocked = prev.accessories.unlocked.includes(accessoryId);
+        if (alreadyUnlocked) return prev; // already in state, nothing to do
+        return {
+          ...prev,
+          accessories: {
+            ...prev.accessories,
+            unlocked: [...prev.accessories.unlocked, accessoryId],
+          },
+        };
       });
-      if (unlockFailed) {
-        setClosetMessage(unlockFailed);
-      } else {
-        setClosetMessage(null);
-        setLastAction("New accessory unlocked! Tap Equip to dress up Grub.");
-      }
+      // Log confirmed transaction — fire and forget
+      const acc = ACCESSORIES.find((a) => a.id === accessoryId);
+      logTransaction({
+        type: "accessory_unlock",
+        txHash,
+        amountUsd: price,
+        accessoryId,
+        accessoryName: acc?.name,
+      });
+      setClosetMessage(null);
+      setLastAction("New accessory unlocked! Tap Equip to dress up Grub.");
     } catch (err: any) {
       const msg: string = err?.message ?? String(err);
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
