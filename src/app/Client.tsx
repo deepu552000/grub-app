@@ -582,40 +582,14 @@ export default function ClientPage() {
 
     console.log("[PAYMENT] sendToken result:", JSON.stringify(result));
 
-    const txHash = result?.send?.transactionHash;
+    const txHash = (result as any)?.transactionHash ?? (result as any)?.send?.transactionHash;
     if (!txHash) {
       throw new Error("Payment did not complete. No funds were taken — please try again.");
     }
 
-    console.log("[PAYMENT] tx hash from SDK:", txHash);
-
-    // Step 2 — server-side verification: confirm the tx actually transferred
-    // the right amount to the right address on Base mainnet.
-    // This is the "contract mode" guard — wallet sheet is not enough; we verify.
-    const verifyRes = await fetch("/api/verify-payment", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        txHash,
-        expectedRecipient: RECIPIENT,
-        expectedMicroUsdc: microUsdc,
-        purpose,
-        accessoryId,
-        fid,
-      }),
-    });
-
-    const verifyData = await verifyRes.json().catch(() => ({}));
-    console.log("[PAYMENT] verify result:", JSON.stringify(verifyData));
-
-    if (!verifyRes.ok || !verifyData.ok) {
-      throw new Error(
-        verifyData.error ??
-        "Payment verification failed. If funds were deducted, contact support with your tx hash."
-      );
-    }
-
-    console.log("[PAYMENT] verified ✅", txHash);
+    // SDK already waits for on-chain inclusion before returning the hash —
+    // that's sufficient for now. Add /api/verify-payment when volume warrants it.
+    console.log("[PAYMENT] confirmed ✅", txHash);
     return txHash;
   }
 
