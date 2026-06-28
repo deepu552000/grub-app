@@ -441,7 +441,7 @@ export default function Home() {
   const [referralOpen, setReferralOpen] = useState(false);
   const [referralData, setReferralData] = useState<{
     referralLink: string;
-    friends: { fid: number; checkins: number; status: string; username: string; pfp: string }[];
+    friends: { fid: number; checkins: number; status: string }[];
     totalEarned: number;
   } | null>(null);
   const [referralLoading, setReferralLoading] = useState(false);
@@ -1489,17 +1489,8 @@ export default function Home() {
                           padding: "8px 12px", display: "flex",
                           justifyContent: "space-between", alignItems: "center", fontSize: 12
                         }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            {f.pfp && (
-                              <img
-                                src={f.pfp}
-                                alt=""
-                                style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover" }}
-                              />
-                            )}
-                            <span style={{ color: "#444", fontWeight: 600 }}>@{f.username}</span>
-                          </div>
-                          <span style={{ color: "#888" }}>{f.checkins}/5 ✓</span>
+                          <span style={{ color: "#444" }}>FID {f.fid}</span>
+                          <span style={{ color: "#888" }}>{f.checkins}/5 check-ins</span>
                           <span style={{
                             color: f.status === "paid" ? "#4caf7d" : "#f59e0b",
                             fontWeight: 700, fontSize: 11
