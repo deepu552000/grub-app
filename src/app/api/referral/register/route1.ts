@@ -40,9 +40,7 @@ export async function POST(req: NextRequest) {
     const wallet = await getWalletFromNeynar(Number(referrerFID));
     if (!wallet) {
       console.error(`[referral/register] no wallet found for FID ${referrerFID}`);
-      // Registration itself still succeeded — joiner still gets their welcome XP
-      // even though the referrer's DEGEN payout couldn't go through.
-      return NextResponse.json({ ok: true, rewarded: false, reason: "no wallet", isNewJoiner: true });
+      return NextResponse.json({ ok: true, rewarded: false, reason: "no wallet" });
     }
 
     await kv.set(`ref:${referrerFID}:wallet`, wallet);
@@ -50,7 +48,7 @@ export async function POST(req: NextRequest) {
     // Send 1 DEGEN immediately for the new join
     const txHash = await sendDegen(wallet, 1);
 
-    return NextResponse.json({ ok: true, rewarded: true, txHash, isNewJoiner: true });
+    return NextResponse.json({ ok: true, rewarded: true, txHash });
   } catch (err: any) {
     console.error("[referral/register] error:", err);
     return NextResponse.json(

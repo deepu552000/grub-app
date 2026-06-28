@@ -389,17 +389,7 @@ export default function ClientPage() {
                 newUserFID: ctx.user.fid,
                 referrerFID: parseInt(refParam),
               }),
-            })
-              .then((r) => r.json())
-              .then((data) => {
-                // Server only sends isNewJoiner:true the first time this FID
-                // is ever registered — safe even if localStorage gets cleared.
-                if (data?.isNewJoiner) {
-                  setState((cur) => ({ ...cur, xp: cur.xp + 20 }));
-                  showActionBubble("+20 XP — Welcome new member! 🎉");
-                }
-              })
-              .catch(() => {}); // fire and forget — never block app load on this
+            }).catch(() => {}); // fire and forget
           }
         }
       })
