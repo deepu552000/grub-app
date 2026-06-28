@@ -904,6 +904,7 @@ export default function ClientPage() {
   }
 
   async function handleUnlockAccessory(accessoryId: string) {
+    console.log("[UNLOCK] start", accessoryId, "fid:", fid, "pending:", unlockPending);
     if (unlockPending) return; // prevent double-tap
 
     // Guard: already unlocked
@@ -916,9 +917,12 @@ export default function ClientPage() {
     setClosetMessage(null);
 
     const price = accessoryUnlockUsd(accessoryId);
+    console.log("[UNLOCK] price:", price);
 
     try {
+      console.log("[UNLOCK] calling sendUsdcPayment...");
       const txHash = await sendUsdcPayment(price);
+      console.log("[UNLOCK] payment confirmed! txHash:", txHash);
       // Payment confirmed on-chain — now unlock.
       // Use functional setState so we always write to the freshest state
       // (the async wait can be 10-60s; closure state is stale by then).
@@ -929,6 +933,7 @@ export default function ClientPage() {
       // if the DB-load useEffect fires again before the 800ms debounce completes.
       setState((prev) => {
         const alreadyUnlocked = prev.accessories.unlocked.includes(accessoryId);
+        console.log("[UNLOCK] setState — alreadyUnlocked:", alreadyUnlocked, "unlocked list:", prev.accessories.unlocked);
         const newState = alreadyUnlocked ? prev : {
           ...prev,
           accessories: {
@@ -937,18 +942,20 @@ export default function ClientPage() {
           },
         };
 
-        // Immediately persist to localStorage so a DB-load overwrite can't wipe it
         try {
           window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-        } catch {}
+          console.log("[UNLOCK] localStorage saved");
+        } catch (e) { console.error("[UNLOCK] localStorage failed", e); }
 
-        // Immediately persist to DB — don't wait for the debounced useEffect
         if (fid) {
+          console.log("[UNLOCK] saving to DB fid:", fid);
           fetch("/api/pet", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ fid, state: newState }),
-          }).catch(() => {});
+          }).then(() => console.log("[UNLOCK] DB saved ✅")).catch((e) => console.error("[UNLOCK] DB save failed", e));
+        } else {
+          console.warn("[UNLOCK] no fid! DB save skipped");
         }
 
         return newState;
@@ -964,7 +971,9 @@ export default function ClientPage() {
       });
       setClosetMessage(null);
       setLastAction("New accessory unlocked! Tap Equip to dress up Grub.");
+      console.log("[UNLOCK] complete ✅");
     } catch (err: any) {
+      console.error("[UNLOCK] error caught:", err?.message ?? err);
       const msg: string = err?.message ?? String(err);
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
         setClosetMessage("Cancelled. Tap Unlock to try again.");
