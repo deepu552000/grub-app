@@ -882,23 +882,13 @@ export default function ClientPage() {
 
     try {
       await sendUsdcPayment(price);
-      // IMPORTANT: use functional setState here — payment confirmation can take
-      // 10-60s during which state.accessories is stale in the closure.
-      // Reading fresh prev.accessories inside the updater avoids the lost-update bug.
-      let unlockFailed: string | null = null;
-      setState((prev) => {
-        const unlockResult = unlockAccessory(prev.accessories, accessoryId);
-        if (unlockResult.ok === true) {
-          return { ...prev, accessories: unlockResult.newState };
-        }
-        unlockFailed = unlockResult.reason;
-        return prev;
-      });
-      if (unlockFailed) {
-        setClosetMessage(unlockFailed);
-      } else {
+      const unlockResult = unlockAccessory(state.accessories, accessoryId);
+      if (unlockResult.ok === true) {
+        setState((prev) => ({ ...prev, accessories: unlockResult.newState }));
         setClosetMessage(null);
         setLastAction("New accessory unlocked! Tap Equip to dress up Grub.");
+      } else {
+        setClosetMessage(unlockResult.reason);
       }
     } catch (err: any) {
       const msg: string = err?.message ?? String(err);
