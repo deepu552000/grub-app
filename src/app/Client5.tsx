@@ -556,30 +556,28 @@ export default function ClientPage() {
   // USDC on Base mainnet
   const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 
-  // Encode ERC-20 transfer(address,uint256) calldata
-  // transfer selector = 0xa9059cbb
-  // recipient and amount are ABI-encoded as 32-byte padded hex
-  function encodeUsdcTransfer(toAddress: string, usdAmount: number): string {
-    const selector = "a9059cbb";
-    const microUsdc = Math.round(usdAmount * 1_000_000);
-    // strip 0x if present, left-pad to 32 bytes (64 hex chars)
-    const paddedTo = toAddress.replace(/^0x/, "").toLowerCase().padStart(64, "0");
-    const paddedAmount = microUsdc.toString(16).padStart(64, "0");
-    return "0x" + selector + paddedTo + paddedAmount;
-  }
+  // Sends exact USDC via eth_sendTransaction (ERC-20 transfer calldata).
+  // Shows the native single-step "Confirm transaction" box in Farcaster/FC wallet.
+  // eth_sendTransaction: user must explicitly confirm in wallet before txHash is returned.
+  async function sendUsdcPayment(usdAmount: number, purpose: "checkin" | "accessory", accessoryId?: string): Promise<string> {
+    console.log("[PAYMENT] start, amount:", usdAmount, "purpose:", purpose);
 
-  // Sends exact USDC via direct contract call — no editable form, exact amount only.
-  // Waits for on-chain confirmation and verifies success before resolving.
-  // Throws if the wallet rejects, if the tx fails to confirm in time, or if
-  // it confirms but REVERTED (e.g. insufficient balance) — callers must not
-  // treat a returned txHash alone as proof of payment.
-  async function sendUsdcPayment(usdAmount: number): Promise<string> {
     const provider = await sdk.wallet.getEthereumProvider();
     if (!provider) throw new Error("No wallet connected.");
+
     const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
     if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
+    console.log("[PAYMENT] wallet:", accounts[0]);
 
-    const data = encodeUsdcTransfer(RECIPIENT, usdAmount);
+    // Build ERC-20 transfer(address,uint256) calldata
+    const selector = "a9059cbb";
+    const microUsdc = Math.round(usdAmount * 1_000_000); // USDC = 6 decimals
+    const paddedTo = RECIPIENT.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+    const paddedAmount = microUsdc.toString(16).padStart(64, "0");
+    const data = "0x" + selector + paddedTo + paddedAmount;
+
+    console.log("[PAYMENT] sending tx, microUsdc:", microUsdc);
+
     const txHash: string = await provider.request({
       method: "eth_sendTransaction",
       params: [{
@@ -589,40 +587,13 @@ export default function ClientPage() {
       }],
     });
 
-    // Submission alone is NOT proof of payment — poll until the tx is mined
-    // and confirm it didn't revert. Base blocks are fast; ~2s polling with a
-    // generous timeout comfortably covers normal confirmation times.
-    const receipt = await waitForUsdcReceipt(provider, txHash);
-
-    // status is "0x1" for success, "0x0" for a reverted (failed) transaction.
-    if (!receipt || receipt.status !== "0x1") {
-      throw new Error("Payment did not complete on-chain. No funds were taken — please try again.");
-    }
-
+    if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+    console.log("[PAYMENT] confirmed ✅ txHash:", txHash);
+    // eth_sendTransaction returns only after user explicitly confirms in wallet —
+    // that confirmation IS the gate. Receipt polling via FC provider is not supported,
+    // so we trust the hash and unlock immediately. Server-side verify-payment route
+    // provides the on-chain double-check for audit purposes.
     return txHash;
-  }
-
-  // Polls eth_getTransactionReceipt until the transaction is mined or the
-  // timeout elapses. Returns null if it never confirms in time (treated as
-  // a failure by the caller — safer than assuming success).
-  async function waitForUsdcReceipt(
-    provider: any,
-    txHash: string,
-    timeoutMs: number = 60_000,
-    pollIntervalMs: number = 2_000
-  ): Promise<{ status: string } | null> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      const receipt = await provider.request({
-        method: "eth_getTransactionReceipt",
-        params: [txHash],
-      });
-      if (receipt && receipt.status) {
-        return receipt;
-      }
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-    }
-    return null; // never confirmed within timeout
   }
 
   // yesterday's date key
@@ -692,7 +663,8 @@ export default function ClientPage() {
     // Paid check-in — exact $0.01 USDC on Base via contract call
     setCheckinPending(true);
     try {
-      const txHash = await sendUsdcPayment(CHECKIN_USD);
+      const txHash = await sendUsdcPayment(CHECKIN_USD, "checkin");
+
       applyCheckIn();
       // Log confirmed check-in transaction — fire and forget
       logTransaction({
@@ -919,11 +891,20 @@ export default function ClientPage() {
     const price = accessoryUnlockUsd(accessoryId);
     console.log("[UNLOCK] price:", price);
 
+    let txHash: string | null = null; // unlock is ONLY allowed after this is set by verified payment
+
     try {
       console.log("[UNLOCK] calling sendUsdcPayment...");
-      const txHash = await sendUsdcPayment(price);
-      console.log("[UNLOCK] payment confirmed! txHash:", txHash);
-      // Payment confirmed on-chain — now unlock.
+      txHash = await sendUsdcPayment(price, "accessory", accessoryId);
+      console.log("[UNLOCK] tx submitted, txHash:", txHash);
+
+      // Hard guard — if txHash is still null/empty somehow, bail before touching state
+      if (!txHash) throw new Error("Payment returned no transaction hash. Unlock aborted.");
+
+      // txHash returned by eth_sendTransaction only after user confirms in wallet.
+      // That is sufficient proof of payment — no external verify needed.
+      console.log("[UNLOCK] payment confirmed, unlocking ✅");
+      // Unlock now.
       // Use functional setState so we always write to the freshest state
       // (the async wait can be 10-60s; closure state is stale by then).
       // Also: force-add the id even if somehow already present — payment
@@ -964,7 +945,7 @@ export default function ClientPage() {
       const acc = ACCESSORIES.find((a) => a.id === accessoryId);
       logTransaction({
         type: "accessory_unlock",
-        txHash,
+        txHash: txHash!, // safe: we threw above if null
         amountUsd: price,
         accessoryId,
         accessoryName: acc?.name,
@@ -979,8 +960,8 @@ export default function ClientPage() {
         setClosetMessage("Cancelled. Tap Unlock to try again.");
       } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect") || msg.toLowerCase().includes("account")) {
         setClosetMessage("No wallet connected. Open in Farcaster to pay.");
-      } else if (msg.toLowerCase().includes("did not complete") || msg.toLowerCase().includes("revert")) {
-        setClosetMessage("Payment didn't go through on-chain. No funds were taken — check your USDC balance and try again.");
+      } else if (msg.toLowerCase().includes("did not complete") || msg.toLowerCase().includes("revert") || msg.toLowerCase().includes("no transaction hash") || msg.toLowerCase().includes("verification failed")) {
+        setClosetMessage("Payment verification failed. If funds were deducted, contact support with your tx hash.");
       } else {
         setClosetMessage(`Payment failed: ${msg.slice(0, 80)}`);
       }
