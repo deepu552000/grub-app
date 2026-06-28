@@ -1648,12 +1648,12 @@ export default function ClientPage() {
 }
 
 // Maps stage (1-4) + mood to the correct illustrated image file.
-// smug ~ happy, hungry/feral ~ angry are close enough substitutes until dedicated art exists.
+// smug ~ happy, hungry ~ grumpy (a), feral ~ full rage (c), sleepy (b)
 const moodToImageSuffix: Record<Mood, string> = {
   content: "",
   smug: "",
   hungry: "a",
-  feral: "a",
+  feral: "c",
   sleepy: "b",
 };
 

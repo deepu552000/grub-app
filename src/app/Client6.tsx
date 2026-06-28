@@ -271,10 +271,10 @@ function loadState(): PetState {
       ...parsed,
       bond: bondAfterDecay,
       glimmer: parsed.glimmer + mined,
-      hunger: clamp(parsed.hunger - hoursAway * 3),
-      happiness: clamp(parsed.happiness - hoursAway * 1.4),
+      hunger: clamp(parsed.hunger - hoursAway * 1.2),
+      happiness: clamp(parsed.happiness - hoursAway * 0.8),
       energy: clamp(parsed.energy + hoursAway * 5),
-      care: clamp(parsed.care - hoursAway * 1.8),
+      care: clamp(parsed.care - hoursAway * 1.0),
       lastVisit: Date.now(),
       // Daily caps reset on a new calendar day, not on a timer - simple and predictable.
       actionsToday: isNewCareDay
@@ -313,10 +313,10 @@ function loadStateFromSaved(parsed: PetState): PetState {
     ...parsed,
     bond: bondAfterDecay,
     glimmer: parsed.glimmer + mined,
-    hunger: clamp(parsed.hunger - hoursAway * 3),
-    happiness: clamp(parsed.happiness - hoursAway * 1.4),
+    hunger: clamp(parsed.hunger - hoursAway * 1.2),
+    happiness: clamp(parsed.happiness - hoursAway * 0.8),
     energy: clamp(parsed.energy + hoursAway * 5),
-    care: clamp(parsed.care - hoursAway * 1.8),
+    care: clamp(parsed.care - hoursAway * 1.0),
     lastVisit: Date.now(),
     actionsToday: isNewCareDay
       ? { feed: 0, play: 0, groom: 0, nap: 0 }
