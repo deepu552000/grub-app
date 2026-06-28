@@ -556,41 +556,68 @@ export default function ClientPage() {
   // USDC on Base mainnet
   const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 
-  // Sends USDC via sdk.actions.sendToken — the ONLY method supported by the
-  // Farcaster miniapp wallet provider. eth_sendTransaction is NOT supported.
-  //
-  // After the user confirms in the wallet sheet, we verify the tx on-chain
-  // via our own /api/verify-payment endpoint before unlocking anything.
-  // This means:
-  //   1. User sees the native Farcaster payment sheet (contract-style confirm)
-  //   2. SDK waits for on-chain inclusion and returns the tx hash
-  //   3. We call our server to independently verify the tx transferred
-  //      the correct amount to the correct recipient on Base
-  //   4. Only after server says OK do we update state / unlock
+  // Sends exact USDC via eth_sendTransaction (ERC-20 transfer calldata).
+  // Shows the native single-step "Confirm transaction" box in Farcaster/FC wallet.
+  // Polls for on-chain receipt before returning — never unlocks on submission alone.
   async function sendUsdcPayment(usdAmount: number, purpose: "checkin" | "accessory", accessoryId?: string): Promise<string> {
     console.log("[PAYMENT] start, amount:", usdAmount, "purpose:", purpose);
 
-    const microUsdc = Math.round(usdAmount * 1_000_000); // USDC has 6 decimals
-    console.log("[PAYMENT] microUsdc:", microUsdc);
+    const provider = await sdk.wallet.getEthereumProvider();
+    if (!provider) throw new Error("No wallet connected.");
 
-    // Step 1 — show native Farcaster payment sheet and wait for on-chain confirmation
-    const result = await sdk.actions.sendToken({
-      token: `eip155:8453/erc20:${USDC_CONTRACT}`, // Base mainnet USDC
-      amount: microUsdc.toString(),
-      recipientAddress: RECIPIENT,
+    const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
+    if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
+    console.log("[PAYMENT] wallet:", accounts[0]);
+
+    // Build ERC-20 transfer(address,uint256) calldata
+    const selector = "a9059cbb";
+    const microUsdc = Math.round(usdAmount * 1_000_000); // USDC = 6 decimals
+    const paddedTo = RECIPIENT.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+    const paddedAmount = microUsdc.toString(16).padStart(64, "0");
+    const data = "0x" + selector + paddedTo + paddedAmount;
+
+    console.log("[PAYMENT] sending tx, microUsdc:", microUsdc);
+
+    const txHash: string = await provider.request({
+      method: "eth_sendTransaction",
+      params: [{
+        from: accounts[0] as `0x${string}`,
+        to: USDC_CONTRACT,
+        data: data as `0x${string}`,
+      }],
     });
 
-    console.log("[PAYMENT] sendToken result:", JSON.stringify(result));
+    if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+    console.log("[PAYMENT] tx submitted:", txHash);
 
-    const txHash = (result as any)?.transactionHash ?? (result as any)?.send?.transactionHash;
-    if (!txHash) {
-      throw new Error("Payment did not complete. No funds were taken — please try again.");
+    // Poll for receipt — submission is NOT confirmation
+    const receipt = await waitForReceipt(provider, txHash);
+    console.log("[PAYMENT] receipt:", JSON.stringify(receipt));
+
+    if (!receipt || receipt.status !== "0x1") {
+      throw new Error("Payment did not complete on-chain. No funds were taken — please try again.");
     }
 
-    // SDK already waits for on-chain inclusion before returning the hash —
-    // that's sufficient for now. Add /api/verify-payment when volume warrants it.
     console.log("[PAYMENT] confirmed ✅", txHash);
     return txHash;
+  }
+
+  async function waitForReceipt(
+    provider: any,
+    txHash: string,
+    timeoutMs = 60_000,
+    pollMs = 2_000,
+  ): Promise<{ status: string } | null> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const receipt = await provider.request({
+        method: "eth_getTransactionReceipt",
+        params: [txHash],
+      });
+      if (receipt?.status) return receipt;
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+    return null;
   }
 
   // yesterday's date key
