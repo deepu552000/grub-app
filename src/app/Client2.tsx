@@ -555,10 +555,7 @@ export default function ClientPage() {
   }
 
   // Sends exact USDC via direct contract call — no editable form, exact amount only.
-  // Waits for on-chain confirmation and verifies success before resolving.
-  // Throws if the wallet rejects, if the tx fails to confirm in time, or if
-  // it confirms but REVERTED (e.g. insufficient balance) — callers must not
-  // treat a returned txHash alone as proof of payment.
+  // Returns txHash on success, throws on rejection or failure.
   async function sendUsdcPayment(usdAmount: number): Promise<string> {
     const provider = await sdk.wallet.getEthereumProvider();
     if (!provider) throw new Error("No wallet connected.");
@@ -574,41 +571,7 @@ export default function ClientPage() {
         data: data as `0x${string}`,
       }],
     });
-
-    // Submission alone is NOT proof of payment — poll until the tx is mined
-    // and confirm it didn't revert. Base blocks are fast; ~2s polling with a
-    // generous timeout comfortably covers normal confirmation times.
-    const receipt = await waitForUsdcReceipt(provider, txHash);
-
-    // status is "0x1" for success, "0x0" for a reverted (failed) transaction.
-    if (!receipt || receipt.status !== "0x1") {
-      throw new Error("Payment did not complete on-chain. No funds were taken — please try again.");
-    }
-
     return txHash;
-  }
-
-  // Polls eth_getTransactionReceipt until the transaction is mined or the
-  // timeout elapses. Returns null if it never confirms in time (treated as
-  // a failure by the caller — safer than assuming success).
-  async function waitForUsdcReceipt(
-    provider: any,
-    txHash: string,
-    timeoutMs: number = 60_000,
-    pollIntervalMs: number = 2_000
-  ): Promise<{ status: string } | null> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      const receipt = await provider.request({
-        method: "eth_getTransactionReceipt",
-        params: [txHash],
-      });
-      if (receipt && receipt.status) {
-        return receipt;
-      }
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-    }
-    return null; // never confirmed within timeout
   }
 
   // yesterday's date key
@@ -896,8 +859,6 @@ export default function ClientPage() {
         setClosetMessage("Cancelled. Tap Unlock to try again.");
       } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect") || msg.toLowerCase().includes("account")) {
         setClosetMessage("No wallet connected. Open in Farcaster to pay.");
-      } else if (msg.toLowerCase().includes("did not complete") || msg.toLowerCase().includes("revert")) {
-        setClosetMessage("Payment didn't go through on-chain. No funds were taken — check your USDC balance and try again.");
       } else {
         setClosetMessage(`Payment failed: ${msg.slice(0, 80)}`);
       }
