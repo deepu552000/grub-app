@@ -556,28 +556,30 @@ export default function ClientPage() {
   // USDC on Base mainnet
   const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 
-  // Sends exact USDC using the Farcaster miniapp SDK sendToken action.
-  // This is the correct method for miniapp wallets — eth_sendTransaction
-  // is not supported by the Farcaster provider.
-  async function sendUsdcPayment(usdAmount: number): Promise<string> {
-    console.log("[PAYMENT] start, amount:", usdAmount);
-
-    const provider = await sdk.wallet.getEthereumProvider();
-    if (!provider) throw new Error("No wallet connected.");
-
-    const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
-    if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
-    console.log("[PAYMENT] wallet:", accounts[0]);
-
-    // ERC-20 transfer(address,uint256) calldata
+  // Encode ERC-20 transfer(address,uint256) calldata
+  // transfer selector = 0xa9059cbb
+  // recipient and amount are ABI-encoded as 32-byte padded hex
+  function encodeUsdcTransfer(toAddress: string, usdAmount: number): string {
     const selector = "a9059cbb";
     const microUsdc = Math.round(usdAmount * 1_000_000);
-    const paddedTo = RECIPIENT.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+    // strip 0x if present, left-pad to 32 bytes (64 hex chars)
+    const paddedTo = toAddress.replace(/^0x/, "").toLowerCase().padStart(64, "0");
     const paddedAmount = microUsdc.toString(16).padStart(64, "0");
-    const data = "0x" + selector + paddedTo + paddedAmount;
+    return "0x" + selector + paddedTo + paddedAmount;
+  }
 
-    console.log("[PAYMENT] sending tx to USDC contract, microUsdc:", microUsdc);
+  // Sends exact USDC via direct contract call — no editable form, exact amount only.
+  // Waits for on-chain confirmation and verifies success before resolving.
+  // Throws if the wallet rejects, if the tx fails to confirm in time, or if
+  // it confirms but REVERTED (e.g. insufficient balance) — callers must not
+  // treat a returned txHash alone as proof of payment.
+  async function sendUsdcPayment(usdAmount: number): Promise<string> {
+    const provider = await sdk.wallet.getEthereumProvider();
+    if (!provider) throw new Error("No wallet connected.");
+    const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
+    if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
 
+    const data = encodeUsdcTransfer(RECIPIENT, usdAmount);
     const txHash: string = await provider.request({
       method: "eth_sendTransaction",
       params: [{
@@ -587,25 +589,27 @@ export default function ClientPage() {
       }],
     });
 
-    console.log("[PAYMENT] tx submitted, hash:", txHash);
+    // Submission alone is NOT proof of payment — poll until the tx is mined
+    // and confirm it didn't revert. Base blocks are fast; ~2s polling with a
+    // generous timeout comfortably covers normal confirmation times.
+    const receipt = await waitForUsdcReceipt(provider, txHash);
 
-    // Poll for receipt — don't treat submission as confirmation
-    const receipt = await waitForReceipt(provider, txHash);
-    console.log("[PAYMENT] receipt:", JSON.stringify(receipt));
-
+    // status is "0x1" for success, "0x0" for a reverted (failed) transaction.
     if (!receipt || receipt.status !== "0x1") {
       throw new Error("Payment did not complete on-chain. No funds were taken — please try again.");
     }
 
-    console.log("[PAYMENT] confirmed ✅");
     return txHash;
   }
 
-  async function waitForReceipt(
+  // Polls eth_getTransactionReceipt until the transaction is mined or the
+  // timeout elapses. Returns null if it never confirms in time (treated as
+  // a failure by the caller — safer than assuming success).
+  async function waitForUsdcReceipt(
     provider: any,
     txHash: string,
-    timeoutMs = 60_000,
-    pollMs = 2_000
+    timeoutMs: number = 60_000,
+    pollIntervalMs: number = 2_000
   ): Promise<{ status: string } | null> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -613,10 +617,12 @@ export default function ClientPage() {
         method: "eth_getTransactionReceipt",
         params: [txHash],
       });
-      if (receipt?.status) return receipt;
-      await new Promise((r) => setTimeout(r, pollMs));
+      if (receipt && receipt.status) {
+        return receipt;
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
-    return null;
+    return null; // never confirmed within timeout
   }
 
   // yesterday's date key
