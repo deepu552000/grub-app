@@ -18,6 +18,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
+import { ACCESSORIES } from "@/lib/accessories";
+
+const VALID_ACCESSORY_IDS = new Set(ACCESSORIES.map((a) => a.id));
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
 
@@ -85,6 +88,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, reason: "missing accessoryId" }, { status: 400 });
       }
 
+      if (!VALID_ACCESSORY_IDS.has(accessoryId)) {
+        return NextResponse.json({
+          ok: false,
+          reason: `unknown accessory "${accessoryId}". Valid IDs: ${[...VALID_ACCESSORY_IDS].join(", ")}`,
+        }, { status: 400 });
+      }
+
       const state = await getPetState(fid);
       if (!state) return NextResponse.json({ ok: false, reason: `no pet state for fid ${fid}` });
 
@@ -112,6 +122,13 @@ export async function POST(req: NextRequest) {
       const { accessoryId } = body;
       if (!accessoryId) {
         return NextResponse.json({ ok: false, reason: "missing accessoryId" }, { status: 400 });
+      }
+
+      if (!VALID_ACCESSORY_IDS.has(accessoryId)) {
+        return NextResponse.json({
+          ok: false,
+          reason: `unknown accessory "${accessoryId}". Valid IDs: ${[...VALID_ACCESSORY_IDS].join(", ")}`,
+        }, { status: 400 });
       }
 
       const state = await getPetState(fid);
