@@ -523,7 +523,7 @@ function AdminDashboardInner() {
             {loading ? "Syncing…" : "↻ Refresh"}
           </button>
           <button
-            onClick={() => signOut()}
+            onClick={() => signOut({ redirectUrl: "/admin" })}
             style={{
               background: C.redDim,
               border: `1px solid ${C.red}55`,
