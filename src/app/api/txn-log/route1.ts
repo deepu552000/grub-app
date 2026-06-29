@@ -1,7 +1,8 @@
 // app/api/txn-log/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
-import { verifyToken } from "@clerk/nextjs/server";
+
+const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
 
 export type TxnLogEntry = {
   fid: number;
@@ -47,13 +48,10 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// GET requires Clerk auth — used by the dashboard and debug tools only
+// GET requires the admin secret — used by the dashboard and debug tools only
 export async function GET(req: NextRequest) {
-  const token = req.headers.get("Authorization")?.replace("Bearer ", "");
-  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try {
-    await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY! });
-  } catch {
+  const secret = req.nextUrl.searchParams.get("secret");
+  if (!secret || secret !== ADMIN_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

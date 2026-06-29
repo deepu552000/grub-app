@@ -1,18 +1,15 @@
 // app/api/debug-kv/route.ts
-// GET /api/debug-kv
+// GET /api/debug-kv?secret=xxx
 // Scans all grub pet keys and returns full user + referral state.
-// Protected by Clerk — requires a valid session token in Authorization header.
 
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
-import { verifyToken } from "@clerk/nextjs/server";
+
+const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
 
 export async function GET(req: NextRequest) {
-  const token = req.headers.get("Authorization")?.replace("Bearer ", "");
-  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try {
-    await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY! });
-  } catch {
+  const secret = req.nextUrl.searchParams.get("secret");
+  if (!secret || secret !== ADMIN_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
