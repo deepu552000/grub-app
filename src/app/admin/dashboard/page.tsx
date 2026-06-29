@@ -473,17 +473,8 @@ function AdminDashboardInner() {
         boxShadow: `0 1px 0 ${C.amberGlow}18`,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ display: "inline-block", fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>
-            🍪{" "}
-            <span style={{
-              display: "inline-block",
-              background: dark
-                ? `linear-gradient(135deg, ${C.amberGlow2}, ${C.amberGlow})`
-                : `linear-gradient(135deg, #b45309, #d97706)`,
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              backgroundClip: "text",
-            }}>Grub</span>
+          <span style={{ display: "inline-block", fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: dark ? C.amberGlow : "#d97706" }}>
+            🍪 Grub
           </span>
           <span style={{ fontSize: 11, color: T.textMute, paddingLeft: 12, borderLeft: `1px solid ${T.border}` }}>Admin Console</span>
         </div>
