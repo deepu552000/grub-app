@@ -570,7 +570,6 @@ export default function ClientPage() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [closetOpen, setClosetOpen] = useState(false);
   const [referralOpen, setReferralOpen] = useState(false);
-  const [poolDegen, setPoolDegen] = useState<number | null>(null);
   const [referralData, setReferralData] = useState<{
     referralLink: string;
     friends: { fid: number; checkins: number; status: string; username: string; pfp: string }[];
@@ -1667,11 +1666,6 @@ export default function ClientPage() {
               setReferralOpen(next);
               if (next && fid && !referralData) {
                 setReferralLoading(true);
-                // Fetch pool balance in parallel
-                fetch("/api/referral/pool")
-                  .then((r) => r.json())
-                  .then((d) => { if (d.ok) setPoolDegen(d.poolDegen); })
-                  .catch(() => {});
                 try {
                   const res = await fetch(`/api/referral/status?fid=${fid}`);
                   const data = await res.json();
@@ -1749,20 +1743,6 @@ export default function ClientPage() {
               )}
               {referralData && (
                 <>
-                  {/* Pool balance row */}
-                  <div style={{
-                    background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
-                    borderRadius: 10, padding: "10px 14px",
-                    display: "flex", justifyContent: "space-between", alignItems: "center",
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 16 }}>🎰</span>
-                      <span style={{ color: "#a0aec0", fontSize: 12, fontWeight: 600 }}>Reward Pool</span>
-                    </div>
-                    <span style={{ color: "#f6c90e", fontWeight: 800, fontSize: 15 }}>
-                      {poolDegen !== null ? `${poolDegen} DEGEN` : "…"}
-                    </span>
-                  </div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#666" }}>
                     <span>Friends referred: <strong>{referralData.friends.length}</strong></span>
                     <span>Total earned: <strong>{referralData.totalEarned} DEGEN</strong></span>
