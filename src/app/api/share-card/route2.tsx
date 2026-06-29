@@ -7,6 +7,13 @@ import { NextRequest } from "next/server";
 
 export const runtime = "edge";
 
+// IMPORTANT: next/og (Satori) has unreliable WebP decoding in the edge runtime.
+// The live game UI can keep using .webp, but for this OG card we need PNG copies
+// of the 12 cat stage images at /public/cats-og/<file>.png (same naming as below).
+//   stage1.png  = content / smug
+//   stage1a.png = hungry
+//   stage1b.png = sleepy
+//   stage1c.png = feral
 function catImageSrc(stage: number, mood: string, origin: string): string {
   const suffix = mood === "hungry" ? "a" : mood === "sleepy" ? "b" : mood === "feral" ? "c" : "";
   return `${origin}/cats-og/stage${stage}${suffix}.png`;
@@ -28,6 +35,7 @@ function moodLabel(mood: string) {
   return { content: "Content", smug: "Thriving", hungry: "Hungry", feral: "Feral", sleepy: "Sleepy" }[mood] ?? "Content";
 }
 function moodAccent(mood: string): [string, string] {
+  // [background, border] rgba strings
   if (mood === "feral")  return ["rgba(180,40,40,0.28)",   "rgba(220,60,60,0.45)"];
   if (mood === "smug")   return ["rgba(255,200,80,0.20)",  "rgba(255,210,80,0.40)"];
   if (mood === "sleepy") return ["rgba(80,80,190,0.25)",   "rgba(110,110,210,0.40)"];
@@ -35,6 +43,9 @@ function moodAccent(mood: string): [string, string] {
   return                        ["rgba(160,140,255,0.16)", "rgba(180,160,255,0.32)"];
 }
 
+// Fetch the cat PNG ourselves and inline it as a base64 data URI. This avoids
+// relying on Satori's own network fetch for <img src="https://...">, which is
+// the most common cause of "image silently doesn't render" in next/og routes.
 async function catImageDataUri(stage: number, mood: string, origin: string): Promise<string | null> {
   const url = catImageSrc(stage, mood, origin);
   try {
@@ -99,7 +110,7 @@ export async function GET(req: NextRequest) {
           }}
         />
 
-        {/* Header */}
+        {/* ── Header ── */}
         <div style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
             <span style={{ fontSize: 20, fontWeight: 800, color: "#e8d8ff", letterSpacing: 2 }}>GRUB</span>
@@ -119,9 +130,10 @@ export async function GET(req: NextRequest) {
           </div>
         </div>
 
-        {/* Cat image */}
+        {/* ── Cat image ── */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1 }}>
           {catSrc ? (
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={catSrc}
               alt="Grub"
@@ -130,11 +142,13 @@ export async function GET(req: NextRequest) {
               style={{ objectFit: "contain", filter: "drop-shadow(0 0 20px rgba(200,160,255,0.30))" }}
             />
           ) : (
+            // Fallback so the card never ships with a dead empty hole if the
+            // fetch fails (e.g. asset missing for a mood/stage combo).
             <span style={{ fontSize: 96 }}>🐾</span>
           )}
         </div>
 
-        {/* Stage name + mood pill */}
+        {/* ── Stage name + mood pill ── */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 14 }}>
           <span style={{ fontSize: 26, fontWeight: 800, color: "#f0e8ff", letterSpacing: 0.4 }}>
             {stageData.name}
@@ -151,49 +165,66 @@ export async function GET(req: NextRequest) {
           </div>
         </div>
 
-        {/* Stats row */}
-        <div style={{ display: "flex", gap: 16, width: "100%", justifyContent: "center" }}>
-          {/* XP box with progress */}
-          <div
-            style={{
-              display: "flex", flexDirection: "column", alignItems: "center",
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.09)",
-              borderRadius: 12, padding: "9px 20px", minWidth: 76,
-            }}
-          >
-            <span style={{ fontSize: 17, fontWeight: 800, color: "#e8d8ff" }}>{String(Math.round(xp))}</span>
-            <span style={{ fontSize: 10, color: "#7a6a90", letterSpacing: 1.5, marginTop: 2 }}>XP</span>
-            <span style={{ fontSize: 9, color: "#9a78c0", marginTop: 3 }}>
-              {nextTitle ? `${xpProgress}% → ${nextTitle}` : "MAX STAGE"}
+        {/* ── Stats row ── */}
+        <div style={{ display: "flex", gap: 16, width: "100%", justifyContent: "center", marginBottom: 10 }}>
+          {[
+            { label: "XP",     value: String(Math.round(xp)) },
+            { label: "STREAK", value: String(streak)         },
+            { label: "BOND",   value: `${bond}%`             },
+          ].map(({ label, value }) => (
+            <div
+              key={label}
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center",
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.09)",
+                borderRadius: 12, padding: "9px 20px", minWidth: 76,
+              }}
+            >
+              <span style={{ fontSize: 17, fontWeight: 800, color: "#e8d8ff" }}>{value}</span>
+              <span style={{ fontSize: 10, color: "#7a6a90", letterSpacing: 1.5, marginTop: 2 }}>{label}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* ── XP progress bar ── */}
+        <div style={{ display: "flex", flexDirection: "column", width: "100%", gap: 5, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", width: "100%" }}>
+            <span style={{ fontSize: 10, color: "#6a5a80", letterSpacing: 1 }}>XP PROGRESS</span>
+            <span style={{ fontSize: 10, color: "#9a88b0" }}>
+              {xpProgress}%{nextTitle ? ` → ${nextTitle}` : " · MAX STAGE"}
             </span>
           </div>
-          {/* Streak box */}
           <div
             style={{
-              display: "flex", flexDirection: "column", alignItems: "center",
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.09)",
-              borderRadius: 12, padding: "9px 20px", minWidth: 76,
+              width: "100%", height: 6,
+              background: "rgba(255,255,255,0.07)",
+              borderRadius: 4, display: "flex", overflow: "hidden",
             }}
           >
-            <span style={{ fontSize: 17, fontWeight: 800, color: "#e8d8ff" }}>{String(streak)}</span>
-            <span style={{ fontSize: 10, color: "#7a6a90", letterSpacing: 1.5, marginTop: 2 }}>STREAK</span>
-          </div>
-          {/* Bond box */}
-          <div
-            style={{
-              display: "flex", flexDirection: "column", alignItems: "center",
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.09)",
-              borderRadius: 12, padding: "9px 20px", minWidth: 76,
-            }}
-          >
-            <span style={{ fontSize: 17, fontWeight: 800, color: "#e8d8ff" }}>{`${bond}%`}</span>
-            <span style={{ fontSize: 10, color: "#7a6a90", letterSpacing: 1.5, marginTop: 2 }}>BOND</span>
+            <div
+              style={{
+                width: `${xpProgress}%`, height: "100%",
+                background: "linear-gradient(90deg, #9060ef, #d0a8ff)",
+                borderRadius: 4, display: "flex",
+              }}
+            />
           </div>
         </div>
 
+        {/* ── CTA footer ── */}
+        <div
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: "100%", paddingTop: 12,
+            borderTop: "1px solid rgba(255,255,255,0.07)",
+          }}
+        >
+          <span style={{ fontSize: 12, color: "#6a5a80" }}>
+            Play Grub on Farcaster →{" "}
+            <span style={{ color: "#b090ff" }}>grub-app-eight.vercel.app</span>
+          </span>
+        </div>
       </div>
     ),
     { width: 480, height: 480 },
