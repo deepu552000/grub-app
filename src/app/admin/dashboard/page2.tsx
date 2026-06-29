@@ -4,7 +4,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, Suspense } from "react";
-import { useAuth, useClerk } from "@clerk/nextjs";
+import { useAuth } from "@clerk/nextjs";
 
 type DebugUser = {
   fid: string;
@@ -254,7 +254,6 @@ function Panel({ children }: { children: React.ReactNode }) {
 
 function AdminDashboardInner() {
   const { getToken } = useAuth();
-  const { signOut } = useClerk();
 
   const [users, setUsers] = useState<DebugUser[]>([]);
   const [txns, setTxns] = useState<TxnEntry[]>([]);
@@ -521,23 +520,6 @@ function AdminDashboardInner() {
             }}
           >
             {loading ? "Syncing…" : "↻ Refresh"}
-          </button>
-          <button
-            onClick={() => signOut()}
-            style={{
-              background: C.redDim,
-              border: `1px solid ${C.red}55`,
-              borderRadius: 8,
-              color: C.red,
-              padding: "7px 16px",
-              fontSize: 12,
-              fontWeight: 700,
-              fontFamily: "inherit",
-              cursor: "pointer",
-              letterSpacing: "0.03em",
-            }}
-          >
-            Sign Out
           </button>
         </div>
       </div>
