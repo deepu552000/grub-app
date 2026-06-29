@@ -116,10 +116,11 @@ function KpiCard({ label, value, sub, accent, dark = true }: { label: string; va
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children, accent }: { children: React.ReactNode; accent?: string }) {
+  const barColor = accent ?? C.amberGlow;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "2rem 0 0.75rem" }}>
-      <span style={{ width: 3, height: 14, background: C.amberGlow, borderRadius: 2, display: "block", flexShrink: 0, boxShadow: `0 0 8px ${C.amberGlow}` }} />
+      <span style={{ width: 3, height: 14, background: barColor, borderRadius: 2, display: "block", flexShrink: 0, boxShadow: `0 0 8px ${barColor}` }} />
       <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.creamDim }}>{children}</span>
     </div>
   );
@@ -262,21 +263,32 @@ function AdminDashboardInner() {
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
   const [dark, setDark] = useState(true);
 
-  // Toast notifications
-  const [toasts, setToasts] = useState<{ id: number; msg: string; type: "success" | "error" }[]>([]);
-  const addToast = useCallback((msg: string, type: "success" | "error" = "success") => {
-    const id = Date.now();
-    setToasts((t) => [...t, { id, msg, type }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500);
+  // Result modal (replaces toast)
+  const [modal, setModal] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+  const showModal = useCallback((msg: string, type: "success" | "error" = "success") => {
+    setModal({ msg, type });
   }, []);
+  // keep addToast name so runAction callers don't need changing
+  const addToast = showModal;
 
-  // Light theme overrides
+  // Light theme overrides — Claude's actual palette
   const T = dark ? {
     bg: C.bg, surface: C.surface, surfaceAlt: C.surfaceAlt, border: C.border, borderSub: C.borderSub,
     text: C.text, textSub: C.textSub, textMute: C.textMute, cream: C.cream, creamDim: C.creamDim, creamMute: C.creamMute,
+    accent: C.amberGlow,
   } : {
-    bg: "#f5f3ff", surface: "#ffffff", surfaceAlt: "#ede9fe", border: "#c4b5fd", borderSub: "#ddd6fe",
-    text: "#1e1b4b", textSub: "#4c1d95", textMute: "#7c3aed", cream: "#1e1b4b", creamDim: "#4c1d95", creamMute: "#6d28d9",
+    bg: "#f9f9f8",
+    surface: "#ffffff",
+    surfaceAlt: "#f3f3f0",
+    border: "#e5e5e2",
+    borderSub: "#ededed",
+    text: "#1a1a18",
+    textSub: "#4a4a45",
+    textMute: "#8a8a85",
+    cream: "#1a1a18",
+    creamDim: "#2d2d2a",
+    creamMute: "#6a6a65",
+    accent: "#d97706",
   };
 
   const [lookupFid, setLookupFid] = useState("");
@@ -353,6 +365,12 @@ function AdminDashboardInner() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Clear the manage-user panel so it's visibly fresh after refresh
+    setControlState(null);
+    setControlError(null);
+    setControlMsg(null);
+    setLookupFid("");
+    setStatDrafts({ xp: "", bond: "", glimmer: "", hunger: "", happiness: "" });
     try {
       const [debugRes, txnRes] = await Promise.all([
         authedGet("/api/debug-kv"),
@@ -398,22 +416,46 @@ function AdminDashboardInner() {
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
 
-      {/* ── Toast stack ── */}
-      <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 1000, display: "flex", flexDirection: "column", gap: 8, pointerEvents: "none" }}>
-        {toasts.map((t) => (
-          <div key={t.id} style={{
-            padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 600,
-            background: t.type === "success" ? C.greenDim : C.redDim,
-            border: `1px solid ${t.type === "success" ? C.green + "66" : C.red + "66"}`,
-            color: t.type === "success" ? C.green : C.red,
-            boxShadow: `0 4px 20px ${t.type === "success" ? C.green : C.red}33`,
-            animation: "slideIn 0.2s ease",
-            maxWidth: 320,
-          }}>
-            {t.msg}
+      {/* ── Result Modal ── */}
+      {modal && (
+        <div
+          onClick={() => setModal(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 2000,
+            background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: T.surface,
+              border: `1px solid ${modal.type === "success" ? C.green + "66" : C.red + "66"}`,
+              borderRadius: 14,
+              padding: "28px 32px",
+              maxWidth: 380,
+              width: "90vw",
+              boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${modal.type === "success" ? C.green : C.red}22`,
+              textAlign: "center",
+            }}
+          >
+            <div style={{ fontSize: 36, marginBottom: 12 }}>{modal.type === "success" ? "✅" : "❌"}</div>
+            <p style={{ fontSize: 14, fontWeight: 600, color: T.cream, margin: "0 0 20px", lineHeight: 1.5 }}>{modal.msg}</p>
+            <button
+              onClick={() => setModal(null)}
+              style={{
+                background: modal.type === "success" ? C.green : C.red,
+                border: "none", borderRadius: 8,
+                color: modal.type === "success" ? "#001a0d" : "#fff",
+                padding: "9px 28px", fontSize: 13, fontWeight: 700,
+                cursor: "pointer", fontFamily: "inherit",
+              }}
+            >
+              OK
+            </button>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
       <style>{`@keyframes slideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
 
       {/* ── Top nav ── */}
@@ -435,7 +477,9 @@ function AdminDashboardInner() {
             fontSize: 18,
             fontWeight: 800,
             letterSpacing: "-0.02em",
-            background: `linear-gradient(135deg, ${C.amberGlow2}, ${C.amberGlow})`,
+            background: dark
+              ? `linear-gradient(135deg, ${C.amberGlow2}, ${C.amberGlow})`
+              : `linear-gradient(135deg, #b45309, #d97706)`,
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
           }}>🍪 Grub</span>
@@ -469,17 +513,17 @@ function AdminDashboardInner() {
             onClick={load}
             disabled={loading}
             style={{
-              background: loading ? T.surfaceAlt : C.amberGlow,
+              background: loading ? T.surfaceAlt : (dark ? C.amberGlow : "#d97706"),
               border: "none",
               borderRadius: 8,
-              color: loading ? T.textMute : "#0f0900",
+              color: loading ? T.textMute : (dark ? "#0f0900" : "#fff"),
               padding: "7px 16px",
               fontSize: 12,
               fontWeight: 700,
               fontFamily: "inherit",
               cursor: loading ? "default" : "pointer",
               letterSpacing: "0.03em",
-              boxShadow: loading ? "none" : `0 0 14px ${C.amberGlow}55`,
+              boxShadow: loading ? "none" : `0 0 14px ${dark ? C.amberGlow : "#d97706"}55`,
             }}
           >
             {loading ? "Syncing…" : "↻ Refresh"}
@@ -526,7 +570,7 @@ function AdminDashboardInner() {
             {users.length === 0 ? (
               <p style={{ fontSize: 13, color: T.textMute }}>No players yet.</p>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto", paddingRight: 10 }}>
                 {[...users].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => (
                   <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <button
