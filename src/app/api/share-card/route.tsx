@@ -187,44 +187,6 @@ export async function GET(req: NextRequest) {
           ))}
         </div>
 
-        {/* ── XP progress bar ── */}
-        <div style={{ display: "flex", flexDirection: "column", width: "100%", gap: 5, marginBottom: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", width: "100%" }}>
-            <span style={{ fontSize: 10, color: "#6a5a80", letterSpacing: 1 }}>XP PROGRESS</span>
-            <span style={{ fontSize: 10, color: "#9a88b0" }}>
-              {xpProgress}%{nextTitle ? ` → ${nextTitle}` : " · MAX STAGE"}
-            </span>
-          </div>
-          <div
-            style={{
-              width: "100%", height: 6,
-              background: "rgba(255,255,255,0.07)",
-              borderRadius: 4, display: "flex", overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                width: `${xpProgress}%`, height: "100%",
-                background: "linear-gradient(90deg, #9060ef, #d0a8ff)",
-                borderRadius: 4, display: "flex",
-              }}
-            />
-          </div>
-        </div>
-
-        {/* ── CTA footer ── */}
-        <div
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            width: "100%", paddingTop: 12,
-            borderTop: "1px solid rgba(255,255,255,0.07)",
-          }}
-        >
-          <span style={{ fontSize: 12, color: "#6a5a80" }}>
-            Play Grub on Farcaster →{" "}
-            <span style={{ color: "#b090ff" }}>grub-app-eight.vercel.app</span>
-          </span>
-        </div>
       </div>
     ),
     { width: 480, height: 480 },

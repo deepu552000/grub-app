@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
           width:          "100%",
           height:         "100%",
           background:     "linear-gradient(145deg, #0e0c1a 0%, #16112a 55%, #0b0b1c 100%)",
-          padding:        "32px 36px 24px",
+          padding:        "20px 36px 16px",
           fontFamily:     "sans-serif",
           position:       "relative",
           overflow:       "hidden",
@@ -166,7 +166,7 @@ export async function GET(req: NextRequest) {
         </div>
 
         {/* ── Stats row ── */}
-        <div style={{ display: "flex", gap: 16, width: "100%", justifyContent: "center", marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 16, width: "100%", justifyContent: "center", marginBottom: 10 }}>
           {[
             { label: "XP",     value: String(Math.round(xp)) },
             { label: "STREAK", value: String(streak)         },
@@ -188,7 +188,7 @@ export async function GET(req: NextRequest) {
         </div>
 
         {/* ── XP progress bar ── */}
-        <div style={{ display: "flex", flexDirection: "column", width: "100%", gap: 5, marginBottom: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", width: "100%", gap: 5, marginBottom: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", width: "100%" }}>
             <span style={{ fontSize: 10, color: "#6a5a80", letterSpacing: 1 }}>XP PROGRESS</span>
             <span style={{ fontSize: 10, color: "#9a88b0" }}>
