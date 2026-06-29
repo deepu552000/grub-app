@@ -83,6 +83,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "missing fid or state" }, { status: 400 });
     }
 
+    // ── Ban check — blocks ALL writes for this fid, regardless of action ────
+    const currentState = await kv.get<any>(`grub:pet:${fid}`);
+    if (currentState?.banned) {
+      return NextResponse.json(
+        { error: "This account has been suspended." },
+        { status: 403 }
+      );
+    }
+
     // ── Accessory unlock — requires verified on-chain payment ────────────────
     if (action === "unlock_accessory") {
       const { accessoryId } = body;
