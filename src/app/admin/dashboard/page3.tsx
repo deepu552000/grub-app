@@ -36,35 +36,34 @@ type TxnEntry = {
 
 // ── Design tokens ────────────────────────────────────────────────────────────
 const C = {
-  bg:        "#0a0906",
-  surface:   "#131108",
-  surfaceAlt:"#1a1810",
-  border:    "#32301f",
-  borderSub: "#221f13",
-  amber:     "#e09a0a",
-  amberDim:  "#7a4e04",
-  amberGlow: "#ffbc38",
-  amberGlow2:"#ffd06b",
-  cream:     "#faf3dc",
-  creamDim:  "#d4c99a",
-  creamMute: "#8c8368",
-  green:     "#2edf8a",
-  greenDim:  "#0d3d22",
-  blue:      "#5ba3f5",
-  blueDim:   "#0f2e52",
-  purple:    "#a480f5",
-  red:       "#f25c5c",
-  redDim:    "#4a1515",
-  text:      "#f5edd8",
-  textSub:   "#c4b88a",
-  textMute:  "#6b6450",
+  bg:        "#0f0e0c",
+  surface:   "#18160f",
+  surfaceAlt:"#1e1b12",
+  border:    "#2e2b1f",
+  borderSub: "#252218",
+  amber:     "#d4920a",
+  amberDim:  "#a06e06",
+  amberGlow: "#f5a623",
+  cream:     "#f0e6c8",
+  creamDim:  "#b8ad94",
+  creamMute: "#7a7264",
+  green:     "#22c97a",
+  greenDim:  "#145c37",
+  blue:      "#4a90d9",
+  blueDim:   "#1b3d63",
+  purple:    "#8b6fd6",
+  red:       "#e05252",
+  redDim:    "#5a1e1e",
+  text:      "#ede7d2",
+  textSub:   "#a09880",
+  textMute:  "#5e5a4e",
 };
 
 const TYPE_META: Record<string, { color: string; bg: string; label: string }> = {
   accessory_unlock: { color: C.blue,   bg: C.blueDim,  label: "Accessory" },
   checkin:          { color: C.green,  bg: C.greenDim, label: "Check-in"  },
-  referral_join:    { color: C.amberGlow,  bg: "#3d2800",  label: "Ref Join"  },
-  referral_checkin: { color: C.purple, bg: "#2a1660",  label: "Ref Check" },
+  referral_join:    { color: C.amber,  bg: "#3d2c05",  label: "Ref Join"  },
+  referral_checkin: { color: C.purple, bg: "#2e1f5e",  label: "Ref Check" },
 };
 
 function timeAgo(ts: number): string {
@@ -85,7 +84,6 @@ function shortAddr(s?: string): string {
 // ── Sub-components ───────────────────────────────────────────────────────────
 
 function KpiCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
-  const ac = accent ?? C.amber;
   return (
     <div style={{
       background: C.surface,
@@ -96,17 +94,15 @@ function KpiCard({ label, value, sub, accent }: { label: string; value: string; 
       minWidth: 160,
       position: "relative",
       overflow: "hidden",
-      boxShadow: `0 0 0 1px ${ac}18, inset 0 1px 0 ${ac}22`,
     }}>
       <div style={{
         position: "absolute", top: 0, left: 0, right: 0, height: 2,
-        background: `linear-gradient(90deg, ${ac}cc, ${ac}55)`,
+        background: accent ?? C.amber,
         borderRadius: "12px 12px 0 0",
-        boxShadow: `0 0 12px ${ac}88`,
       }} />
       <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamMute, margin: "0 0 8px" }}>{label}</p>
       <p style={{ fontSize: 28, fontWeight: 700, margin: 0, color: C.cream, lineHeight: 1 }}>{value}</p>
-      {sub && <p style={{ fontSize: 12, color: C.textSub, margin: "6px 0 0" }}>{sub}</p>}
+      {sub && <p style={{ fontSize: 12, color: C.textMute, margin: "6px 0 0" }}>{sub}</p>}
     </div>
   );
 }
@@ -114,7 +110,7 @@ function KpiCard({ label, value, sub, accent }: { label: string; value: string; 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "2rem 0 0.75rem" }}>
-      <span style={{ width: 3, height: 14, background: C.amberGlow, borderRadius: 2, display: "block", flexShrink: 0, boxShadow: `0 0 8px ${C.amberGlow}` }} />
+      <span style={{ width: 3, height: 14, background: C.amber, borderRadius: 2, display: "block", flexShrink: 0 }} />
       <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.creamDim }}>{children}</span>
     </div>
   );
@@ -183,34 +179,10 @@ function Btn({ onClick, disabled, variant = "default", children }: {
   onClick: () => void; disabled?: boolean; variant?: "default" | "green" | "amber" | "red"; children: React.ReactNode;
 }) {
   const styles = {
-    default: {
-      border: `1px solid ${C.border}`,
-      color: C.creamDim,
-      bg: C.surfaceAlt,
-      shadow: "none",
-      hoverBg: C.border,
-    },
-    green: {
-      border: `1px solid ${C.green}`,
-      color: "#001a0d",
-      bg: C.green,
-      shadow: `0 0 12px ${C.green}55`,
-      hoverBg: "#4dffa0",
-    },
-    amber: {
-      border: `1px solid ${C.amberGlow}`,
-      color: "#1a0e00",
-      bg: C.amberGlow,
-      shadow: `0 0 14px ${C.amberGlow}55`,
-      hoverBg: C.amberGlow2,
-    },
-    red: {
-      border: `1px solid ${C.red}`,
-      color: C.red,
-      bg: C.redDim,
-      shadow: `0 0 10px ${C.red}33`,
-      hoverBg: "#5c1818",
-    },
+    default: { border: `1px solid ${C.border}`,   color: C.creamDim, bg: "transparent" },
+    green:   { border: `1px solid ${C.green}`,    color: C.green,    bg: C.greenDim   },
+    amber:   { border: `1px solid ${C.amber}`,    color: C.amberGlow,bg: "#2e1f00"    },
+    red:     { border: `1px solid ${C.red}`,      color: C.red,      bg: C.redDim     },
   }[variant];
   return (
     <button
@@ -223,14 +195,13 @@ function Btn({ onClick, disabled, variant = "default", children }: {
         color: styles.color,
         padding: "8px 16px",
         fontSize: 12,
-        fontWeight: 700,
+        fontWeight: 600,
         fontFamily: "inherit",
         cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.38 : 1,
+        opacity: disabled ? 0.45 : 1,
         whiteSpace: "nowrap",
-        letterSpacing: "0.03em",
-        transition: "opacity 0.15s, box-shadow 0.15s",
-        boxShadow: disabled ? "none" : styles.shadow,
+        letterSpacing: "0.02em",
+        transition: "opacity 0.15s",
       }}
     >{children}</button>
   );
@@ -238,7 +209,7 @@ function Btn({ onClick, disabled, variant = "default", children }: {
 
 function Panel({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: "1.25rem", boxShadow: `inset 0 1px 0 ${C.amberGlow}0a` }}>
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: "1.25rem" }}>
       {children}
     </div>
   );
@@ -381,14 +352,13 @@ function AdminDashboardInner() {
         position: "sticky",
         top: 0,
         zIndex: 10,
-        boxShadow: `0 1px 0 ${C.amberGlow}18`,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{
             fontSize: 18,
             fontWeight: 800,
             letterSpacing: "-0.02em",
-            background: `linear-gradient(135deg, ${C.amberGlow2}, ${C.amberGlow})`,
+            background: `linear-gradient(135deg, ${C.amberGlow}, ${C.amber})`,
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
           }}>🍪 Grub</span>
@@ -396,7 +366,7 @@ function AdminDashboardInner() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {lastLoaded && (
-            <span style={{ fontSize: 11, color: C.creamMute }}>
+            <span style={{ fontSize: 11, color: C.textMute }}>
               Last sync {timeAgo(lastLoaded.getTime())}
             </span>
           )}
@@ -404,17 +374,16 @@ function AdminDashboardInner() {
             onClick={load}
             disabled={loading}
             style={{
-              background: loading ? C.surfaceAlt : C.amberGlow,
+              background: loading ? C.surfaceAlt : `linear-gradient(135deg, ${C.amberDim}, ${C.amber})`,
               border: "none",
               borderRadius: 8,
-              color: loading ? C.textMute : "#0f0900",
+              color: loading ? C.textMute : "#0f0e0c",
               padding: "7px 16px",
               fontSize: 12,
               fontWeight: 700,
               fontFamily: "inherit",
               cursor: loading ? "default" : "pointer",
-              letterSpacing: "0.03em",
-              boxShadow: loading ? "none" : `0 0 14px ${C.amberGlow}55`,
+              letterSpacing: "0.02em",
             }}
           >
             {loading ? "Syncing…" : "↻ Refresh"}
@@ -453,7 +422,7 @@ function AdminDashboardInner() {
         </div>
 
         {/* ── Charts row ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1.8fr 1fr", gap: 16, marginTop: "1rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 16, marginTop: "1rem" }}>
 
           {/* Player progress */}
           <Panel>
@@ -463,26 +432,26 @@ function AdminDashboardInner() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto" }}>
                 {[...users].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => (
-                  <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <button
                       onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                      style={{ fontSize: 11, color: C.amberGlow, background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", width: 64, textAlign: "left", padding: 0, flexShrink: 0, textShadow: `0 0 8px ${C.amberGlow}66` }}
+                      style={{ fontSize: 11, color: C.amber, background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", width: 60, textAlign: "left", padding: 0, flexShrink: 0 }}
                       title="Open in user panel"
                     >
                       #{u.fid}
                     </button>
-                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 5, background: C.borderSub, borderRadius: 3, minWidth: 0 }}>
-                          <div style={{ height: 5, background: C.blue, borderRadius: 3, width: `${((u.xp || 0) / maxXp) * 100}%`, boxShadow: `0 0 6px ${C.blue}88` }} />
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ flex: 1, height: 5, background: C.borderSub, borderRadius: 3 }}>
+                          <div style={{ height: 5, background: C.blue, borderRadius: 3, width: `${((u.xp || 0) / maxXp) * 100}%` }} />
                         </div>
-                        <span style={{ fontSize: 10, color: C.textSub, width: 56, textAlign: "right", flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp</span>
+                        <span style={{ fontSize: 10, color: C.textMute, width: 48, textAlign: "right" }}>{u.xp || 0} xp</span>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 5, background: C.borderSub, borderRadius: 3, minWidth: 0 }}>
-                          <div style={{ height: 5, background: C.green, borderRadius: 3, width: `${((u.totalCheckIns || 0) / maxCheckins) * 100}%`, boxShadow: `0 0 6px ${C.green}88` }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ flex: 1, height: 5, background: C.borderSub, borderRadius: 3 }}>
+                          <div style={{ height: 5, background: C.green, borderRadius: 3, width: `${((u.totalCheckIns || 0) / maxCheckins) * 100}%` }} />
                         </div>
-                        <span style={{ fontSize: 10, color: C.textSub, width: 56, textAlign: "right", flexShrink: 0 }}>{u.totalCheckIns || 0} ci</span>
+                        <span style={{ fontSize: 10, color: C.textMute, width: 48, textAlign: "right" }}>{u.totalCheckIns || 0} ci</span>
                       </div>
                     </div>
                   </div>
@@ -532,8 +501,8 @@ function AdminDashboardInner() {
                     <th key={h} style={{
                       textAlign: i >= 3 ? "right" : "left",
                       padding: "9px 14px",
-                      color: C.creamMute,
-                      fontWeight: 700,
+                      color: C.textMute,
+                      fontWeight: 600,
                       letterSpacing: "0.06em",
                       textTransform: "uppercase",
                       fontSize: 10,
@@ -578,10 +547,10 @@ function AdminDashboardInner() {
                       <td style={{ padding: "9px 14px" }}>
                         <Badge color={meta.color} bg={meta.bg}>{meta.label}</Badge>
                       </td>
-                      <td style={{ padding: "9px 14px", fontFamily: "monospace", color: C.amberGlow, fontSize: 11 }}>{t.fid}</td>
+                      <td style={{ padding: "9px 14px", fontFamily: "monospace", color: C.amber, fontSize: 11 }}>{t.fid}</td>
                       <td style={{ padding: "9px 14px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: C.textSub }} title={detail}>{detail}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 600, color: amountColor, fontVariantNumeric: "tabular-nums" }}>{amount}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: C.creamMute }}>{timeAgo(t.ts)}</td>
+                      <td style={{ padding: "9px 14px", textAlign: "right", color: C.textMute }}>{timeAgo(t.ts)}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right" }}>
                         <a href={`https://basescan.org/tx/${t.txHash}`} target="_blank" rel="noopener noreferrer"
                           style={{ color: C.blue, fontSize: 11, fontWeight: 600, textDecoration: "none" }}>
@@ -601,7 +570,7 @@ function AdminDashboardInner() {
         {referrers.length === 0 ? (
           <Panel><p style={{ fontSize: 13, color: C.textMute, margin: 0 }}>No referrals yet.</p></Panel>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
             {referrers.map((u) => (
               <div key={u.fid} style={{
                 background: C.surface,
@@ -609,25 +578,24 @@ function AdminDashboardInner() {
                 borderRadius: 10,
                 padding: "12px 14px",
               }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <button
                     onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                    style={{ fontSize: 13, fontWeight: 700, color: C.amberGlow, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0, textShadow: `0 0 10px ${C.amberGlow}66` }}
+                    style={{ fontSize: 13, fontWeight: 700, color: C.amber, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0 }}
                   >
                     FID {u.fid}
                   </button>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: C.amberGlow2 }}>+{u.referrals?.degenEarned} DEGEN</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.amberGlow }}>+{u.referrals?.degenEarned} DEGEN</span>
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
                   {u.referrals?.referredUsers.map((r) => (
                     <span key={r.fid} style={{
-                      fontSize: 11, padding: "3px 9px", borderRadius: 5,
+                      fontSize: 10, padding: "2px 7px", borderRadius: 4,
                       background: r.status === "paid" ? C.greenDim : C.surfaceAlt,
-                      color: r.status === "paid" ? C.green : C.textSub,
-                      border: `1px solid ${r.status === "paid" ? C.green + "66" : C.border}`,
-                      whiteSpace: "nowrap",
+                      color: r.status === "paid" ? C.green : C.textMute,
+                      border: `1px solid ${r.status === "paid" ? C.green + "55" : C.border}`,
                     }}>
-                      #{r.fid} · {r.checkins}ci
+                      #{r.fid} · {r.checkins} ci
                     </span>
                   ))}
                 </div>
@@ -689,7 +657,7 @@ function AdminDashboardInner() {
                     ["Glimmer", controlState.state.glimmer],
                   ].map(([k, v]) => (
                     <div key={k as string} style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 10, color: C.creamMute, marginBottom: 1 }}>{k}</div>
+                      <div style={{ fontSize: 10, color: C.textMute, marginBottom: 1 }}>{k}</div>
                       <div style={{ fontSize: 14, fontWeight: 700, color: C.cream }}>{v}</div>
                     </div>
                   ))}
@@ -716,24 +684,14 @@ function AdminDashboardInner() {
                     })} variant="default">Save Stats</Btn>
                   </div>
 
-                  {/* Referral — split into two clearly separate actions */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {/* Set referrer */}
-                    <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: "14px", border: `1px solid ${C.border}` }}>
-                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.amberGlow, margin: "0 0 6px" }}>Set Referrer</p>
-                      <p style={{ fontSize: 11, color: C.textMute, margin: "0 0 10px" }}>Assign a new parent FID for this user.</p>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <Input value={newReferrerFid} onChange={setNewReferrerFid} placeholder="Referrer FID" />
-                        <Btn onClick={() => runAction("edit_referral", { newReferrerFid })} disabled={!newReferrerFid} variant="amber">Set</Btn>
-                      </div>
+                  {/* Referral */}
+                  <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: "14px" }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamMute, margin: "0 0 12px" }}>Referral Relationship</p>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                      <Input value={newReferrerFid} onChange={setNewReferrerFid} placeholder="New referrer FID" />
+                      <Btn onClick={() => runAction("edit_referral", { newReferrerFid })} disabled={!newReferrerFid}>Set</Btn>
                     </div>
-
-                    {/* Remove referral */}
-                    <div style={{ background: C.redDim, borderRadius: 10, padding: "14px", border: `1px solid ${C.red}55` }}>
-                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.red, margin: "0 0 6px" }}>Remove Referral</p>
-                      <p style={{ fontSize: 11, color: C.textMute, margin: "0 0 10px" }}>Detach this user from their referrer entirely.</p>
-                      <Btn onClick={() => runAction("edit_referral", { removeReferral: true })} variant="red">✕ Remove Referral</Btn>
-                    </div>
+                    <Btn onClick={() => runAction("edit_referral", { removeReferral: true })} variant="red">Remove Referral</Btn>
                   </div>
 
                   {/* Ban */}
