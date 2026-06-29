@@ -10,7 +10,7 @@
 
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
 type DebugUser = {
@@ -73,7 +73,7 @@ function MetricCard({ label, value, sub }: { label: string; value: string; sub?:
   );
 }
 
-export default function AdminDashboardPage() {
+function AdminDashboardInner() {
   const searchParams = useSearchParams();
   const secret = searchParams.get("secret") ?? "";
 
@@ -632,5 +632,13 @@ export default function AdminDashboardPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function AdminDashboardPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: "100vh", background: "#0e0d0c", color: "#898781", fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", justifyContent: "center" }}>Loading…</div>}>
+      <AdminDashboardInner />
+    </Suspense>
   );
 }
