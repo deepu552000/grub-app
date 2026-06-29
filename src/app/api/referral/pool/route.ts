@@ -1,25 +1,46 @@
 // app/api/referral/pool/route.ts
 // Returns current DEGEN balance of the treasury wallet (the referral reward pool)
+//
+// Reads the balance directly from Base via RPC (same pattern as sendDegen in
+// lib/referral.ts) instead of Etherscan's API — Etherscan's free tier
+// doesn't support Base (chainid 8453), it requires a paid plan. Reading
+// balance directly via RPC is free and doesn't depend on any third-party
+// indexer being available or paid for.
 
 import { NextResponse } from "next/server";
+import { ethers } from "ethers";
 
 const TREASURY_WALLET = process.env.TREASURY_WALLET_ADDRESS ?? "";
-const DEGEN_CONTRACT  = "0x4ed4e862860bed51a9570b96d89af5e1b0efefed"; // DEGEN on Base
+const DEGEN_CONTRACT = "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed"; // DEGEN on Base
+const DEGEN_ABI = ["function balanceOf(address owner) view returns (uint256)"];
 
 export async function GET() {
   try {
-    // Etherscan v2 — ERC-20 token balance for treasury wallet on Base
-    const url = `https://api.etherscan.io/v2/api?chainid=8453&module=account&action=tokenbalance&contractaddress=${DEGEN_CONTRACT}&address=${TREASURY_WALLET}&tag=latest&apikey=${process.env.BASESCAN_API_KEY ?? ""}`;
+    if (!TREASURY_WALLET) {
+      return NextResponse.json({
+        ok: false,
+        poolDegen: 0,
+        error: "TREASURY_WALLET_ADDRESS env var is missing or empty",
+      });
+    }
 
-    const res  = await fetch(url, { cache: "no-store" });
-    const json = await res.json();
+    const provider = new ethers.JsonRpcProvider(
+      process.env.BASE_RPC_URL ?? "https://mainnet.base.org"
+    );
+    const contract = new ethers.Contract(DEGEN_CONTRACT, DEGEN_ABI, provider);
 
-    // Result is in wei (18 decimals for DEGEN)
-    const raw = BigInt(json?.result ?? "0");
-    const degen = Number(raw / BigInt(1e18));
+    const rawBalance: bigint = await contract.balanceOf(TREASURY_WALLET);
+
+    // DEGEN uses 18 decimals — format to a normal human-readable number.
+    const degen = Number(ethers.formatUnits(rawBalance, 18));
 
     return NextResponse.json({ ok: true, poolDegen: degen });
   } catch (err: any) {
-    return NextResponse.json({ ok: false, poolDegen: 0, error: err?.message });
+    console.error("[referral/pool] error:", err);
+    return NextResponse.json({
+      ok: false,
+      poolDegen: 0,
+      error: err?.message ?? "unknown error",
+    });
   }
 }
