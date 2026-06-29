@@ -7,14 +7,16 @@ import { NextRequest } from "next/server";
 
 export const runtime = "edge";
 
-// Cat image naming convention (matches /public/cats/):
-//   stage1.webp  = content / smug
-//   stage1a.webp = hungry
-//   stage1b.webp = sleepy
-//   stage1c.webp = feral
+// IMPORTANT: next/og (Satori) has unreliable WebP decoding in the edge runtime.
+// The live game UI can keep using .webp, but for this OG card we need PNG copies
+// of the 12 cat stage images at /public/cats-og/<file>.png (same naming as below).
+//   stage1.png  = content / smug
+//   stage1a.png = hungry
+//   stage1b.png = sleepy
+//   stage1c.png = feral
 function catImageSrc(stage: number, mood: string, origin: string): string {
   const suffix = mood === "hungry" ? "a" : mood === "sleepy" ? "b" : mood === "feral" ? "c" : "";
-  return `${origin}/cats/stage${stage}${suffix}.webp`;
+  return `${origin}/cats-og/stage${stage}${suffix}.png`;
 }
 
 const stages = [
@@ -41,6 +43,22 @@ function moodAccent(mood: string): [string, string] {
   return                        ["rgba(160,140,255,0.16)", "rgba(180,160,255,0.32)"];
 }
 
+// Fetch the cat PNG ourselves and inline it as a base64 data URI. This avoids
+// relying on Satori's own network fetch for <img src="https://...">, which is
+// the most common cause of "image silently doesn't render" in next/og routes.
+async function catImageDataUri(stage: number, mood: string, origin: string): Promise<string | null> {
+  const url = catImageSrc(stage, mood, origin);
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    const base64 = Buffer.from(buf).toString("base64");
+    return `data:image/png;base64,${base64}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams, origin } = new URL(req.url);
 
@@ -51,7 +69,7 @@ export async function GET(req: NextRequest) {
   const bond       = parseInt(searchParams.get("bond")   ?? "0", 10);
 
   const stageData  = stages[stageParam - 1];
-  const catSrc     = catImageSrc(stageParam, mood, origin);
+  const catSrc     = await catImageDataUri(stageParam, mood, origin);
 
   const thisMinXp  = stageMinXp[stageParam - 1];
   const nextMinXp  = stageMinXp[stageParam] ?? null;
@@ -114,14 +132,20 @@ export async function GET(req: NextRequest) {
 
         {/* ── Cat image ── */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={catSrc}
-            alt="Grub"
-            width={210}
-            height={210}
-            style={{ objectFit: "contain", filter: "drop-shadow(0 0 20px rgba(200,160,255,0.30))" }}
-          />
+          {catSrc ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={catSrc}
+              alt="Grub"
+              width={180}
+              height={180}
+              style={{ objectFit: "contain", filter: "drop-shadow(0 0 20px rgba(200,160,255,0.30))" }}
+            />
+          ) : (
+            // Fallback so the card never ships with a dead empty hole if the
+            // fetch fails (e.g. asset missing for a mood/stage combo).
+            <span style={{ fontSize: 96 }}>🐾</span>
+          )}
         </div>
 
         {/* ── Stage name + mood pill ── */}
