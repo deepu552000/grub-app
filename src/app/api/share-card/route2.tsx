@@ -26,8 +26,6 @@ const stages = [
   { name: "Moonmilk Mythic", title: "Adult Mythic" },
 ];
 
-const stageMinXp = [0, 480, 960, 1440];
-
 function moodEmoji(mood: string) {
   return { content: "🤍", smug: "✨", hungry: "🍼", feral: "🌑", sleepy: "💤" }[mood] ?? "🤍";
 }
@@ -35,6 +33,7 @@ function moodLabel(mood: string) {
   return { content: "Content", smug: "Thriving", hungry: "Hungry", feral: "Feral", sleepy: "Sleepy" }[mood] ?? "Content";
 }
 function moodAccent(mood: string): [string, string] {
+  // [background, border] rgba strings
   if (mood === "feral")  return ["rgba(180,40,40,0.28)",   "rgba(220,60,60,0.45)"];
   if (mood === "smug")   return ["rgba(255,200,80,0.20)",  "rgba(255,210,80,0.40)"];
   if (mood === "sleepy") return ["rgba(80,80,190,0.25)",   "rgba(110,110,210,0.40)"];
@@ -42,6 +41,9 @@ function moodAccent(mood: string): [string, string] {
   return                        ["rgba(160,140,255,0.16)", "rgba(180,160,255,0.32)"];
 }
 
+// Fetch the cat PNG ourselves and inline it as a base64 data URI. This avoids
+// relying on Satori's own network fetch for <img src="https://...">, which is
+// the most common cause of "image silently doesn't render" in next/og routes.
 async function catImageDataUri(stage: number, mood: string, origin: string): Promise<string | null> {
   const url = catImageSrc(stage, mood, origin);
   try {
@@ -67,24 +69,7 @@ export async function GET(req: NextRequest) {
   const stageData  = stages[stageParam - 1];
   const catSrc     = await catImageDataUri(stageParam, mood, origin);
 
-  const thisMinXp  = stageMinXp[stageParam - 1];
-  const nextMinXp  = stageMinXp[stageParam] ?? null;
-  const xpProgress = nextMinXp !== null
-    ? Math.min(100, Math.round(((xp - thisMinXp) / (nextMinXp - thisMinXp)) * 100))
-    : 100;
-  const nextTitle  = stageParam < 4 ? stages[stageParam].title : null;
-
   const [moodBg, moodBorder] = moodAccent(mood);
-
-  // Build the 4 stat pills — last one is next-stage progress (or MAX if final stage)
-  const stats = [
-    { label: "XP",     value: String(Math.round(xp)) },
-    { label: "STREAK", value: String(streak)          },
-    { label: "BOND",   value: `${bond}%`              },
-    nextTitle
-      ? { label: `→ ${nextTitle.toUpperCase()}`, value: `${xpProgress}%` }
-      : { label: "STAGE",                         value: "MAX"            },
-  ];
 
   return new ImageResponse(
     (
@@ -149,12 +134,14 @@ export async function GET(req: NextRequest) {
               style={{ objectFit: "contain", filter: "drop-shadow(0 0 20px rgba(200,160,255,0.30))" }}
             />
           ) : (
+            // Fallback so the card never ships with a dead empty hole if the
+            // fetch fails (e.g. asset missing for a mood/stage combo).
             <span style={{ fontSize: 96 }}>🐾</span>
           )}
         </div>
 
         {/* ── Stage name + mood pill ── */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, marginBottom: 0 }}>
           <span style={{ fontSize: 26, fontWeight: 800, color: "#f0e8ff", letterSpacing: 0.4 }}>
             {stageData.name}
           </span>
@@ -170,23 +157,28 @@ export async function GET(req: NextRequest) {
           </div>
         </div>
 
-        {/* ── Stats row (4 pills) ── */}
-        <div style={{ display: "flex", gap: 10, width: "100%", justifyContent: "center" }}>
-          {stats.map(({ label, value }) => (
+        {/* ── Stats row ── */}
+        <div style={{ display: "flex", gap: 16, width: "100%", justifyContent: "center", marginBottom: 0 }}>
+          {[
+            { label: "XP",     value: String(Math.round(xp)) },
+            { label: "STREAK", value: String(streak)         },
+            { label: "BOND",   value: `${bond}%`             },
+          ].map(({ label, value }) => (
             <div
               key={label}
               style={{
                 display: "flex", flexDirection: "column", alignItems: "center",
                 background: "rgba(255,255,255,0.05)",
                 border: "1px solid rgba(255,255,255,0.09)",
-                borderRadius: 12, padding: "9px 0", minWidth: 0, flex: 1,
+                borderRadius: 12, padding: "9px 20px", minWidth: 76,
               }}
             >
-              <span style={{ fontSize: 15, fontWeight: 800, color: "#e8d8ff" }}>{value}</span>
-              <span style={{ fontSize: 9, color: "#7a6a90", letterSpacing: 1, marginTop: 2 }}>{label}</span>
+              <span style={{ fontSize: 17, fontWeight: 800, color: "#e8d8ff" }}>{value}</span>
+              <span style={{ fontSize: 10, color: "#7a6a90", letterSpacing: 1.5, marginTop: 2 }}>{label}</span>
             </div>
           ))}
         </div>
+
 
       </div>
     ),
