@@ -36,35 +36,35 @@ type TxnEntry = {
 
 // ── Design tokens ────────────────────────────────────────────────────────────
 const C = {
-  bg:        "#0a0906",
-  surface:   "#131108",
-  surfaceAlt:"#1a1810",
-  border:    "#32301f",
-  borderSub: "#221f13",
-  amber:     "#e09a0a",
-  amberDim:  "#7a4e04",
-  amberGlow: "#ffbc38",
-  amberGlow2:"#ffd06b",
-  cream:     "#faf3dc",
-  creamDim:  "#d4c99a",
-  creamMute: "#8c8368",
-  green:     "#2edf8a",
-  greenDim:  "#0d3d22",
-  blue:      "#5ba3f5",
-  blueDim:   "#0f2e52",
-  purple:    "#a480f5",
-  red:       "#f25c5c",
-  redDim:    "#4a1515",
-  text:      "#f5edd8",
-  textSub:   "#c4b88a",
-  textMute:  "#6b6450",
+  bg:        "#0d0c14",
+  surface:   "#13111e",
+  surfaceAlt:"#1a1828",
+  border:    "#2d2b42",
+  borderSub: "#1e1c2e",
+  amber:     "#c084fc",
+  amberDim:  "#6b21a8",
+  amberGlow: "#d8b4fe",
+  amberGlow2:"#ede9fe",
+  cream:     "#f5f0ff",
+  creamDim:  "#c4b5fd",
+  creamMute: "#7c6fa0",
+  green:     "#34d399",
+  greenDim:  "#064e3b",
+  blue:      "#60a5fa",
+  blueDim:   "#1e3a5f",
+  purple:    "#a78bfa",
+  red:       "#f87171",
+  redDim:    "#450a0a",
+  text:      "#ede9fe",
+  textSub:   "#a89bc8",
+  textMute:  "#5c5478",
 };
 
 const TYPE_META: Record<string, { color: string; bg: string; label: string }> = {
-  accessory_unlock: { color: C.blue,   bg: C.blueDim,  label: "Accessory" },
-  checkin:          { color: C.green,  bg: C.greenDim, label: "Check-in"  },
-  referral_join:    { color: C.amberGlow,  bg: "#3d2800",  label: "Ref Join"  },
-  referral_checkin: { color: C.purple, bg: "#2a1660",  label: "Ref Check" },
+  accessory_unlock: { color: C.blue,    bg: C.blueDim,   label: "Accessory" },
+  checkin:          { color: C.green,   bg: C.greenDim,  label: "Check-in"  },
+  referral_join:    { color: C.amberGlow, bg: "#3b1f6e",  label: "Ref Join"  },
+  referral_checkin: { color: C.purple,  bg: "#2e1f5e",   label: "Ref Check" },
 };
 
 function timeAgo(ts: number): string {
@@ -84,12 +84,17 @@ function shortAddr(s?: string): string {
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
-function KpiCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
+function KpiCard({ label, value, sub, accent, dark = true }: { label: string; value: string; sub?: string; accent?: string; dark?: boolean }) {
   const ac = accent ?? C.amber;
+  const surface = dark ? C.surface : "#ffffff";
+  const border = dark ? C.border : "#c4b5fd";
+  const creamMute = dark ? C.creamMute : "#6d28d9";
+  const cream = dark ? C.cream : "#1e1b4b";
+  const textSub = dark ? C.textSub : "#4c1d95";
   return (
     <div style={{
-      background: C.surface,
-      border: `1px solid ${C.border}`,
+      background: surface,
+      border: `1px solid ${border}`,
       borderRadius: 12,
       padding: "1.25rem 1.5rem",
       flex: 1,
@@ -104,17 +109,18 @@ function KpiCard({ label, value, sub, accent }: { label: string; value: string; 
         borderRadius: "12px 12px 0 0",
         boxShadow: `0 0 12px ${ac}88`,
       }} />
-      <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamMute, margin: "0 0 8px" }}>{label}</p>
-      <p style={{ fontSize: 28, fontWeight: 700, margin: 0, color: C.cream, lineHeight: 1 }}>{value}</p>
-      {sub && <p style={{ fontSize: 12, color: C.textSub, margin: "6px 0 0" }}>{sub}</p>}
+      <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: creamMute, margin: "0 0 8px" }}>{label}</p>
+      <p style={{ fontSize: 28, fontWeight: 700, margin: 0, color: cream, lineHeight: 1 }}>{value}</p>
+      {sub && <p style={{ fontSize: 12, color: textSub, margin: "6px 0 0" }}>{sub}</p>}
     </div>
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children, accent }: { children: React.ReactNode; accent?: string }) {
+  const barColor = accent ?? C.amberGlow;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "2rem 0 0.75rem" }}>
-      <span style={{ width: 3, height: 14, background: C.amberGlow, borderRadius: 2, display: "block", flexShrink: 0, boxShadow: `0 0 8px ${C.amberGlow}` }} />
+      <span style={{ width: 3, height: 14, background: barColor, borderRadius: 2, display: "block", flexShrink: 0, boxShadow: `0 0 8px ${barColor}` }} />
       <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.creamDim }}>{children}</span>
     </div>
   );
@@ -255,6 +261,35 @@ function AdminDashboardInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
+  const [dark, setDark] = useState(true);
+
+  // Result modal (replaces toast)
+  const [modal, setModal] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+  const showModal = useCallback((msg: string, type: "success" | "error" = "success") => {
+    setModal({ msg, type });
+  }, []);
+  // keep addToast name so runAction callers don't need changing
+  const addToast = showModal;
+
+  // Light theme overrides — Claude's actual palette
+  const T = dark ? {
+    bg: C.bg, surface: C.surface, surfaceAlt: C.surfaceAlt, border: C.border, borderSub: C.borderSub,
+    text: C.text, textSub: C.textSub, textMute: C.textMute, cream: C.cream, creamDim: C.creamDim, creamMute: C.creamMute,
+    accent: C.amberGlow,
+  } : {
+    bg: "#f9f9f8",
+    surface: "#ffffff",
+    surfaceAlt: "#f3f3f0",
+    border: "#e5e5e2",
+    borderSub: "#ededed",
+    text: "#1a1a18",
+    textSub: "#4a4a45",
+    textMute: "#8a8a85",
+    cream: "#1a1a18",
+    creamDim: "#2d2d2a",
+    creamMute: "#6a6a65",
+    accent: "#d97706",
+  };
 
   const [lookupFid, setLookupFid] = useState("");
   const [controlState, setControlState] = useState<any>(null);
@@ -311,19 +346,31 @@ function AdminDashboardInner() {
     try {
       const res = await authedPost("/api/admin/user-control", { fid: lookupFid, action, ...extra });
       if (!res.ok) {
-        setControlError(res.reason ?? "Action failed");
+        const errMsg = res.reason ?? "Action failed";
+        setControlError(errMsg);
+        addToast(`✕ ${errMsg}`, "error");
       } else {
-        setControlMsg(res.warning ? `Done — note: ${res.warning}` : `${action.replace(/_/g, " ")} applied.`);
+        const successMsg = res.warning ? `Done — note: ${res.warning}` : `✓ ${action.replace(/_/g, " ")} applied.`;
+        setControlMsg(successMsg);
+        addToast(successMsg, "success");
         loadUserControl(lookupFid);
       }
     } catch (err: any) {
-      setControlError(err?.message ?? "Action failed");
+      const errMsg = err?.message ?? "Action failed";
+      setControlError(errMsg);
+      addToast(`✕ ${errMsg}`, "error");
     }
-  }, [lookupFid, loadUserControl, authedPost]);
+  }, [lookupFid, loadUserControl, authedPost, addToast]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Clear the manage-user panel so it's visibly fresh after refresh
+    setControlState(null);
+    setControlError(null);
+    setControlMsg(null);
+    setLookupFid("");
+    setStatDrafts({ xp: "", bond: "", glimmer: "", hunger: "", happiness: "" });
     try {
       const [debugRes, txnRes] = await Promise.all([
         authedGet("/api/debug-kv"),
@@ -367,12 +414,54 @@ function AdminDashboardInner() {
   const maxCheckins = Math.max(1, ...users.map((u) => u.totalCheckIns || 0));
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
+
+      {/* ── Result Modal ── */}
+      {modal && (
+        <div
+          onClick={() => setModal(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 2000,
+            background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: T.surface,
+              border: `1px solid ${modal.type === "success" ? C.green + "66" : C.red + "66"}`,
+              borderRadius: 14,
+              padding: "28px 32px",
+              maxWidth: 380,
+              width: "90vw",
+              boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${modal.type === "success" ? C.green : C.red}22`,
+              textAlign: "center",
+            }}
+          >
+            <div style={{ fontSize: 36, marginBottom: 12 }}>{modal.type === "success" ? "✅" : "❌"}</div>
+            <p style={{ fontSize: 14, fontWeight: 600, color: T.cream, margin: "0 0 20px", lineHeight: 1.5 }}>{modal.msg}</p>
+            <button
+              onClick={() => setModal(null)}
+              style={{
+                background: modal.type === "success" ? C.green : C.red,
+                border: "none", borderRadius: 8,
+                color: modal.type === "success" ? "#001a0d" : "#fff",
+                padding: "9px 28px", fontSize: 13, fontWeight: 700,
+                cursor: "pointer", fontFamily: "inherit",
+              }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+      <style>{`@keyframes slideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
 
       {/* ── Top nav ── */}
       <div style={{
-        borderBottom: `1px solid ${C.border}`,
-        background: C.surface,
+        borderBottom: `1px solid ${T.border}`,
+        background: T.surface,
         padding: "0 2rem",
         display: "flex",
         alignItems: "center",
@@ -388,33 +477,53 @@ function AdminDashboardInner() {
             fontSize: 18,
             fontWeight: 800,
             letterSpacing: "-0.02em",
-            background: `linear-gradient(135deg, ${C.amberGlow2}, ${C.amberGlow})`,
+            background: dark
+              ? `linear-gradient(135deg, ${C.amberGlow2}, ${C.amberGlow})`
+              : `linear-gradient(135deg, #b45309, #d97706)`,
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
           }}>🍪 Grub</span>
-          <span style={{ fontSize: 11, color: C.textMute, paddingLeft: 12, borderLeft: `1px solid ${C.border}` }}>Admin Console</span>
+          <span style={{ fontSize: 11, color: T.textMute, paddingLeft: 12, borderLeft: `1px solid ${T.border}` }}>Admin Console</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {lastLoaded && (
-            <span style={{ fontSize: 11, color: C.creamMute }}>
+            <span style={{ fontSize: 11, color: T.creamMute }}>
               Last sync {timeAgo(lastLoaded.getTime())}
             </span>
           )}
+          {/* Dark / Light toggle */}
+          <button
+            onClick={() => setDark((d) => !d)}
+            title={dark ? "Switch to light mode" : "Switch to dark mode"}
+            style={{
+              background: T.surfaceAlt,
+              border: `1px solid ${T.border}`,
+              borderRadius: 8,
+              color: T.textSub,
+              padding: "7px 12px",
+              fontSize: 14,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              lineHeight: 1,
+            }}
+          >
+            {dark ? "☀️" : "🌙"}
+          </button>
           <button
             onClick={load}
             disabled={loading}
             style={{
-              background: loading ? C.surfaceAlt : C.amberGlow,
+              background: loading ? T.surfaceAlt : (dark ? C.amberGlow : "#d97706"),
               border: "none",
               borderRadius: 8,
-              color: loading ? C.textMute : "#0f0900",
+              color: loading ? T.textMute : (dark ? "#0f0900" : "#fff"),
               padding: "7px 16px",
               fontSize: 12,
               fontWeight: 700,
               fontFamily: "inherit",
               cursor: loading ? "default" : "pointer",
               letterSpacing: "0.03em",
-              boxShadow: loading ? "none" : `0 0 14px ${C.amberGlow}55`,
+              boxShadow: loading ? "none" : `0 0 14px ${dark ? C.amberGlow : "#d97706"}55`,
             }}
           >
             {loading ? "Syncing…" : "↻ Refresh"}
@@ -430,8 +539,8 @@ function AdminDashboardInner() {
             margin: "1rem 0",
             padding: "12px 16px",
             borderRadius: 10,
-            background: "#2a1200",
-            border: `1px solid ${C.amberDim}`,
+            background: dark ? "#1a0d2e" : "#faf5ff",
+            border: `1px solid ${C.amberGlow}55`,
             color: C.amberGlow,
             fontSize: 13,
             display: "flex",
@@ -445,99 +554,99 @@ function AdminDashboardInner() {
         {/* ── KPI row ── */}
         <SectionLabel>Overview</SectionLabel>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <KpiCard label="Players"        value={String(users.length)}        sub="active pets saved"         accent={C.blue}   />
-          <KpiCard label="USDC Revenue"   value={`$${totalUsdc.toFixed(2)}`}  sub={`${usdcTxns.length} purchases`} accent={C.green}  />
-          <KpiCard label="DEGEN Paid Out" value={totalDegenPaid.toFixed(0)}   sub="referral rewards"          accent={C.purple} />
-          <KpiCard label="Acc. Owners"    value={String(usersWithAcc)}        sub={`of ${users.length} players`}   accent={C.amber}  />
-          <KpiCard label="Referrers"      value={String(referrers.length)}    sub="with ≥1 referred user"     accent={C.amberDim} />
+          <KpiCard label="Players"        value={String(users.length)}        sub="active pets saved"         accent={C.blue}   dark={dark} />
+          <KpiCard label="USDC Revenue"   value={`$${totalUsdc.toFixed(2)}`}  sub={`${usdcTxns.length} purchases`} accent={C.green}  dark={dark} />
+          <KpiCard label="DEGEN Paid Out" value={totalDegenPaid.toFixed(0)}   sub="referral rewards"          accent={C.purple} dark={dark} />
+          <KpiCard label="Acc. Owners"    value={String(usersWithAcc)}        sub={`of ${users.length} players`}   accent={C.amber}  dark={dark} />
+          <KpiCard label="Referrers"      value={String(referrers.length)}    sub="with ≥1 referred user"     accent={C.amberDim} dark={dark} />
         </div>
 
         {/* ── Charts row ── */}
         <div style={{ display: "grid", gridTemplateColumns: "1.8fr 1fr", gap: 16, marginTop: "1rem" }}>
 
           {/* Player progress */}
-          <Panel>
-            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamMute, margin: "0 0 14px" }}>Player Progress</p>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}>
+            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 14px" }}>Player Progress</p>
             {users.length === 0 ? (
-              <p style={{ fontSize: 13, color: C.textMute }}>No players yet.</p>
+              <p style={{ fontSize: 13, color: T.textMute }}>No players yet.</p>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto", paddingRight: 10 }}>
                 {[...users].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => (
                   <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <button
                       onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                      style={{ fontSize: 11, color: C.amberGlow, background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", width: 64, textAlign: "left", padding: 0, flexShrink: 0, textShadow: `0 0 8px ${C.amberGlow}66` }}
+                      style={{ fontSize: 11, color: C.amberGlow, background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", width: 72, textAlign: "left", padding: 0, flexShrink: 0, textShadow: `0 0 8px ${C.amberGlow}66` }}
                       title="Open in user panel"
                     >
                       #{u.fid}
                     </button>
                     <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 5, background: C.borderSub, borderRadius: 3, minWidth: 0 }}>
+                        <div style={{ flex: 1, height: 5, background: T.borderSub, borderRadius: 3, minWidth: 0 }}>
                           <div style={{ height: 5, background: C.blue, borderRadius: 3, width: `${((u.xp || 0) / maxXp) * 100}%`, boxShadow: `0 0 6px ${C.blue}88` }} />
                         </div>
-                        <span style={{ fontSize: 10, color: C.textSub, width: 56, textAlign: "right", flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp</span>
+                        <span style={{ fontSize: 10, color: T.textSub, width: 64, textAlign: "right", flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp</span>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 5, background: C.borderSub, borderRadius: 3, minWidth: 0 }}>
+                        <div style={{ flex: 1, height: 5, background: T.borderSub, borderRadius: 3, minWidth: 0 }}>
                           <div style={{ height: 5, background: C.green, borderRadius: 3, width: `${((u.totalCheckIns || 0) / maxCheckins) * 100}%`, boxShadow: `0 0 6px ${C.green}88` }} />
                         </div>
-                        <span style={{ fontSize: 10, color: C.textSub, width: 56, textAlign: "right", flexShrink: 0 }}>{u.totalCheckIns || 0} ci</span>
+                        <span style={{ fontSize: 10, color: T.textSub, width: 64, textAlign: "right", flexShrink: 0 }}>{u.totalCheckIns || 0} ci</span>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
             )}
-          </Panel>
+          </div>
 
           {/* Txn type breakdown */}
-          <Panel>
-            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamMute, margin: "0 0 14px" }}>Transactions by Type</p>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}>
+            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 14px" }}>Transactions by Type</p>
             {Object.keys(byType).length === 0 ? (
-              <p style={{ fontSize: 13, color: C.textMute }}>No transactions yet.</p>
+              <p style={{ fontSize: 13, color: T.textMute }}>No transactions yet.</p>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: "calc(100% - 30px)", gap: 0 }}>
                 {Object.entries(byType).map(([type, count]) => {
-                  const meta = TYPE_META[type] ?? { color: C.textSub, bg: C.surfaceAlt, label: type };
+                  const meta = TYPE_META[type] ?? { color: T.textSub, bg: T.surfaceAlt, label: type };
                   const pct = Math.round((count / txns.length) * 100);
                   return (
-                    <div key={type}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                    <div key={type} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "10px 0", borderBottom: `1px solid ${T.borderSub}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                         <Badge color={meta.color} bg={meta.bg}>{meta.label}</Badge>
-                        <span style={{ fontSize: 12, color: C.creamDim, fontVariantNumeric: "tabular-nums" }}>{count} <span style={{ color: C.textMute }}>({pct}%)</span></span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: T.cream, fontVariantNumeric: "tabular-nums" }}>{count} <span style={{ fontSize: 11, fontWeight: 400, color: T.textMute }}>({pct}%)</span></span>
                       </div>
-                      <div style={{ height: 4, background: C.borderSub, borderRadius: 2 }}>
-                        <div style={{ height: 4, background: meta.color, borderRadius: 2, width: `${pct}%`, opacity: 0.8 }} />
+                      <div style={{ height: 6, background: T.borderSub, borderRadius: 3 }}>
+                        <div style={{ height: 6, background: meta.color, borderRadius: 3, width: `${pct}%`, boxShadow: `0 0 8px ${meta.color}66` }} />
                       </div>
                     </div>
                   );
                 })}
               </div>
             )}
-          </Panel>
+          </div>
         </div>
 
         {/* ── Transaction log ── */}
         <SectionLabel>Transaction Log</SectionLabel>
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${C.borderSub}` }}>
-            <span style={{ fontSize: 12, color: C.textMute }}>Showing last {sortedTxns.length} of {txns.length} total</span>
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
+            <span style={{ fontSize: 12, color: T.textMute }}>Showing last {sortedTxns.length} of {txns.length} total</span>
           </div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
-                <tr style={{ background: C.surfaceAlt }}>
+                <tr style={{ background: T.surfaceAlt }}>
                   {["Type", "FID", "Detail", "Amount", "When", "Tx"].map((h, i) => (
                     <th key={h} style={{
                       textAlign: i >= 3 ? "right" : "left",
                       padding: "9px 14px",
-                      color: C.creamMute,
+                      color: T.creamMute,
                       fontWeight: 700,
                       letterSpacing: "0.06em",
                       textTransform: "uppercase",
                       fontSize: 10,
-                      borderBottom: `1px solid ${C.border}`,
+                      borderBottom: `1px solid ${T.border}`,
                     }}>{h}</th>
                   ))}
                 </tr>
@@ -545,13 +654,13 @@ function AdminDashboardInner() {
               <tbody>
                 {sortedTxns.length === 0 ? (
                   <tr>
-                    <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: C.textMute }}>No transactions logged yet.</td>
+                    <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No transactions logged yet.</td>
                   </tr>
                 ) : sortedTxns.map((t, i) => {
-                  const meta = TYPE_META[t.type] ?? { color: C.textSub, bg: C.surfaceAlt, label: t.type };
+                  const meta = TYPE_META[t.type] ?? { color: T.textSub, bg: T.surfaceAlt, label: t.type };
                   let detail = "—";
                   let amount = "—";
-                  let amountColor = C.textSub;
+                  let amountColor = T.textSub;
                   if (t.type === "accessory_unlock") {
                     detail = t.accessoryName || t.accessoryId || "";
                     amount = `$${(t.amountUsd || 0).toFixed(2)}`;
@@ -559,29 +668,29 @@ function AdminDashboardInner() {
                   } else if (t.type === "referral_join" || t.type === "referral_checkin") {
                     detail = `→ fid ${t.toFid ?? "?"} ${shortAddr(t.toWallet) ? `(${shortAddr(t.toWallet)})` : ""}`;
                     amount = `${t.amountDegen ?? 0} DEGEN`;
-                    amountColor = C.amber;
+                    amountColor = C.amberGlow;
                   } else if (t.amountUsd > 0) {
                     amount = `$${t.amountUsd.toFixed(2)}`;
                     amountColor = C.green;
                   } else if (t.amountDegen) {
                     amount = `${t.amountDegen} DEGEN`;
-                    amountColor = C.amber;
+                    amountColor = C.amberGlow;
                   }
                   return (
                     <tr
                       key={i}
                       style={{
-                        borderBottom: `1px solid ${C.borderSub}`,
-                        background: i % 2 === 0 ? "transparent" : C.surfaceAlt + "55",
+                        borderBottom: `1px solid ${T.borderSub}`,
+                        background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55",
                       }}
                     >
                       <td style={{ padding: "9px 14px" }}>
                         <Badge color={meta.color} bg={meta.bg}>{meta.label}</Badge>
                       </td>
                       <td style={{ padding: "9px 14px", fontFamily: "monospace", color: C.amberGlow, fontSize: 11 }}>{t.fid}</td>
-                      <td style={{ padding: "9px 14px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: C.textSub }} title={detail}>{detail}</td>
+                      <td style={{ padding: "9px 14px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: T.textSub }} title={detail}>{detail}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 600, color: amountColor, fontVariantNumeric: "tabular-nums" }}>{amount}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: C.creamMute }}>{timeAgo(t.ts)}</td>
+                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.creamMute }}>{timeAgo(t.ts)}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right" }}>
                         <a href={`https://basescan.org/tx/${t.txHash}`} target="_blank" rel="noopener noreferrer"
                           style={{ color: C.blue, fontSize: 11, fontWeight: 600, textDecoration: "none" }}>
@@ -599,13 +708,13 @@ function AdminDashboardInner() {
         {/* ── Referral tree ── */}
         <SectionLabel>Referral Tree</SectionLabel>
         {referrers.length === 0 ? (
-          <Panel><p style={{ fontSize: 13, color: C.textMute, margin: 0 }}>No referrals yet.</p></Panel>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}><p style={{ fontSize: 13, color: T.textMute, margin: 0 }}>No referrals yet.</p></div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 10 }}>
             {referrers.map((u) => (
               <div key={u.fid} style={{
-                background: C.surface,
-                border: `1px solid ${C.border}`,
+                background: T.surface,
+                border: `1px solid ${T.border}`,
                 borderRadius: 10,
                 padding: "12px 14px",
               }}>
@@ -622,9 +731,9 @@ function AdminDashboardInner() {
                   {u.referrals?.referredUsers.map((r) => (
                     <span key={r.fid} style={{
                       fontSize: 11, padding: "3px 9px", borderRadius: 5,
-                      background: r.status === "paid" ? C.greenDim : C.surfaceAlt,
-                      color: r.status === "paid" ? C.green : C.textSub,
-                      border: `1px solid ${r.status === "paid" ? C.green + "66" : C.border}`,
+                      background: r.status === "paid" ? C.greenDim : T.surfaceAlt,
+                      color: r.status === "paid" ? C.green : T.textSub,
+                      border: `1px solid ${r.status === "paid" ? C.green + "66" : T.border}`,
                       whiteSpace: "nowrap",
                     }}>
                       #{r.fid} · {r.checkins}ci
@@ -638,7 +747,7 @@ function AdminDashboardInner() {
 
         {/* ── User control panel ── */}
         <SectionLabel>Manage User</SectionLabel>
-        <Panel>
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}>
           {/* Lookup */}
           <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
             <Input
@@ -668,10 +777,10 @@ function AdminDashboardInner() {
               {/* User header */}
               <div style={{
                 display: "flex", alignItems: "center", gap: 10, marginBottom: 20,
-                padding: "10px 14px", background: C.surfaceAlt, borderRadius: 8,
-                border: `1px solid ${C.border}`,
+                padding: "10px 14px", background: T.surfaceAlt, borderRadius: 8,
+                border: `1px solid ${T.border}`,
               }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: C.cream, fontFamily: "monospace" }}>FID {controlState.fid}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: T.cream, fontFamily: "monospace" }}>FID {controlState.fid}</span>
                 <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4,
                   background: controlState.state.banned ? "#3d0000" : C.greenDim,
                   color: controlState.state.banned ? C.red : C.green,
@@ -680,7 +789,7 @@ function AdminDashboardInner() {
                   {controlState.state.banned ? "BANNED" : "Active"}
                 </span>
                 {controlState.referral?.referredByFid && (
-                  <span style={{ fontSize: 11, color: C.textMute }}>referred by FID {controlState.referral.referredByFid}</span>
+                  <span style={{ fontSize: 11, color: T.textMute }}>sponsored by FID {controlState.referral.referredByFid}</span>
                 )}
                 <div style={{ marginLeft: "auto", display: "flex", gap: 16 }}>
                   {[
@@ -689,8 +798,8 @@ function AdminDashboardInner() {
                     ["Glimmer", controlState.state.glimmer],
                   ].map(([k, v]) => (
                     <div key={k as string} style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 10, color: C.creamMute, marginBottom: 1 }}>{k}</div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: C.cream }}>{v}</div>
+                      <div style={{ fontSize: 10, color: T.creamMute, marginBottom: 1 }}>{k}</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: T.cream }}>{v}</div>
                     </div>
                   ))}
                 </div>
@@ -702,8 +811,8 @@ function AdminDashboardInner() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
                   {/* Adjust stats */}
-                  <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: "14px" }}>
-                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamMute, margin: "0 0 12px" }}>Adjust Stats</p>
+                  <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px" }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 12px" }}>Adjust Stats</p>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginBottom: 12 }}>
                       {(["xp", "bond", "glimmer", "hunger", "happiness"] as const).map((f) => (
                         <NumberInput key={f} label={f} value={statDrafts[f]} onChange={(v) => setStatDrafts((d) => ({ ...d, [f]: v }))} />
@@ -719,27 +828,27 @@ function AdminDashboardInner() {
                   {/* Referral — split into two clearly separate actions */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {/* Set referrer */}
-                    <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: "14px", border: `1px solid ${C.border}` }}>
-                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.amberGlow, margin: "0 0 6px" }}>Set Referrer</p>
-                      <p style={{ fontSize: 11, color: C.textMute, margin: "0 0 10px" }}>Assign a new parent FID for this user.</p>
+                    <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px", border: `1px solid ${T.border}` }}>
+                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.amberGlow, margin: "0 0 4px" }}>Set Sponsor</p>
+                      <p style={{ fontSize: 11, color: T.textMute, margin: "0 0 10px" }}>Replaces their current sponsor — no need to remove first.</p>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <Input value={newReferrerFid} onChange={setNewReferrerFid} placeholder="Referrer FID" />
+                        <Input value={newReferrerFid} onChange={setNewReferrerFid} placeholder="Sponsor FID" />
                         <Btn onClick={() => runAction("edit_referral", { newReferrerFid })} disabled={!newReferrerFid} variant="amber">Set</Btn>
                       </div>
                     </div>
 
                     {/* Remove referral */}
-                    <div style={{ background: C.redDim, borderRadius: 10, padding: "14px", border: `1px solid ${C.red}55` }}>
-                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.red, margin: "0 0 6px" }}>Remove Referral</p>
-                      <p style={{ fontSize: 11, color: C.textMute, margin: "0 0 10px" }}>Detach this user from their referrer entirely.</p>
-                      <Btn onClick={() => runAction("edit_referral", { removeReferral: true })} variant="red">✕ Remove Referral</Btn>
+                    <div style={{ background: C.redDim, borderRadius: 10, padding: "14px", border: `1px solid ${C.red}44` }}>
+                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.red, margin: "0 0 4px" }}>Remove Sponsor</p>
+                      <p style={{ fontSize: 11, color: T.textMute, margin: "0 0 10px" }}>Removes the user who sponsored this player (referredBy).</p>
+                      <Btn onClick={() => runAction("edit_referral", { removeReferral: true })} variant="red">✕ Remove Sponsor</Btn>
                     </div>
                   </div>
 
                   {/* Ban */}
-                  <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: "14px" }}>
-                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamMute, margin: "0 0 6px" }}>Account Status</p>
-                    <p style={{ fontSize: 11, color: C.textMute, margin: "0 0 10px" }}>Banning blocks feeding, unlocking, and check-ins.</p>
+                  <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px" }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 6px" }}>Account Status</p>
+                    <p style={{ fontSize: 11, color: T.textMute, margin: "0 0 10px" }}>Banning blocks feeding, unlocking, and check-ins.</p>
                     <Btn
                       onClick={() => runAction(controlState.state.banned ? "unban" : "ban")}
                       variant={controlState.state.banned ? "green" : "red"}
@@ -750,21 +859,21 @@ function AdminDashboardInner() {
                 </div>
 
                 {/* Right col — Accessories */}
-                <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: "14px" }}>
-                  <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamMute, margin: "0 0 12px" }}>
+                <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px" }}>
+                  <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 12px" }}>
                     Accessories — {controlState.state.accessoriesUnlocked.length} unlocked
                   </p>
 
                   {/* Current accessories */}
                   <div style={{ minHeight: 48, marginBottom: 14 }}>
                     {controlState.state.accessoriesUnlocked.length === 0 ? (
-                      <p style={{ fontSize: 12, color: C.textMute }}>None unlocked yet.</p>
+                      <p style={{ fontSize: 12, color: T.textMute }}>None unlocked yet.</p>
                     ) : (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                         {controlState.state.accessoriesUnlocked.map((id: string) => (
                           <span key={id} style={{
                             fontSize: 11, padding: "4px 10px", borderRadius: 6,
-                            background: C.bg, border: `1px solid ${C.amber}55`,
+                            background: T.bg, border: `1px solid ${C.amberGlow}55`,
                             color: C.amberGlow, fontWeight: 500,
                           }}>
                             {id}
@@ -803,7 +912,7 @@ function AdminDashboardInner() {
               </div>
             </div>
           )}
-        </Panel>
+        </div>
       </div>
     </div>
   );
