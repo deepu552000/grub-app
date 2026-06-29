@@ -116,7 +116,7 @@ function KpiCard({ label, value, sub, accent, dark = true }: { label: string; va
   );
 }
 
-function SectionLabel({ children, accent }: { children: React.ReactNode; accent?: string }) {
+function SectionLabel({ children, accent, dark = true }: { children: React.ReactNode; accent?: string; dark?: boolean }) {
   const barColor = accent ?? C.amberGlow;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "2rem 0 0.75rem" }}>
@@ -545,7 +545,7 @@ function AdminDashboardInner() {
         )}
 
         {/* ── KPI row ── */}
-        <SectionLabel>Overview</SectionLabel>
+        <SectionLabel dark={dark}>Overview</SectionLabel>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <KpiCard label="Players"        value={String(users.length)}        sub="active pets saved"         accent={C.blue}   dark={dark} />
           <KpiCard label="USDC Revenue"   value={`$${totalUsdc.toFixed(2)}`}  sub={`${usdcTxns.length} purchases`} accent={C.green}  dark={dark} />
@@ -621,7 +621,7 @@ function AdminDashboardInner() {
         </div>
 
         {/* ── Transaction log ── */}
-        <SectionLabel>Transaction Log</SectionLabel>
+        <SectionLabel dark={dark}>Transaction Log</SectionLabel>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
             <span style={{ fontSize: 12, color: T.textMute }}>Showing last {sortedTxns.length} of {txns.length} total</span>
@@ -699,7 +699,7 @@ function AdminDashboardInner() {
         </div>
 
         {/* ── Referral tree ── */}
-        <SectionLabel>Referral Tree</SectionLabel>
+        <SectionLabel dark={dark}>Referral Tree</SectionLabel>
         {referrers.length === 0 ? (
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}><p style={{ fontSize: 13, color: T.textMute, margin: 0 }}>No referrals yet.</p></div>
         ) : (
@@ -739,7 +739,7 @@ function AdminDashboardInner() {
         )}
 
         {/* ── User control panel ── */}
-        <SectionLabel>Manage User</SectionLabel>
+        <SectionLabel dark={dark}>Manage User</SectionLabel>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}>
           {/* Lookup */}
           <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
