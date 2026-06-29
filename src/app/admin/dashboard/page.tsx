@@ -1,12 +1,17 @@
 // app/admin/dashboard/page.tsx
 //
-// Standalone admin dashboard — open at https://grub-app-eight.vercel.app/admin/dashboard
-// Pulls live data from /api/debug-kv and /api/txn-log?all=1 (no auth — open by request).
-// Pure client component: no server-side data fetching, just fetch() on mount + refresh button.
+// Secured admin dashboard.
+// Open at: https://grub-app-eight.vercel.app/admin/dashboard?secret=YOUR_SECRET
+//
+// The secret is read from the URL on mount and forwarded to every API call.
+// If it's missing or wrong, all API calls return 401 and an error banner is shown.
+// The secret is NEVER stored in localStorage — it lives only in component state
+// for the lifetime of the tab.
 
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 
 type DebugUser = {
   fid: string;
@@ -69,6 +74,9 @@ function MetricCard({ label, value, sub }: { label: string; value: string; sub?:
 }
 
 export default function AdminDashboardPage() {
+  const searchParams = useSearchParams();
+  const secret = searchParams.get("secret") ?? "";
+
   const [users, setUsers] = useState<DebugUser[]>([]);
   const [txns, setTxns] = useState<TxnEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +93,22 @@ export default function AdminDashboardPage() {
     xp: "", bond: "", glimmer: "", hunger: "", happiness: "",
   });
   const [accessoryToRevoke, setAccessoryToRevoke] = useState("");
+  const [accessoryToUnlock, setAccessoryToUnlock] = useState("");
   const [newReferrerFid, setNewReferrerFid] = useState("");
+
+  // ── Helpers that inject the secret into every request ─────────────────
+  const authedGet = useCallback((path: string) => {
+    const sep = path.includes("?") ? "&" : "?";
+    return fetch(`${path}${sep}secret=${encodeURIComponent(secret)}`).then((r) => r.json());
+  }, [secret]);
+
+  const authedPost = useCallback((path: string, body: Record<string, any>) => {
+    return fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, secret }),
+    }).then((r) => r.json());
+  }, [secret]);
 
   const loadUserControl = useCallback(async (fid: string) => {
     if (!fid) return;
@@ -93,7 +116,7 @@ export default function AdminDashboardPage() {
     setControlError(null);
     setControlMsg(null);
     try {
-      const res = await fetch(`/api/admin/user-control?fid=${encodeURIComponent(fid)}`).then((r) => r.json());
+      const res = await authedGet(`/api/admin/user-control?fid=${encodeURIComponent(fid)}`);
       if (!res.ok) {
         setControlState(null);
         setControlError(res.reason ?? "Could not load user");
@@ -112,7 +135,7 @@ export default function AdminDashboardPage() {
     } finally {
       setControlLoading(false);
     }
-  }, []);
+  }, [authedGet]);
 
   const runAction = useCallback(
     async (action: string, extra: Record<string, any> = {}) => {
@@ -120,37 +143,38 @@ export default function AdminDashboardPage() {
       setControlMsg(null);
       setControlError(null);
       try {
-        const res = await fetch("/api/admin/user-control", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fid: lookupFid, action, ...extra }),
-        }).then((r) => r.json());
+        const res = await authedPost("/api/admin/user-control", { fid: lookupFid, action, ...extra });
         if (!res.ok) {
           setControlError(res.reason ?? "Action failed");
         } else {
           setControlMsg(
             res.warning
               ? `Done — but note: ${res.warning}`
-              : `${action.replace("_", " ")} applied.`
+              : `${action.replace(/_/g, " ")} applied.`
           );
-          loadUserControl(lookupFid); // refresh the panel with the new state
+          loadUserControl(lookupFid);
         }
       } catch (err: any) {
         setControlError(err?.message ?? "Action failed");
       }
     },
-    [lookupFid, loadUserControl]
+    [lookupFid, loadUserControl, authedPost]
   );
-
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const [debugRes, txnRes] = await Promise.all([
-        fetch("/api/debug-kv").then((r) => r.json()),
-        fetch("/api/txn-log?all=1").then((r) => r.json()),
+        authedGet("/api/debug-kv"),
+        authedGet("/api/txn-log?all=1"),
       ]);
+      if (debugRes.error === "Unauthorized" || txnRes.error === "Unauthorized") {
+        setError("Unauthorized — check your ?secret= in the URL.");
+        setUsers([]);
+        setTxns([]);
+        return;
+      }
       setUsers(debugRes.users ?? []);
       setTxns(txnRes.log ?? []);
       setLastLoaded(new Date());
@@ -159,11 +183,16 @@ export default function AdminDashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authedGet]);
 
   useEffect(() => {
+    if (!secret) {
+      setError("No secret provided. Open this page as /admin/dashboard?secret=YOUR_SECRET");
+      setLoading(false);
+      return;
+    }
     load();
-  }, [load]);
+  }, [load, secret]);
 
   const totalUsers = users.length;
   const usersWithAcc = users.filter((u) => (u.accessoriesUnlockedCount ?? 0) > 0).length;
@@ -214,7 +243,7 @@ export default function AdminDashboardPage() {
 
         {error && (
           <div style={{ padding: "10px 12px", borderRadius: 8, background: "#412402", color: "#fac775", fontSize: 13, marginBottom: "1rem" }}>
-            Couldn&apos;t load dashboard data: {error}
+            {error}
           </div>
         )}
 
@@ -336,7 +365,7 @@ export default function AdminDashboardPage() {
         </div>
 
         <p style={{ fontSize: 13, color: "#898781", margin: "0 0 10px" }}>Referral tree</p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: "1.5rem" }}>
           {referrers.length === 0 ? (
             <p style={{ fontSize: 13, color: "#5f5e5a" }}>No one has referred anyone yet.</p>
           ) : (
@@ -367,6 +396,8 @@ export default function AdminDashboardPage() {
             ))
           )}
         </div>
+
+        {/* ── User control panel ───────────────────────────────────────── */}
         <p style={{ fontSize: 13, color: "#898781", margin: "2rem 0 10px" }}>Manage user</p>
         <div style={{ background: "#161513", borderRadius: 10, padding: "1rem" }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
@@ -375,6 +406,7 @@ export default function AdminDashboardPage() {
               placeholder="Enter a fid"
               value={lookupFid}
               onChange={(e) => setLookupFid(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && loadUserControl(lookupFid)}
               style={{
                 flex: 1, background: "#0e0d0c", border: "0.5px solid #2c2c2a", borderRadius: 8,
                 color: "#fafaf8", padding: "8px 12px", fontSize: 13,
@@ -414,6 +446,7 @@ export default function AdminDashboardPage() {
                 )}
               </div>
 
+              {/* Adjust stats */}
               <div>
                 <p style={{ fontSize: 12, color: "#5f5e5a", margin: "0 0 8px" }}>Adjust stats</p>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginBottom: 8 }}>
@@ -426,7 +459,7 @@ export default function AdminDashboardPage() {
                         onChange={(e) => setStatDrafts((d) => ({ ...d, [field]: e.target.value }))}
                         style={{
                           width: "100%", background: "#0e0d0c", border: "0.5px solid #2c2c2a", borderRadius: 8,
-                          color: "#fafaf8", padding: "6px 8px", fontSize: 13,
+                          color: "#fafaf8", padding: "6px 8px", fontSize: 13, boxSizing: "border-box",
                         }}
                       />
                     </div>
@@ -451,14 +484,17 @@ export default function AdminDashboardPage() {
                 </button>
               </div>
 
+              {/* Accessories */}
               <div>
                 <p style={{ fontSize: 12, color: "#5f5e5a", margin: "0 0 8px" }}>
-                  Unlocked accessories ({controlState.state.accessoriesUnlocked.length})
+                  Accessories ({controlState.state.accessoriesUnlocked.length} unlocked)
                 </p>
+
+                {/* Unlocked list */}
                 {controlState.state.accessoriesUnlocked.length === 0 ? (
-                  <p style={{ fontSize: 13, color: "#5f5e5a" }}>None unlocked.</p>
+                  <p style={{ fontSize: 13, color: "#5f5e5a", marginBottom: 8 }}>None unlocked yet.</p>
                 ) : (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
                     {controlState.state.accessoriesUnlocked.map((id: string) => (
                       <span
                         key={id}
@@ -472,31 +508,71 @@ export default function AdminDashboardPage() {
                     ))}
                   </div>
                 )}
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input
-                    type="text"
-                    placeholder="accessory id to revoke"
-                    value={accessoryToRevoke}
-                    onChange={(e) => setAccessoryToRevoke(e.target.value)}
-                    style={{
-                      flex: 1, background: "#0e0d0c", border: "0.5px solid #2c2c2a", borderRadius: 8,
-                      color: "#fafaf8", padding: "6px 10px", fontSize: 13,
-                    }}
-                  />
-                  <button
-                    onClick={() => runAction("revoke_accessory", { accessoryId: accessoryToRevoke })}
-                    disabled={!accessoryToRevoke}
-                    style={{
-                      background: "transparent", border: "0.5px solid #44443f", borderRadius: 8,
-                      color: "#fafaf8", padding: "6px 12px", fontSize: 12,
-                      cursor: accessoryToRevoke ? "pointer" : "default", opacity: accessoryToRevoke ? 1 : 0.5,
-                    }}
-                  >
-                    Revoke
-                  </button>
+
+                {/* Unlock a new accessory */}
+                <div style={{ marginBottom: 8 }}>
+                  <p style={{ fontSize: 11, color: "#5f5e5a", margin: "0 0 6px" }}>Grant / unlock accessory</p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      type="text"
+                      placeholder="accessory id to unlock"
+                      value={accessoryToUnlock}
+                      onChange={(e) => setAccessoryToUnlock(e.target.value)}
+                      style={{
+                        flex: 1, background: "#0e0d0c", border: "0.5px solid #2c2c2a", borderRadius: 8,
+                        color: "#fafaf8", padding: "6px 10px", fontSize: 13,
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        runAction("unlock_accessory", { accessoryId: accessoryToUnlock });
+                        setAccessoryToUnlock("");
+                      }}
+                      disabled={!accessoryToUnlock}
+                      style={{
+                        background: "#152a1a", border: "0.5px solid #1baf7a", borderRadius: 8,
+                        color: "#1baf7a", padding: "6px 14px", fontSize: 12,
+                        cursor: accessoryToUnlock ? "pointer" : "default", opacity: accessoryToUnlock ? 1 : 0.5,
+                      }}
+                    >
+                      Unlock
+                    </button>
+                  </div>
+                </div>
+
+                {/* Revoke an existing accessory */}
+                <div>
+                  <p style={{ fontSize: 11, color: "#5f5e5a", margin: "0 0 6px" }}>Revoke accessory</p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      type="text"
+                      placeholder="accessory id to revoke"
+                      value={accessoryToRevoke}
+                      onChange={(e) => setAccessoryToRevoke(e.target.value)}
+                      style={{
+                        flex: 1, background: "#0e0d0c", border: "0.5px solid #2c2c2a", borderRadius: 8,
+                        color: "#fafaf8", padding: "6px 10px", fontSize: 13,
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        runAction("revoke_accessory", { accessoryId: accessoryToRevoke });
+                        setAccessoryToRevoke("");
+                      }}
+                      disabled={!accessoryToRevoke}
+                      style={{
+                        background: "transparent", border: "0.5px solid #44443f", borderRadius: 8,
+                        color: "#fab219", padding: "6px 12px", fontSize: 12,
+                        cursor: accessoryToRevoke ? "pointer" : "default", opacity: accessoryToRevoke ? 1 : 0.5,
+                      }}
+                    >
+                      Revoke
+                    </button>
+                  </div>
                 </div>
               </div>
 
+              {/* Referral */}
               <div>
                 <p style={{ fontSize: 12, color: "#5f5e5a", margin: "0 0 8px" }}>Referral relationship</p>
                 <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
@@ -533,6 +609,7 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
+              {/* Ban / unban */}
               <div>
                 <p style={{ fontSize: 12, color: "#5f5e5a", margin: "0 0 8px" }}>
                   Ban — blocks feeding, unlocking, and check-ins for this fid

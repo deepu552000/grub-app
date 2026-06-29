@@ -2,23 +2,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
-
 export type TxnLogEntry = {
   fid: number;
   type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin";
   txHash: string;
   amountUsd: number;
-  amountDegen?: number;
-  toFid?: number;
-  toWallet?: string;
+  amountDegen?: number;   // for DEGEN referral payouts
+  toFid?: number;         // referred user FID (for referral entries)
+  toWallet?: string;      // recipient wallet (for referral entries)
   accessoryId?: string;
   accessoryName?: string;
   ts: number;
 };
 
-// POST is called from the app itself (on-chain actions) — no secret needed here,
-// but you may want to add one if your app can supply it.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as TxnLogEntry;
@@ -48,16 +44,10 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// GET requires the admin secret — used by the dashboard and debug tools only
 export async function GET(req: NextRequest) {
-  const secret = req.nextUrl.searchParams.get("secret");
-  if (!secret || secret !== ADMIN_SECRET) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const fid = req.nextUrl.searchParams.get("fid");
   const all = req.nextUrl.searchParams.get("all");
-  const type = req.nextUrl.searchParams.get("type");
+  const type = req.nextUrl.searchParams.get("type"); // optional filter
 
   try {
     let log: TxnLogEntry[] = [];
@@ -70,6 +60,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Provide ?fid= or ?all=1" }, { status: 400 });
     }
 
+    // Optional type filter e.g. ?all=1&type=referral_join
     if (type) {
       log = log.filter((e) => e.type === type);
     }

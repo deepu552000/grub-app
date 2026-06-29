@@ -2,13 +2,14 @@
 //
 // Per-user admin controls for Grub. Two endpoints in one file:
 //
-//   GET  /api/admin/user-control?fid=<fid>&secret=<ADMIN_SECRET>
-//        Returns the current pet state + referral info for that fid.
+//   GET  /api/admin/user-control?fid=<fid>
+//        Returns the current pet state + referral info for that fid, so the
+//        dashboard panel can show "what does this person currently have"
+//        before you decide what to change.
 //
 //   POST /api/admin/user-control
-//        Body: { secret, fid, action, ...actionParams }
-//        action = "revoke_accessory" | "unlock_accessory" | "adjust_stats"
-//               | "ban" | "unban" | "edit_referral"
+//        Body: { fid, action, ...actionParams }
+//        action = "revoke_accessory" | "adjust_stats" | "ban" | "unban" | "edit_referral"
 //
 // NOTE on "ban": this sets a `banned: true/false` flag on the user's
 // grub:pet:<fid> record. /api/pet checks this flag on every POST and
@@ -19,20 +20,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
-
-function unauthorized() {
-  return NextResponse.json({ ok: false, reason: "Unauthorized" }, { status: 401 });
-}
-
 async function getPetState(fid: string) {
   return await kv.get<any>(`grub:pet:${fid}`);
 }
 
 export async function GET(req: NextRequest) {
-  const secret = req.nextUrl.searchParams.get("secret");
-  if (!secret || secret !== ADMIN_SECRET) return unauthorized();
-
   const fid = req.nextUrl.searchParams.get("fid");
   if (!fid) {
     return NextResponse.json({ ok: false, reason: "missing fid" }, { status: 400 });
@@ -70,9 +62,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { secret, fid, action } = body;
-
-    if (!secret || secret !== ADMIN_SECRET) return unauthorized();
+    const { fid, action } = body;
 
     if (!fid || !action) {
       return NextResponse.json({ ok: false, reason: "missing fid or action" }, { status: 400 });
@@ -107,32 +97,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, fid, action, revoked: accessoryId, remainingUnlocked: newUnlocked });
     }
 
-    // ── Unlock a specific accessory (admin grant) ───────────────────────
-    if (action === "unlock_accessory") {
-      const { accessoryId } = body;
-      if (!accessoryId) {
-        return NextResponse.json({ ok: false, reason: "missing accessoryId" }, { status: 400 });
-      }
-
-      const state = await getPetState(fid);
-      if (!state) return NextResponse.json({ ok: false, reason: `no pet state for fid ${fid}` });
-
-      const accessories = state.accessories ?? { unlocked: [], equipped: {} };
-      const alreadyUnlocked: string[] = accessories.unlocked ?? [];
-
-      if (alreadyUnlocked.includes(accessoryId)) {
-        return NextResponse.json({ ok: false, reason: `accessory "${accessoryId}" is already unlocked` });
-      }
-
-      const newUnlocked = [...alreadyUnlocked, accessoryId];
-      await kv.set(`grub:pet:${fid}`, {
-        ...state,
-        accessories: { ...accessories, unlocked: newUnlocked },
-      });
-
-      return NextResponse.json({ ok: true, fid, action, unlocked: accessoryId, allUnlocked: newUnlocked });
-    }
-
     // ── Adjust stats directly ───────────────────────────────────────────
     if (action === "adjust_stats") {
       const { xp, bond, glimmer, hunger, happiness } = body;
@@ -158,14 +122,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ── Ban / unban ─────────────────────────────────────────────────────
+    // ── Ban / unban flag (NOT enforced anywhere yet) ────────────────────
     if (action === "ban" || action === "unban") {
       const state = await getPetState(fid);
       if (!state) return NextResponse.json({ ok: false, reason: `no pet state for fid ${fid}` });
 
       await kv.set(`grub:pet:${fid}`, { ...state, banned: action === "ban" });
 
-      return NextResponse.json({ ok: true, fid, action, banned: action === "ban" });
+      return NextResponse.json({
+        ok: true,
+        fid,
+        action,
+        banned: action === "ban",
+      });
     }
 
     // ── Edit / remove referral relationship ─────────────────────────────

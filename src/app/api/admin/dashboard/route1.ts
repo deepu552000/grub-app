@@ -31,8 +31,10 @@ export async function GET(req: NextRequest) {
     // Unique paying users
     const payingFids = new Set(usdcTxns.map((t) => t.fid));
 
-    // Referral tree — built from txn log
+    // Referral tree — all referrers and their referred users
+    // Scan KV keys pattern referrer:*:referred
     const referralTree: Record<string, any> = {};
+    // We can't scan KV easily so build from txn log
     const joinTxns = allTxns.filter((t) => t.type === "referral_join");
     for (const t of joinTxns) {
       if (!referralTree[t.fid]) referralTree[t.fid] = { referrerFid: t.fid, referred: [], degenEarned: 0 };

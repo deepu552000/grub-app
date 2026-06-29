@@ -75,6 +75,74 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
 
+  // ── User control panel state ──────────────────────────────────────────
+  const [lookupFid, setLookupFid] = useState("");
+  const [controlState, setControlState] = useState<any>(null);
+  const [controlError, setControlError] = useState<string | null>(null);
+  const [controlLoading, setControlLoading] = useState(false);
+  const [controlMsg, setControlMsg] = useState<string | null>(null);
+  const [statDrafts, setStatDrafts] = useState<{ xp: string; bond: string; glimmer: string; hunger: string; happiness: string }>({
+    xp: "", bond: "", glimmer: "", hunger: "", happiness: "",
+  });
+  const [accessoryToRevoke, setAccessoryToRevoke] = useState("");
+  const [newReferrerFid, setNewReferrerFid] = useState("");
+
+  const loadUserControl = useCallback(async (fid: string) => {
+    if (!fid) return;
+    setControlLoading(true);
+    setControlError(null);
+    setControlMsg(null);
+    try {
+      const res = await fetch(`/api/admin/user-control?fid=${encodeURIComponent(fid)}`).then((r) => r.json());
+      if (!res.ok) {
+        setControlState(null);
+        setControlError(res.reason ?? "Could not load user");
+      } else {
+        setControlState(res);
+        setStatDrafts({
+          xp: String(res.state.xp),
+          bond: String(res.state.bond),
+          glimmer: String(res.state.glimmer),
+          hunger: String(res.state.hunger),
+          happiness: String(res.state.happiness),
+        });
+      }
+    } catch (err: any) {
+      setControlError(err?.message ?? "Failed to load user");
+    } finally {
+      setControlLoading(false);
+    }
+  }, []);
+
+  const runAction = useCallback(
+    async (action: string, extra: Record<string, any> = {}) => {
+      if (!lookupFid) return;
+      setControlMsg(null);
+      setControlError(null);
+      try {
+        const res = await fetch("/api/admin/user-control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fid: lookupFid, action, ...extra }),
+        }).then((r) => r.json());
+        if (!res.ok) {
+          setControlError(res.reason ?? "Action failed");
+        } else {
+          setControlMsg(
+            res.warning
+              ? `Done — but note: ${res.warning}`
+              : `${action.replace("_", " ")} applied.`
+          );
+          loadUserControl(lookupFid); // refresh the panel with the new state
+        }
+      } catch (err: any) {
+        setControlError(err?.message ?? "Action failed");
+      }
+    },
+    [lookupFid, loadUserControl]
+  );
+
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -297,6 +365,192 @@ export default function AdminDashboardPage() {
                 </span>
               </div>
             ))
+          )}
+        </div>
+        <p style={{ fontSize: 13, color: "#898781", margin: "2rem 0 10px" }}>Manage user</p>
+        <div style={{ background: "#161513", borderRadius: 10, padding: "1rem" }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input
+              type="text"
+              placeholder="Enter a fid"
+              value={lookupFid}
+              onChange={(e) => setLookupFid(e.target.value)}
+              style={{
+                flex: 1, background: "#0e0d0c", border: "0.5px solid #2c2c2a", borderRadius: 8,
+                color: "#fafaf8", padding: "8px 12px", fontSize: 13,
+              }}
+            />
+            <button
+              onClick={() => loadUserControl(lookupFid)}
+              disabled={controlLoading || !lookupFid}
+              style={{
+                background: "transparent", border: "0.5px solid #44443f", borderRadius: 8,
+                color: "#fafaf8", padding: "8px 14px", fontSize: 13,
+                cursor: controlLoading ? "default" : "pointer", opacity: controlLoading || !lookupFid ? 0.6 : 1,
+              }}
+            >
+              {controlLoading ? "Loading…" : "Load"}
+            </button>
+          </div>
+
+          {controlError && (
+            <p style={{ fontSize: 13, color: "#fab219", margin: "0 0 12px" }}>{controlError}</p>
+          )}
+          {controlMsg && (
+            <p style={{ fontSize: 13, color: "#1baf7a", margin: "0 0 12px" }}>{controlMsg}</p>
+          )}
+
+          {controlState && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ fontSize: 13, color: "#898781" }}>
+                Fid {controlState.fid} ·{" "}
+                {controlState.state.banned ? (
+                  <span style={{ color: "#fab219" }}>banned</span>
+                ) : (
+                  "active"
+                )}
+                {controlState.referral?.referredByFid && (
+                  <> · referred by {controlState.referral.referredByFid}</>
+                )}
+              </div>
+
+              <div>
+                <p style={{ fontSize: 12, color: "#5f5e5a", margin: "0 0 8px" }}>Adjust stats</p>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginBottom: 8 }}>
+                  {(["xp", "bond", "glimmer", "hunger", "happiness"] as const).map((field) => (
+                    <div key={field}>
+                      <label style={{ fontSize: 11, color: "#5f5e5a", display: "block", marginBottom: 4 }}>{field}</label>
+                      <input
+                        type="number"
+                        value={statDrafts[field]}
+                        onChange={(e) => setStatDrafts((d) => ({ ...d, [field]: e.target.value }))}
+                        style={{
+                          width: "100%", background: "#0e0d0c", border: "0.5px solid #2c2c2a", borderRadius: 8,
+                          color: "#fafaf8", padding: "6px 8px", fontSize: 13,
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={() =>
+                    runAction("adjust_stats", {
+                      xp: Number(statDrafts.xp),
+                      bond: Number(statDrafts.bond),
+                      glimmer: Number(statDrafts.glimmer),
+                      hunger: Number(statDrafts.hunger),
+                      happiness: Number(statDrafts.happiness),
+                    })
+                  }
+                  style={{
+                    background: "transparent", border: "0.5px solid #44443f", borderRadius: 8,
+                    color: "#fafaf8", padding: "6px 12px", fontSize: 12, cursor: "pointer",
+                  }}
+                >
+                  Save stats
+                </button>
+              </div>
+
+              <div>
+                <p style={{ fontSize: 12, color: "#5f5e5a", margin: "0 0 8px" }}>
+                  Unlocked accessories ({controlState.state.accessoriesUnlocked.length})
+                </p>
+                {controlState.state.accessoriesUnlocked.length === 0 ? (
+                  <p style={{ fontSize: 13, color: "#5f5e5a" }}>None unlocked.</p>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                    {controlState.state.accessoriesUnlocked.map((id: string) => (
+                      <span
+                        key={id}
+                        style={{
+                          fontSize: 12, padding: "4px 10px", borderRadius: 999,
+                          background: "#0e0d0c", border: "0.5px solid #2c2c2a", color: "#c3c2b7",
+                        }}
+                      >
+                        {id}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    type="text"
+                    placeholder="accessory id to revoke"
+                    value={accessoryToRevoke}
+                    onChange={(e) => setAccessoryToRevoke(e.target.value)}
+                    style={{
+                      flex: 1, background: "#0e0d0c", border: "0.5px solid #2c2c2a", borderRadius: 8,
+                      color: "#fafaf8", padding: "6px 10px", fontSize: 13,
+                    }}
+                  />
+                  <button
+                    onClick={() => runAction("revoke_accessory", { accessoryId: accessoryToRevoke })}
+                    disabled={!accessoryToRevoke}
+                    style={{
+                      background: "transparent", border: "0.5px solid #44443f", borderRadius: 8,
+                      color: "#fafaf8", padding: "6px 12px", fontSize: 12,
+                      cursor: accessoryToRevoke ? "pointer" : "default", opacity: accessoryToRevoke ? 1 : 0.5,
+                    }}
+                  >
+                    Revoke
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <p style={{ fontSize: 12, color: "#5f5e5a", margin: "0 0 8px" }}>Referral relationship</p>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <input
+                    type="text"
+                    placeholder="new referrer fid"
+                    value={newReferrerFid}
+                    onChange={(e) => setNewReferrerFid(e.target.value)}
+                    style={{
+                      flex: 1, background: "#0e0d0c", border: "0.5px solid #2c2c2a", borderRadius: 8,
+                      color: "#fafaf8", padding: "6px 10px", fontSize: 13,
+                    }}
+                  />
+                  <button
+                    onClick={() => runAction("edit_referral", { newReferrerFid })}
+                    disabled={!newReferrerFid}
+                    style={{
+                      background: "transparent", border: "0.5px solid #44443f", borderRadius: 8,
+                      color: "#fafaf8", padding: "6px 12px", fontSize: 12,
+                      cursor: newReferrerFid ? "pointer" : "default", opacity: newReferrerFid ? 1 : 0.5,
+                    }}
+                  >
+                    Set referrer
+                  </button>
+                  <button
+                    onClick={() => runAction("edit_referral", { removeReferral: true })}
+                    style={{
+                      background: "transparent", border: "0.5px solid #44443f", borderRadius: 8,
+                      color: "#fab219", padding: "6px 12px", fontSize: 12, cursor: "pointer",
+                    }}
+                  >
+                    Remove referral
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <p style={{ fontSize: 12, color: "#5f5e5a", margin: "0 0 8px" }}>
+                  Ban — blocks feeding, unlocking, and check-ins for this fid
+                </p>
+                <button
+                  onClick={() => runAction(controlState.state.banned ? "unban" : "ban")}
+                  style={{
+                    background: "transparent",
+                    border: `0.5px solid ${controlState.state.banned ? "#1baf7a" : "#44443f"}`,
+                    borderRadius: 8,
+                    color: controlState.state.banned ? "#1baf7a" : "#fab219",
+                    padding: "6px 12px", fontSize: 12, cursor: "pointer",
+                  }}
+                >
+                  {controlState.state.banned ? "Unban" : "Ban"}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

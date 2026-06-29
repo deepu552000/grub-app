@@ -1,24 +1,14 @@
-// app/api/debug-kv/route.ts
-// GET /api/debug-kv?secret=xxx
-// Scans all grub pet keys and returns full user + referral state.
-
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
-
-export async function GET(req: NextRequest) {
-  const secret = req.nextUrl.searchParams.get("secret");
-  if (!secret || secret !== ADMIN_SECRET) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function GET() {
   try {
     // ── Basic connectivity check ──────────────────────────────────────────
     await kv.set("test:ping", "pong");
     const ping = await kv.get("test:ping");
 
     // ── Scan all grub pet keys ────────────────────────────────────────────
+    // kv.keys() returns all keys matching the pattern
     const keys = await kv.keys("grub:pet:*");
 
     const users = await Promise.all(
@@ -30,13 +20,19 @@ export async function GET(req: NextRequest) {
 
         const streakBug = state.streak !== state.checkinStreak;
 
+        // Accessories: state.accessories.unlocked is expected to be an array
+        // of unlocked accessory IDs (per your AccessoryState shape in
+        // lib/pet-accessories-state.ts). Adjust the field name below if your
+        // actual shape differs (e.g. a Set serialized as array, or per-slot map).
         const unlockedAccessories: string[] = Array.isArray(state.accessories?.unlocked)
           ? state.accessories.unlocked
           : [];
 
+        // Referral data — who this user referred, and who referred them
         const referredUsers: number[] = await kv.get<number[]>(`referrer:${fid}:referred`) ?? [];
         const referredByFid = await kv.get<string>(`ref:${fid}`) ?? null;
 
+        // For each referred user, get their checkin progress and payout status
         const referralDetails = await Promise.all(
           referredUsers.map(async (refFid) => {
             const checkins = await kv.get<number>(`ref:${refFid}:checkins`) ?? 0;
@@ -47,7 +43,7 @@ export async function GET(req: NextRequest) {
 
         const degenEarned =
           referralDetails.filter((r) => r.status === "paid").length * 2 +
-          referralDetails.length * 1;
+          referralDetails.length * 1; // 1 DEGEN per join
 
         return {
           fid,
@@ -88,16 +84,19 @@ export async function GET(req: NextRequest) {
       buggedStreakCount: bugged.length,
       usersWithAccessoriesCount: usersWithAccessories.length,
       users,
+      // Easy copy-paste: lists only FIDs that need streak fixing
       streakFixNeeded: bugged.map((u) => ({
         fid: (u as any).fid,
         streak: (u as any).streak,
         checkinStreak: (u as any).checkinStreak,
       })),
+      // Easy copy-paste: lists only FIDs that have unlocked at least one accessory
       accessoryUnlockers: usersWithAccessories.map((u) => ({
         fid: (u as any).fid,
         accessoriesUnlockedCount: (u as any).accessoriesUnlockedCount,
         accessoriesUnlocked: (u as any).accessoriesUnlocked,
       })),
+      // Referral summary — all users who have referred at least one person
       referralSummary: users
         .filter((u) => ((u as any).referrals?.referredCount ?? 0) > 0)
         .map((u) => ({
