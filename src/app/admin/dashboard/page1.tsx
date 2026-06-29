@@ -1,10 +1,10 @@
 // app/admin/dashboard/page.tsx
-// Protected by Clerk — only signed-in users can reach this page
+// Open at: /admin/dashboard?secret=YOUR_SECRET
 
 "use client";
 
 import { useEffect, useState, useCallback, Suspense } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { useSearchParams } from "next/navigation";
 
 type DebugUser = {
   fid: string;
@@ -253,7 +253,8 @@ function Panel({ children }: { children: React.ReactNode }) {
 // ── Main dashboard ────────────────────────────────────────────────────────────
 
 function AdminDashboardInner() {
-  const { getToken } = useAuth();
+  const searchParams = useSearchParams();
+  const secret = searchParams.get("secret") ?? "";
 
   const [users, setUsers] = useState<DebugUser[]>([]);
   const [txns, setTxns] = useState<TxnEntry[]>([]);
@@ -300,24 +301,18 @@ function AdminDashboardInner() {
   const [accessoryToUnlock, setAccessoryToUnlock] = useState("");
   const [newReferrerFid, setNewReferrerFid] = useState("");
 
-  const authedGet = useCallback(async (path: string) => {
-    const token = await getToken();
-    return fetch(path, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then((r) => r.json());
-  }, [getToken]);
+  const authedGet = useCallback((path: string) => {
+    const sep = path.includes("?") ? "&" : "?";
+    return fetch(`${path}${sep}secret=${encodeURIComponent(secret)}`).then((r) => r.json());
+  }, [secret]);
 
-  const authedPost = useCallback(async (path: string, body: Record<string, any>) => {
-    const token = await getToken();
+  const authedPost = useCallback((path: string, body: Record<string, any>) => {
     return fetch(path, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, secret }),
     }).then((r) => r.json());
-  }, [getToken]);
+  }, [secret]);
 
   const loadUserControl = useCallback(async (fid: string) => {
     if (!fid) return;
@@ -382,7 +377,7 @@ function AdminDashboardInner() {
         authedGet("/api/txn-log?all=1"),
       ]);
       if (debugRes.error === "Unauthorized" || txnRes.error === "Unauthorized") {
-        setError("Unauthorized — you may not have access to this dashboard.");
+        setError("Wrong secret — check your ?secret= in the URL.");
         setUsers([]); setTxns([]); return;
       }
       setUsers(debugRes.users ?? []);
@@ -396,8 +391,13 @@ function AdminDashboardInner() {
   }, [authedGet]);
 
   useEffect(() => {
+    if (!secret) {
+      setError("No secret provided. Open as /admin/dashboard?secret=YOUR_SECRET");
+      setLoading(false);
+      return;
+    }
     load();
-  }, [load]);
+  }, [load, secret]);
 
   // Derived stats
   const usdcTxns = txns.filter((t) => t.amountUsd > 0);
