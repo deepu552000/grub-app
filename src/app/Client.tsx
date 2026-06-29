@@ -1514,6 +1514,31 @@ export default function ClientPage() {
           )}
         </section>
 
+        {/* ── SHARE MY GRUB ── */}
+        <section className="stats-collapsible" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            style={{
+              width: "100%",
+              background: "#7c3aed",
+              color: "#fff",
+              border: "none",
+              borderRadius: 10,
+              padding: "11px",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+            }}
+            onClick={shareKitty}
+          >
+            🐱 Share My Grub on Farcaster
+          </button>
+        </section>
+
         {/* ── STATS COLLAPSIBLE ── */}
         <section className="stats-collapsible" style={{ marginTop: 8 }}>
           <button
