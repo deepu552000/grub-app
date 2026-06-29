@@ -87,7 +87,7 @@ export async function GET(req: NextRequest) {
           display:        "flex",
           flexDirection:  "column",
           alignItems:     "center",
-          justifyContent: "space-between",
+          justifyContent: "flex-start",
           width:          "100%",
           height:         "100%",
           background:     "linear-gradient(145deg, #0e0c1a 0%, #16112a 55%, #0b0b1c 100%)",
@@ -111,7 +111,7 @@ export async function GET(req: NextRequest) {
         />
 
         {/* ── Header ── */}
-        <div style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", width: "100%", justifyContent: "flex-start", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
             <span style={{ fontSize: 20, fontWeight: 800, color: "#e8d8ff", letterSpacing: 2 }}>GRUB</span>
             <span style={{ fontSize: 12, color: "#7a6a9a", letterSpacing: 1 }}>Virtual Cat · Farcaster</span>
@@ -131,7 +131,7 @@ export async function GET(req: NextRequest) {
         </div>
 
         {/* ── Cat image ── */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, marginTop: 8, marginBottom: 12 }}>
           {catSrc ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -149,7 +149,7 @@ export async function GET(req: NextRequest) {
         </div>
 
         {/* ── Stage name + mood pill ── */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 14 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 16 }}>
           <span style={{ fontSize: 26, fontWeight: 800, color: "#f0e8ff", letterSpacing: 0.4 }}>
             {stageData.name}
           </span>
@@ -166,7 +166,7 @@ export async function GET(req: NextRequest) {
         </div>
 
         {/* ── Stats row ── */}
-        <div style={{ display: "flex", gap: 16, width: "100%", justifyContent: "center", marginBottom: 10 }}>
+        <div style={{ display: "flex", gap: 16, width: "100%", justifyContent: "center", marginBottom: 0, marginTop: 8 }}>
           {[
             { label: "XP",     value: String(Math.round(xp)) },
             { label: "STREAK", value: String(streak)         },
@@ -187,6 +187,7 @@ export async function GET(req: NextRequest) {
           ))}
         </div>
 
+      </div>
       </div>
     ),
     { width: 480, height: 480 },
