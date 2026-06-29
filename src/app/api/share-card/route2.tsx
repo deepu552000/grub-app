@@ -137,8 +137,8 @@ export async function GET(req: NextRequest) {
             <img
               src={catSrc}
               alt="Grub"
-              width={180}
-              height={180}
+              width={210}
+              height={210}
               style={{ objectFit: "contain", filter: "drop-shadow(0 0 20px rgba(200,160,255,0.30))" }}
             />
           ) : (

@@ -1009,35 +1009,36 @@ export default function ClientPage() {
   }
 
   function shareKitty() {
-    // Build OG card URL — /api/share-card generates a dynamic image with cat art,
-    // stage, XP, streak, and bond. Farcaster renders it as a rich embed in the feed.
-    const cardParams = new URLSearchParams({
+    // Single embed strategy: we embed the APP URL (not the raw /api/share-card
+    // image). The app's own page.tsx reads these same query params server-side
+    // (generateMetadata) and points its fc:frame imageUrl at /api/share-card
+    // with matching stats. That means Farcaster's crawler renders our custom
+    // stat card as the preview AND the whole card is tappable straight into
+    // the app — one rich, clickable embed instead of a dead image plus a
+    // separate plain-link preview.
+    const shareParams = new URLSearchParams({
       stage:  String(stageIndex),
       mood:   mood,
       xp:     String(Math.round(state.xp)),
       streak: String(state.streak),
       bond:   String(clamp(state.bond)),
     });
+    if (fid) {
+      shareParams.set("ref", String(fid));
+    }
 
-    const cardUrl = `https://grub-app-eight.vercel.app/api/share-card?${cardParams.toString()}`;
-
-    // Referral link — includes ?ref=<fid> so anyone who clicks and joins
-    // counts as your referral. Falls back to plain URL if fid not loaded yet.
-    const appUrl = fid
-      ? `https://grub-app-eight.vercel.app?ref=${fid}`
-      : `https://grub-app-eight.vercel.app`;
+    const appUrl = `https://grub-app-eight.vercel.app/?${shareParams.toString()}`;
 
     const castText = [
       `My Grub is ${stage.name} (${stage.title}) with a ${state.streak}-day streak! 🐾`,
       `XP: ${Math.round(state.xp)} · Bond: ${clamp(state.bond)}%`,
       `Raise your own tiny white kitty on Farcaster ↓`,
-      appUrl,
     ].join("\n");
 
     sdk.actions
       .composeCast({
         text: castText,
-        embeds: [cardUrl],
+        embeds: [appUrl],
       })
       .catch(() => {
         setLastAction("Sharing works inside Farcaster. Local test mode is fine.");
