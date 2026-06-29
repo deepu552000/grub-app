@@ -1009,9 +1009,35 @@ export default function ClientPage() {
   }
 
   function shareKitty() {
+    // Build OG card URL — /api/share-card generates a dynamic image with cat art,
+    // stage, XP, streak, and bond. Farcaster renders it as a rich embed in the feed.
+    const cardParams = new URLSearchParams({
+      stage:  String(stageIndex),
+      mood:   mood,
+      xp:     String(Math.round(state.xp)),
+      streak: String(state.streak),
+      bond:   String(clamp(state.bond)),
+    });
+
+    const cardUrl = `https://grub-app-eight.vercel.app/api/share-card?${cardParams.toString()}`;
+
+    // Referral link — includes ?ref=<fid> so anyone who clicks and joins
+    // counts as your referral. Falls back to plain URL if fid not loaded yet.
+    const appUrl = fid
+      ? `https://grub-app-eight.vercel.app?ref=${fid}`
+      : `https://grub-app-eight.vercel.app`;
+
+    const castText = [
+      `My Grub is ${stage.name} (${stage.title}) with a ${state.streak}-day streak! 🐾`,
+      `XP: ${Math.round(state.xp)} · Bond: ${clamp(state.bond)}%`,
+      `Raise your own tiny white kitty on Farcaster ↓`,
+      appUrl,
+    ].join("\n");
+
     sdk.actions
       .composeCast({
-        text: `My Grub is ${stage.name} with ${state.streak} care day streak. This tiny white kitty is emotionally expensive.`,
+        text: castText,
+        embeds: [cardUrl],
       })
       .catch(() => {
         setLastAction("Sharing works inside Farcaster. Local test mode is fine.");
