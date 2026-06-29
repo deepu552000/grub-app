@@ -1,36 +1,50 @@
 // app/api/txn-log/route.ts
+//
+// Append-only transaction log stored in Vercel KV.
+// Called after every confirmed on-chain payment (accessory unlock, check-in).
+//
+// KV structure:
+//   txn-log:{fid}          → array of TxnLogEntry (per-user history, last 200)
+//   txn-log:all            → array of TxnLogEntry (global log, last 1000)
+
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 
 export type TxnLogEntry = {
   fid: number;
-  type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin";
+  type: "accessory_unlock" | "checkin";
   txHash: string;
   amountUsd: number;
-  amountDegen?: number;   // for DEGEN referral payouts
-  toFid?: number;         // referred user FID (for referral entries)
-  toWallet?: string;      // recipient wallet (for referral entries)
+  // accessory unlock only
   accessoryId?: string;
   accessoryName?: string;
-  ts: number;
+  // metadata
+  ts: number;       // Unix ms timestamp
+  walletAddress?: string;
 };
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as TxnLogEntry;
 
-    if (!body.fid || !body.type || !body.txHash) {
+    // Basic validation
+    if (!body.fid || !body.type || !body.txHash || !body.amountUsd) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    const entry: TxnLogEntry = { ...body, ts: body.ts ?? Date.now() };
+    const entry: TxnLogEntry = {
+      ...body,
+      ts: body.ts ?? Date.now(),
+    };
 
+    // Per-user log — keep last 200 entries
     const userKey = `txn-log:${body.fid}`;
     const userLog: TxnLogEntry[] = (await kv.get<TxnLogEntry[]>(userKey)) ?? [];
     userLog.push(entry);
     if (userLog.length > 200) userLog.splice(0, userLog.length - 200);
     await kv.set(userKey, userLog);
 
+    // Global log — keep last 1000 entries
     const globalKey = "txn-log:all";
     const globalLog: TxnLogEntry[] = (await kv.get<TxnLogEntry[]>(globalKey)) ?? [];
     globalLog.push(entry);
@@ -44,28 +58,21 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// GET — fetch logs for a specific FID (for admin/debug use)
 export async function GET(req: NextRequest) {
   const fid = req.nextUrl.searchParams.get("fid");
   const all = req.nextUrl.searchParams.get("all");
-  const type = req.nextUrl.searchParams.get("type"); // optional filter
 
   try {
-    let log: TxnLogEntry[] = [];
-
     if (all === "1") {
-      log = (await kv.get<TxnLogEntry[]>("txn-log:all")) ?? [];
-    } else if (fid) {
-      log = (await kv.get<TxnLogEntry[]>(`txn-log:${fid}`)) ?? [];
-    } else {
-      return NextResponse.json({ error: "Provide ?fid= or ?all=1" }, { status: 400 });
+      const globalLog = (await kv.get<TxnLogEntry[]>("txn-log:all")) ?? [];
+      return NextResponse.json({ log: globalLog.slice().reverse() }); // newest first
     }
-
-    // Optional type filter e.g. ?all=1&type=referral_join
-    if (type) {
-      log = log.filter((e) => e.type === type);
+    if (fid) {
+      const userLog = (await kv.get<TxnLogEntry[]>(`txn-log:${fid}`)) ?? [];
+      return NextResponse.json({ log: userLog.slice().reverse() }); // newest first
     }
-
-    return NextResponse.json({ log: log.slice().reverse() });
+    return NextResponse.json({ error: "Provide ?fid= or ?all=1" }, { status: 400 });
   } catch (err) {
     return NextResponse.json({ error: "Failed to fetch log" }, { status: 500 });
   }

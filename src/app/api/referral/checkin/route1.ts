@@ -1,33 +1,12 @@
 // app/api/referral/checkin/route.ts
+//
+// Called alongside the user's daily check-in.
+// Increments their referral check-in count (non-consecutive, total only).
+// When count reaches 5 → sends 2 DEGEN to referrer and closes the loop.
+
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { sendDegen } from "@/lib/referral";
-
-async function logDegenTxn(entry: {
-  fid: number;
-  toFid: number;
-  type: "referral_join" | "referral_checkin";
-  txHash: string;
-  amountDegen: number;
-  toWallet: string;
-}) {
-  try {
-    await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? "https://grub-app-eight.vercel.app"}/api/txn-log`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fid: entry.fid,
-        type: entry.type,
-        txHash: entry.txHash,
-        amountUsd: 0,
-        amountDegen: entry.amountDegen,
-        toFid: entry.toFid,
-        toWallet: entry.toWallet,
-        ts: Date.now(),
-      }),
-    });
-  } catch { /* non-blocking */ }
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,46 +16,46 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, reason: "missing fid" }, { status: 400 });
     }
 
+    // Check if this user was referred
     const referrerFID = await kv.get(`ref:${userFID}`);
     if (!referrerFID) {
       return NextResponse.json({ ok: false, reason: "not a referred user" });
     }
 
+    // Check if already paid out — loop is closed
     const status = await kv.get(`ref:${userFID}:status`);
     if (status === "paid") {
       return NextResponse.json({ ok: false, reason: "already paid" });
     }
 
+    // Increment total check-in count (not consecutive — any 5 check-ins)
     const count = await kv.incr(`ref:${userFID}:checkins`);
     console.log(`[referral/checkin] FID ${userFID} checkin count: ${count}`);
 
+    // Not at 5 yet — just update count
     if (count < 5) {
       return NextResponse.json({ ok: true, checkins: count, paid: false });
     }
 
+    // Reached 5 check-ins — pay out referrer
     const wallet = await kv.get<string>(`ref:${referrerFID}:wallet`);
     if (!wallet) {
+      console.error(`[referral/checkin] no wallet cached for referrer FID ${referrerFID}`);
       return NextResponse.json({ ok: false, reason: "referrer wallet not found" });
     }
 
     const txHash = await sendDegen(wallet, 2);
 
+    // Mark as paid — no more rewards for this referral
     await kv.set(`ref:${userFID}:status`, "paid");
-
-    // Log the DEGEN payout
-    await logDegenTxn({
-      fid: Number(referrerFID),
-      toFid: Number(userFID),
-      type: "referral_checkin",
-      txHash,
-      amountDegen: 2,
-      toWallet: wallet,
-    });
 
     console.log(`[referral/checkin] paid 2 DEGEN to ${wallet} for referring FID ${userFID}`);
     return NextResponse.json({ ok: true, checkins: count, paid: true, txHash });
   } catch (err: any) {
     console.error("[referral/checkin] error:", err);
-    return NextResponse.json({ ok: false, reason: err?.message ?? "unknown error" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, reason: err?.message ?? "unknown error" },
+      { status: 500 }
+    );
   }
 }

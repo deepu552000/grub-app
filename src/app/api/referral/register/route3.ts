@@ -1,33 +1,12 @@
 // app/api/referral/register/route.ts
+//
+// Called when a new user opens the app via a referral link (?ref=<FID>).
+// - Stores the referral relationship in Redis
+// - Sends 1 DEGEN to the referrer immediately via treasury wallet
+
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { sendDegen, getWalletFromNeynar } from "@/lib/referral";
-
-async function logDegenTxn(entry: {
-  fid: number;
-  toFid: number;
-  type: "referral_join" | "referral_checkin";
-  txHash: string;
-  amountDegen: number;
-  toWallet: string;
-}) {
-  try {
-    await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? "https://grub-app-eight.vercel.app"}/api/txn-log`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fid: entry.fid,
-        type: entry.type,
-        txHash: entry.txHash,
-        amountUsd: 0, // DEGEN not USD
-        amountDegen: entry.amountDegen,
-        toFid: entry.toFid,
-        toWallet: entry.toWallet,
-        ts: Date.now(),
-      }),
-    });
-  } catch { /* non-blocking */ }
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,15 +16,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, reason: "missing fids" }, { status: 400 });
     }
 
+    // Prevent self-referral
     if (Number(newUserFID) === Number(referrerFID)) {
       return NextResponse.json({ ok: false, reason: "self-referral" });
     }
 
+    // Check if this user was already referred — only reward once
     const existing = await kv.get(`ref:${newUserFID}`);
     if (existing) {
       return NextResponse.json({ ok: false, reason: "already registered" });
     }
 
+    // Guard: reject if this FID already has real game history. A genuinely
+    // new joiner clicking a referral link for the first time has never
+    // played before, so they won't have a grub:pet:<fid> record yet. Without
+    // this check, anyone could "refer" an existing active player (who never
+    // actually used a referral link) and still collect the DEGEN payout —
+    // plus the joiner would wrongly get a second "new member" XP bonus.
     const existingPetState = await kv.get<any>(`grub:pet:${newUserFID}`);
     if (existingPetState && (existingPetState.totalCheckIns ?? 0) > 0) {
       return NextResponse.json({
@@ -54,35 +41,35 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Store referral relationship
     await kv.set(`ref:${newUserFID}`, String(referrerFID));
     await kv.set(`ref:${newUserFID}:checkins`, 0);
     await kv.set(`ref:${newUserFID}:status`, "joined");
 
+    // Maintain reverse index so referrer can see all their referrals
     const referred = await kv.get<number[]>(`referrer:${referrerFID}:referred`) ?? [];
     await kv.set(`referrer:${referrerFID}:referred`, [...referred, Number(newUserFID)]);
 
+    // Get referrer wallet (Neynar lookup) — cache it in Redis for later
     const wallet = await getWalletFromNeynar(Number(referrerFID));
     if (!wallet) {
+      console.error(`[referral/register] no wallet found for FID ${referrerFID}`);
+      // Registration itself still succeeded — joiner still gets their welcome XP
+      // even though the referrer's DEGEN payout couldn't go through.
       return NextResponse.json({ ok: true, rewarded: false, reason: "no wallet", isNewJoiner: true });
     }
 
     await kv.set(`ref:${referrerFID}:wallet`, wallet);
 
+    // Send 1 DEGEN immediately for the new join
     const txHash = await sendDegen(wallet, 1);
-
-    // Log the DEGEN payout
-    await logDegenTxn({
-      fid: Number(referrerFID),
-      toFid: Number(newUserFID),
-      type: "referral_join",
-      txHash,
-      amountDegen: 1,
-      toWallet: wallet,
-    });
 
     return NextResponse.json({ ok: true, rewarded: true, txHash, isNewJoiner: true });
   } catch (err: any) {
     console.error("[referral/register] error:", err);
-    return NextResponse.json({ ok: false, reason: err?.message ?? "unknown error" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, reason: err?.message ?? "unknown error" },
+      { status: 500 }
+    );
   }
 }
