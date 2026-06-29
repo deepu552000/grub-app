@@ -1194,7 +1194,7 @@ export default function ClientPage() {
         {showFestivalBanner && (
           <div
             style={{
-              margin: "0 8px 0",
+              margin: "8px 8px 0",
               padding: "9px 12px 9px 12px",
               background: isFestivalLive
                 ? "linear-gradient(135deg, rgba(255,220,80,0.28), rgba(255,160,40,0.22))"
