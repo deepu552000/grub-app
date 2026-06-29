@@ -188,7 +188,6 @@ export async function GET(req: NextRequest) {
         </div>
 
       </div>
-      </div>
     ),
     { width: 480, height: 480 },
   );
