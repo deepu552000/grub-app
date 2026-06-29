@@ -464,8 +464,24 @@ export default function ClientPage() {
       .then((saved) => {
         const dbState = saved ? loadStateFromSaved(saved) : { ...defaultState, lastVisit: Date.now() };
 
-        // DB is source of truth for unlocked accessories — never merge from localStorage
-        // as that would allow anyone to add accessories by editing localStorage.
+        // Merge: take any accessory IDs that are in localStorage but not in DB
+        // (covers the window between a confirmed payment and the next DB sync)
+        try {
+          const local = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}");
+          const localUnlocked: string[] = local?.accessories?.unlocked ?? [];
+          const dbUnlocked: string[] = dbState.accessories?.unlocked ?? [];
+          const merged = Array.from(new Set([...dbUnlocked, ...localUnlocked]));
+          if (merged.length > dbUnlocked.length) {
+            dbState.accessories = { ...dbState.accessories, unlocked: merged };
+            // Immediately re-save the merged state to DB so it's not lost
+            fetch("/api/pet", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ fid, state: dbState }),
+            }).catch(() => {});
+          }
+        } catch {}
+
         hydrateWith(dbState);
       })
       .catch(() => {
@@ -715,7 +731,7 @@ export default function ClientPage() {
   const streakRewardEarned = checkinStreak > 0 && checkinStreak % 7 === 0;
 
   // Applies check-in to state after payment confirmed (or for free days)
-  function applyCheckIn(txHash?: string) {
+  function applyCheckIn() {
     setState((current) => {
       const isNewDay = current.lastCheckInDay !== todayKey();
       if (!isNewDay) return current;
@@ -750,31 +766,6 @@ export default function ClientPage() {
         body: JSON.stringify({ userFID: fid }),
       }).catch(() => {});
     }
-
-    // For paid checkins — save with action+txHash so server can verify payment
-    // For free checkins (txHash undefined) — normal auto-save via useEffect is fine
-    if (fid && txHash) {
-      setState((current) => {
-        fetch("/api/pet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fid,
-            state: current,
-            action: "checkin",
-            txHash,
-          }),
-        }).then(async (res) => {
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || !data.ok) {
-            console.error("[CHECKIN] DB save rejected:", data.error);
-          } else {
-            console.log("[CHECKIN] DB saved ✅");
-          }
-        }).catch((e) => console.error("[CHECKIN] DB save failed", e));
-        return current; // no state change, just using setState to get current value
-      });
-    }
   }
 
   async function doCheckIn() {
@@ -797,7 +788,7 @@ export default function ClientPage() {
     try {
       const txHash = await sendUsdcPayment(CHECKIN_USD, "checkin");
 
-      applyCheckIn(txHash);
+      applyCheckIn();
       // Log confirmed check-in transaction — fire and forget
       logTransaction({
         type: "checkin",
@@ -1066,21 +1057,8 @@ export default function ClientPage() {
           fetch("/api/pet", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              fid,
-              state: newState,
-              action: "unlock_accessory",
-              accessoryId,
-              txHash: txHash!,
-            }),
-          }).then(async (res) => {
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || !data.ok) {
-              console.error("[UNLOCK] DB save rejected by server:", data.error);
-            } else {
-              console.log("[UNLOCK] DB saved ✅");
-            }
-          }).catch((e) => console.error("[UNLOCK] DB save failed", e));
+            body: JSON.stringify({ fid, state: newState }),
+          }).then(() => console.log("[UNLOCK] DB saved ✅")).catch((e) => console.error("[UNLOCK] DB save failed", e));
         } else {
           console.warn("[UNLOCK] no fid! DB save skipped");
         }
