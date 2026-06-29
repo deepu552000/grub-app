@@ -58,16 +58,6 @@ export async function POST(req: NextRequest) {
     await kv.set(`ref:${newUserFID}:checkins`, 0);
     await kv.set(`ref:${newUserFID}:status`, "joined");
 
-    // ── Referral Festival: 30 Jun–2 Jul 2026 (IST = UTC+5:30) ──────────────
-    // Using UTC dates: festival runs 29 Jun 18:30 UTC → 2 Jul 18:29 UTC
-    // which maps to 30 Jun 00:00 IST → 2 Jul 23:59 IST
-    const nowUtc = Date.now();
-    const FESTIVAL_START = Date.UTC(2026, 5, 29, 18, 30); // 30 Jun 00:00 IST
-    const FESTIVAL_END   = Date.UTC(2026, 6, 2,  18, 30); // 2 Jul 23:59 IST
-    const isFestival = nowUtc >= FESTIVAL_START && nowUtc < FESTIVAL_END;
-    const REFERRAL_DEGEN = isFestival ? 10 : 1;
-    // ────────────────────────────────────────────────────────────────────────
-
     const referred = await kv.get<number[]>(`referrer:${referrerFID}:referred`) ?? [];
     await kv.set(`referrer:${referrerFID}:referred`, [...referred, Number(newUserFID)]);
 
@@ -78,7 +68,7 @@ export async function POST(req: NextRequest) {
 
     await kv.set(`ref:${referrerFID}:wallet`, wallet);
 
-    const txHash = await sendDegen(wallet, REFERRAL_DEGEN);
+    const txHash = await sendDegen(wallet, 1);
 
     // Log the DEGEN payout
     await logDegenTxn({
@@ -86,7 +76,7 @@ export async function POST(req: NextRequest) {
       toFid: Number(newUserFID),
       type: "referral_join",
       txHash,
-      amountDegen: REFERRAL_DEGEN,
+      amountDegen: 1,
       toWallet: wallet,
     });
 
