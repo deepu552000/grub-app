@@ -1183,6 +1183,77 @@ export default function ClientPage() {
           </button>
         </header>
 
+        {/* ── REFERRAL FESTIVAL BANNER ── */}
+        <style>{`
+          @keyframes festBubbleRise {
+            0%   { transform: translateY(0) scale(1);   opacity: 1; }
+            80%  { transform: translateY(-90px) scale(1.1); opacity: 0.8; }
+            100% { transform: translateY(-120px) scale(0.7); opacity: 0; }
+          }
+        `}</style>
+        {showFestivalBanner && (
+          <div
+            style={{
+              margin: "0 8px 0",
+              padding: "9px 12px 9px 12px",
+              background: isFestivalLive
+                ? "linear-gradient(135deg, rgba(255,220,80,0.28), rgba(255,160,40,0.22))"
+                : "linear-gradient(135deg, rgba(200,180,255,0.28), rgba(160,120,255,0.20))",
+              border: isFestivalLive
+                ? "1.5px solid rgba(220,160,20,0.40)"
+                : "1.5px solid rgba(160,120,255,0.35)",
+              borderRadius: 12,
+              position: "relative",
+              overflow: "hidden",
+              cursor: "pointer",
+              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
+            }}
+            onClick={spawnFestivalBubbles}
+          >
+            {/* Floating bubbles */}
+            {festivalBubbles.map((b) => (
+              <span
+                key={b.id}
+                style={{
+                  position: "absolute",
+                  bottom: 0,
+                  left: `${b.x}%`,
+                  fontSize: "1.1rem",
+                  animation: "festBubbleRise 2s ease-out forwards",
+                  pointerEvents: "none",
+                  userSelect: "none",
+                }}
+              >
+                {b.emoji}
+              </span>
+            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: "1.3rem", lineHeight: 1, flexShrink: 0 }}>
+                {isFestivalLive ? "🎉" : "✨"}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#49332d", marginBottom: 1 }}>
+                  {isFestivalLive ? "Referral Festival LIVE 🎊 — 10 DEGEN per referral!" : "Referral Festival tomorrow — 10 DEGEN per referral!"}
+                </div>
+                <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
+                  {isFestivalLive ? "30 Jun–2 Jul only. Invite from your referral link!" : "Starts 30 Jun. Get your referral link ready!"}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); dismissFestival(); }}
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
+                  flexShrink: 0,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ── CAT SECTION ── */}
         <section className="hero">
           <div className="stage-copy">
@@ -1252,82 +1323,6 @@ export default function ClientPage() {
                   .map(([k, v]) => `${(v as number) > 0 ? "+" : ""}${v} ${k}`)
                   .join(" · ")}
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── REFERRAL FESTIVAL BANNER ── */}
-        <style>{`
-          @keyframes festBubbleRise {
-            0%   { transform: translateY(0) scale(1);   opacity: 1; }
-            80%  { transform: translateY(-90px) scale(1.1); opacity: 0.8; }
-            100% { transform: translateY(-120px) scale(0.7); opacity: 0; }
-          }
-        `}</style>
-        {showFestivalBanner && (
-          <div
-            style={{
-              margin: "0 0 10px 0",
-              padding: "11px 14px 11px 12px",
-              background: isFestivalLive
-                ? "linear-gradient(135deg, rgba(255,220,80,0.22), rgba(255,160,40,0.18))"
-                : "linear-gradient(135deg, rgba(200,180,255,0.22), rgba(160,120,255,0.15))",
-              border: isFestivalLive
-                ? "1.5px solid rgba(220,160,20,0.35)"
-                : "1.5px solid rgba(160,120,255,0.30)",
-              borderRadius: 14,
-              position: "relative",
-              overflow: "hidden",
-              cursor: "pointer",
-              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
-            }}
-            onClick={spawnFestivalBubbles}
-          >
-            {/* Floating bubbles */}
-            {festivalBubbles.map((b) => (
-              <span
-                key={b.id}
-                style={{
-                  position: "absolute",
-                  bottom: 0,
-                  left: `${b.x}%`,
-                  fontSize: "1.1rem",
-                  animation: "festBubbleRise 2s ease-out forwards",
-                  pointerEvents: "none",
-                  userSelect: "none",
-                }}
-              >
-                {b.emoji}
-              </span>
-            ))}
-
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-              <span style={{ fontSize: "1.5rem", lineHeight: 1 }}>
-                {isFestivalLive ? "🎉" : "✨"}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 800, fontSize: "0.82rem", color: "#49332d", marginBottom: 2 }}>
-                  {isFestivalLive
-                    ? "Referral Festival is LIVE! 🎊"
-                    : "Referral Festival starts tomorrow!"}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "#7a5c4f", lineHeight: 1.4 }}>
-                  {isFestivalLive
-                    ? "Invite friends and earn 10 DEGEN per referral — today through 2nd July only!"
-                    : "Get ready — from tomorrow, earn 10 DEGEN for every friend you invite. 3 days only!"}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); dismissFestival(); }}
-                style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
-                  flexShrink: 0,
-                }}
-              >
-                ✕
-              </button>
             </div>
           </div>
         )}

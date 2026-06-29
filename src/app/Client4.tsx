@@ -570,6 +570,38 @@ export default function ClientPage() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [closetOpen, setClosetOpen] = useState(false);
   const [referralOpen, setReferralOpen] = useState(false);
+
+  // ── Referral Festival Banner ──────────────────────────────────────────────
+  // Today (29 Jun): teaser. 30 Jun–2 Jul: live festival. After: hidden.
+  // Session-only dismiss — banner reappears every time they open the app during festival
+  const [festivalDismissed, setFestivalDismissed] = useState(false);
+  const [festivalBubbles, setFestivalBubbles] = useState<{ id: number; x: number; emoji: string }[]>([]);
+
+  const nowMs = Date.now();
+  const FESTIVAL_START = Date.UTC(2026, 5, 29, 18, 30); // 30 Jun 00:00 IST
+  const FESTIVAL_END   = Date.UTC(2026, 6, 2,  18, 30); // 2 Jul 23:59 IST
+  const TEASER_START   = Date.UTC(2026, 5, 29,  0,  0); // 29 Jun 00:00 UTC
+
+  const isFestivalTeaser = nowMs >= TEASER_START && nowMs < FESTIVAL_START;
+  const isFestivalLive   = nowMs >= FESTIVAL_START && nowMs < FESTIVAL_END;
+  const showFestivalBanner = (isFestivalTeaser || isFestivalLive) && !festivalDismissed;
+
+  function dismissFestival() {
+    setFestivalDismissed(true); // only hides for this session — comes back on next app open
+  }
+
+  function spawnFestivalBubbles() {
+    setTimeout(() => setFestivalDismissed(true), 1800); // auto-dismiss after bubbles finish
+    const emojis = ["🎉","✨","🐾","💛","🌟","🎊","💜","⭐"];
+    const newBubbles = Array.from({ length: 10 }, (_, i) => ({
+      id: Date.now() + i,
+      x: 8 + Math.random() * 84, // % from left
+      emoji: emojis[Math.floor(Math.random() * emojis.length)],
+    }));
+    setFestivalBubbles(newBubbles);
+    setTimeout(() => setFestivalBubbles([]), 2200);
+  }
+  // ─────────────────────────────────────────────────────────────────────────
   const [poolDegen, setPoolDegen] = useState<number | null>(null);
   const [referralData, setReferralData] = useState<{
     referralLink: string;
@@ -1224,6 +1256,82 @@ export default function ClientPage() {
           </div>
         )}
 
+        {/* ── REFERRAL FESTIVAL BANNER ── */}
+        <style>{`
+          @keyframes festBubbleRise {
+            0%   { transform: translateY(0) scale(1);   opacity: 1; }
+            80%  { transform: translateY(-90px) scale(1.1); opacity: 0.8; }
+            100% { transform: translateY(-120px) scale(0.7); opacity: 0; }
+          }
+        `}</style>
+        {showFestivalBanner && (
+          <div
+            style={{
+              margin: "0 0 10px 0",
+              padding: "11px 14px 11px 12px",
+              background: isFestivalLive
+                ? "linear-gradient(135deg, rgba(255,220,80,0.22), rgba(255,160,40,0.18))"
+                : "linear-gradient(135deg, rgba(200,180,255,0.22), rgba(160,120,255,0.15))",
+              border: isFestivalLive
+                ? "1.5px solid rgba(220,160,20,0.35)"
+                : "1.5px solid rgba(160,120,255,0.30)",
+              borderRadius: 14,
+              position: "relative",
+              overflow: "hidden",
+              cursor: "pointer",
+              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
+            }}
+            onClick={spawnFestivalBubbles}
+          >
+            {/* Floating bubbles */}
+            {festivalBubbles.map((b) => (
+              <span
+                key={b.id}
+                style={{
+                  position: "absolute",
+                  bottom: 0,
+                  left: `${b.x}%`,
+                  fontSize: "1.1rem",
+                  animation: "festBubbleRise 2s ease-out forwards",
+                  pointerEvents: "none",
+                  userSelect: "none",
+                }}
+              >
+                {b.emoji}
+              </span>
+            ))}
+
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+              <span style={{ fontSize: "1.5rem", lineHeight: 1 }}>
+                {isFestivalLive ? "🎉" : "✨"}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 800, fontSize: "0.82rem", color: "#49332d", marginBottom: 2 }}>
+                  {isFestivalLive
+                    ? "Referral Festival is LIVE! 🎊"
+                    : "Referral Festival starts tomorrow!"}
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#7a5c4f", lineHeight: 1.4 }}>
+                  {isFestivalLive
+                    ? "Invite friends and earn 10 DEGEN per referral — today through 2nd July only!"
+                    : "Get ready — from tomorrow, earn 10 DEGEN for every friend you invite. 3 days only!"}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); dismissFestival(); }}
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
+                  flexShrink: 0,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ── SPEECH ── */}
         <section className="speech">
           <p>{line}</p>
@@ -1739,7 +1847,7 @@ export default function ClientPage() {
               {/* Rewards info */}
               <div style={{ background: "#fff8e7", borderRadius: 10, padding: "10px 12px", fontSize: 12 }}>
                 <p style={{ margin: "0 0 4px", fontWeight: 700, color: "#b45309" }}>How it works</p>
-                <p style={{ margin: "0 0 2px", color: "#555" }}>🎁 Friend joins → <strong>you</strong> get <strong>1 DEGEN</strong></p>
+                <p style={{ margin: "0 0 2px", color: "#555" }}>🎁 Friend joins → <strong>you</strong> get <strong>{isFestivalLive ? "10 DEGEN 🎉" : "1 DEGEN"}</strong></p>
                 <p style={{ margin: 0, color: "#555" }}>🏆 Friend hits 5 check-ins → <strong>you</strong> get <strong>2 DEGEN</strong></p>
               </div>
 
