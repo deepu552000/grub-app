@@ -121,7 +121,7 @@ function SectionLabel({ children, accent }: { children: React.ReactNode; accent?
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "2rem 0 0.75rem" }}>
       <span style={{ width: 3, height: 14, background: barColor, borderRadius: 2, display: "block", flexShrink: 0, boxShadow: `0 0 8px ${barColor}` }} />
-      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.creamDim }}>{children}</span>
+      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: dark ? C.creamDim : "#374151" }}>{children}</span>
     </div>
   );
 }
@@ -568,7 +568,7 @@ function AdminDashboardInner() {
                   <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <button
                       onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                      style={{ fontSize: 11, color: C.amberGlow, background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", width: 72, textAlign: "left", padding: 0, flexShrink: 0, textShadow: `0 0 8px ${C.amberGlow}66` }}
+                      style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", width: 72, textAlign: "left", padding: 0, flexShrink: 0, textShadow: dark ? `0 0 8px ${C.amberGlow}66` : "none" }}
                       title="Open in user panel"
                     >
                       #{u.fid}
@@ -661,13 +661,13 @@ function AdminDashboardInner() {
                   } else if (t.type === "referral_join" || t.type === "referral_checkin") {
                     detail = `→ fid ${t.toFid ?? "?"} ${shortAddr(t.toWallet) ? `(${shortAddr(t.toWallet)})` : ""}`;
                     amount = `${t.amountDegen ?? 0} DEGEN`;
-                    amountColor = C.amberGlow;
+                    amountColor = dark ? C.amberGlow : "#92400e";
                   } else if (t.amountUsd > 0) {
                     amount = `$${t.amountUsd.toFixed(2)}`;
                     amountColor = C.green;
                   } else if (t.amountDegen) {
                     amount = `${t.amountDegen} DEGEN`;
-                    amountColor = C.amberGlow;
+                    amountColor = dark ? C.amberGlow : "#92400e";
                   }
                   return (
                     <tr
@@ -680,13 +680,13 @@ function AdminDashboardInner() {
                       <td style={{ padding: "9px 14px" }}>
                         <Badge color={meta.color} bg={meta.bg}>{meta.label}</Badge>
                       </td>
-                      <td style={{ padding: "9px 14px", fontFamily: "monospace", color: C.amberGlow, fontSize: 11 }}>{t.fid}</td>
+                      <td style={{ padding: "9px 14px", fontFamily: "monospace", color: dark ? C.amberGlow : "#7c3aed", fontSize: 11 }}>{t.fid}</td>
                       <td style={{ padding: "9px 14px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: T.textSub }} title={detail}>{detail}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 600, color: amountColor, fontVariantNumeric: "tabular-nums" }}>{amount}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right", color: T.creamMute }}>{timeAgo(t.ts)}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right" }}>
                         <a href={`https://basescan.org/tx/${t.txHash}`} target="_blank" rel="noopener noreferrer"
-                          style={{ color: C.blue, fontSize: 11, fontWeight: 600, textDecoration: "none" }}>
+                          style={{ color: dark ? C.blue : "#1d4ed8", fontSize: 11, fontWeight: 600, textDecoration: "none" }}>
                           ↗ view
                         </a>
                       </td>
@@ -714,11 +714,11 @@ function AdminDashboardInner() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                   <button
                     onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                    style={{ fontSize: 13, fontWeight: 700, color: C.amberGlow, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0, textShadow: `0 0 10px ${C.amberGlow}66` }}
+                    style={{ fontSize: 13, fontWeight: 700, color: dark ? C.amberGlow : "#7c3aed", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0, textShadow: dark ? `0 0 10px ${C.amberGlow}66` : "none" }}
                   >
                     FID {u.fid}
                   </button>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: C.amberGlow2 }}>+{u.referrals?.degenEarned} DEGEN</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: dark ? C.amberGlow2 : "#92400e" }}>+{u.referrals?.degenEarned} DEGEN</span>
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {u.referrals?.referredUsers.map((r) => (
@@ -822,7 +822,7 @@ function AdminDashboardInner() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {/* Set referrer */}
                     <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px", border: `1px solid ${T.border}` }}>
-                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.amberGlow, margin: "0 0 4px" }}>Set Sponsor</p>
+                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: dark ? C.amberGlow : "#7c3aed", margin: "0 0 4px" }}>Set Sponsor</p>
                       <p style={{ fontSize: 11, color: T.textMute, margin: "0 0 10px" }}>Replaces their current sponsor — no need to remove first.</p>
                       <div style={{ display: "flex", gap: 8 }}>
                         <Input value={newReferrerFid} onChange={setNewReferrerFid} placeholder="Sponsor FID" />
@@ -866,8 +866,8 @@ function AdminDashboardInner() {
                         {controlState.state.accessoriesUnlocked.map((id: string) => (
                           <span key={id} style={{
                             fontSize: 11, padding: "4px 10px", borderRadius: 6,
-                            background: T.bg, border: `1px solid ${C.amberGlow}55`,
-                            color: C.amberGlow, fontWeight: 500,
+                            background: T.bg, border: `1px solid ${dark ? C.amberGlow : "#7c3aed"}55`,
+                            color: dark ? C.amberGlow : "#7c3aed", fontWeight: 500,
                           }}>
                             {id}
                           </span>
