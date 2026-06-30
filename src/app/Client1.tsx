@@ -475,20 +475,22 @@ export default function ClientPage() {
   }, [fid]);
 
   useEffect(() => {
+    // Only fall back to localStorage if SDK completely fails (plain browser / SDK error).
+    // Real Farcaster users always load from DB via FID — localStorage never races against it.
+    sdk.actions.ready().catch(() => {
+      // SDK errored — no FID coming, load from localStorage immediately
+      hydrateWith(loadState());
+    });
+
     // Timeout fallback for local dev / plain browser where SDK context never resolves
     const fallbackTimer = setTimeout(() => {
-      sdk.actions.ready().catch(() => {});
       hydrateWith(loadState());
     }, 3000);
 
     sdk.context
       .then((ctx) => {
-        // Always call ready() after context resolves — mobile FC requires this
-        // order to dismiss the splash screen correctly.
-        sdk.actions.ready().catch(() => {});
-        clearTimeout(fallbackTimer);
-
         if (ctx?.user?.fid) {
+          clearTimeout(fallbackTimer);
           // FID known — DB load useEffect takes over, loading screen stays until DB responds
           setFid(ctx.user.fid);
           // Check for referral link ?ref=<FID> and register if present
@@ -515,12 +517,11 @@ export default function ClientPage() {
           }
         } else {
           // SDK resolved but no FID — plain browser, load from localStorage
+          clearTimeout(fallbackTimer);
           hydrateWith(loadState());
         }
       })
       .catch(() => {
-        // SDK failed entirely — call ready() anyway and fall back to localStorage
-        sdk.actions.ready().catch(() => {});
         clearTimeout(fallbackTimer);
         hydrateWith(loadState());
       });
