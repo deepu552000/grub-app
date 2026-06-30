@@ -451,11 +451,6 @@ export default function ClientPage() {
   // every app open — not persisted, so it always reflects reality even if
   // the user enables/disables notifications outside of our banner flow.
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-  // True once the mini app itself is already added — in this state,
-  // addMiniApp() won't show any UI (nothing left to "add"), so we can't
-  // re-trigger the notification prompt from inside the app. The banner
-  // needs different copy/behavior for this case.
-  const [appAlreadyAdded, setAppAlreadyAdded] = useState(false);
   const [lastAction, setLastAction] = useState("You found a tiny white kitty.");
   const [carePulse, setCarePulse] = useState<ActionType | "">("");
   const [poked, setPoked] = useState(false);
@@ -503,7 +498,6 @@ export default function ClientPage() {
         // notifications later, this naturally becomes falsy again and the
         // nudge banner comes back.
         setNotificationsEnabled(!!ctx?.client?.notificationDetails);
-        setAppAlreadyAdded(!!ctx?.client?.added);
 
         if (ctx?.user?.fid) {
           // FID known — DB load useEffect takes over, loading screen stays until DB responds
@@ -637,18 +631,15 @@ export default function ClientPage() {
   async function handleEnableNotifications() {
     setNotifEnabling(true);
     try {
-      // addMiniApp() only shows UI / re-prompts the FIRST time. If the app
-      // is already added, this resolves immediately with no dialog and no
-      // way to re-trigger the notification permission from in-app — that
-      // has to be flipped on by the user from their Farcaster client's own
-      // settings. The response carries the real outcome either way.
-      const response = await sdk.actions.addMiniApp();
-      setNotificationsEnabled(!!response?.notificationDetails);
-      setAppAlreadyAdded(true); // it's added now regardless of outcome
+      await sdk.actions.addMiniApp();
+      // Re-fetch context to get the real post-action notification status —
+      // addMiniApp() resolving doesn't guarantee notifications were granted
+      // (e.g. app was already added, or user dismissed the native prompt).
+      const ctx = await sdk.context;
+      setNotificationsEnabled(!!ctx?.client?.notificationDetails);
     } catch {
-      // user rejected the add prompt, or domain/manifest issue — leave
-      // notificationsEnabled as-is; the banner will simply keep showing,
-      // which is correct.
+      // user rejected, or action unsupported — leave notificationsEnabled
+      // as-is; the banner will simply keep showing, which is correct.
     } finally {
       setNotifEnabling(false);
     }
@@ -1354,52 +1345,29 @@ export default function ClientPage() {
                 Don't let Grub starve!
               </div>
               <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
-                {appAlreadyAdded
-                  ? "Notifications are off. Turn them on from your app settings so she can reach you."
-                  : "Turn on notifications so she can reach you when she's hungry."}
+                Turn on notifications so she can reach you when she's hungry.
               </div>
             </div>
-            {appAlreadyAdded ? (
-              <button
-                type="button"
-                onClick={dismissNotifBanner}
-                style={{
-                  background: "#49332d",
-                  color: "#fff8ef",
-                  border: "none",
-                  borderRadius: 8,
-                  padding: "6px 10px",
-                  fontSize: "0.72rem",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                Got it
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleEnableNotifications}
-                disabled={notifEnabling}
-                style={{
-                  background: "#49332d",
-                  color: "#fff8ef",
-                  border: "none",
-                  borderRadius: 8,
-                  padding: "6px 10px",
-                  fontSize: "0.72rem",
-                  fontWeight: 700,
-                  cursor: notifEnabling ? "default" : "pointer",
-                  opacity: notifEnabling ? 0.7 : 1,
-                  flexShrink: 0,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {notifEnabling ? "..." : "Enable"}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleEnableNotifications}
+              disabled={notifEnabling}
+              style={{
+                background: "#49332d",
+                color: "#fff8ef",
+                border: "none",
+                borderRadius: 8,
+                padding: "6px 10px",
+                fontSize: "0.72rem",
+                fontWeight: 700,
+                cursor: notifEnabling ? "default" : "pointer",
+                opacity: notifEnabling ? 0.7 : 1,
+                flexShrink: 0,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {notifEnabling ? "..." : "Enable"}
+            </button>
             <button
               type="button"
               onClick={dismissNotifBanner}
