@@ -447,6 +447,8 @@ function AdminDashboardInner() {
   const sortedTxns = [...txns].sort((a, b) => b.ts - a.ts).slice(0, 40);
   const maxXp = Math.max(1, ...users.map((u) => u.xp || 0));
   const maxCheckins = Math.max(1, ...users.map((u) => u.totalCheckIns || 0));
+  const realUsers = users.filter((u) => (u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0);
+  const ghostUsers = users.filter((u) => !((u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0));
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -600,6 +602,7 @@ function AdminDashboardInner() {
         <SectionLabel dark={dark}>Overview</SectionLabel>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <KpiCard label="Players"        value={String(users.length)}        sub="active pets saved"         accent={C.blue}   dark={dark} />
+          <KpiCard label="Real Players"   value={String(realUsers.length)}    sub={`${ghostUsers.length} unconverted opens`} accent={C.green}  dark={dark} />
           <KpiCard label="USDC Revenue"   value={`$${totalUsdc.toFixed(2)}`}  sub={`${usdcTxns.length} purchases`} accent={C.green}  dark={dark} />
           <KpiCard label="DEGEN Paid Out" value={totalDegenPaid.toFixed(0)}   sub="referral rewards"          accent={C.purple} dark={dark} />
           <KpiCard label="Acc. Owners"    value={String(usersWithAcc)}        sub={`of ${users.length} players`}   accent={C.amber}  dark={dark} />
@@ -615,53 +618,92 @@ function AdminDashboardInner() {
             {users.length === 0 ? (
               <p style={{ fontSize: 13, color: T.textMute }}>No players yet.</p>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto", paddingRight: 10 }}>
-                {[...users].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
-                  const profile = profiles[String(u.fid)];
-                  return (
-                  <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: 72, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-                      <button
-                        onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                        style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, textShadow: dark ? `0 0 8px ${C.amberGlow}66` : "none" }}
-                        title="Open in user panel"
-                      >
-                        #{u.fid}
-                      </button>
-                      {profile?.username ? (
-                        <a
-                          href={`https://farcaster.xyz/${profile.username}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ fontSize: 10, color: T.textSub, textDecoration: "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                          title={profile.displayName ?? profile.username}
-                        >
-                          @{profile.username}
-                        </a>
-                      ) : profile === undefined ? (
-                        <span style={{ fontSize: 10, color: T.textMute }}>…</span>
-                      ) : (
-                        <span style={{ fontSize: 10, color: T.textMute }}>—</span>
-                      )}
-                    </div>
-                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 5, background: T.borderSub, borderRadius: 3, minWidth: 0 }}>
-                          <div style={{ height: 5, background: C.blue, borderRadius: 3, width: `${((u.xp || 0) / maxXp) * 100}%`, boxShadow: `0 0 6px ${C.blue}88` }} />
+              <>
+                <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.green, margin: "0 0 8px" }}>
+                  Real Players · {realUsers.length}
+                </p>
+                {realUsers.length === 0 ? (
+                  <p style={{ fontSize: 12, color: T.textMute, margin: "0 0 14px" }}>None yet.</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 16 }}>
+                    {[...realUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
+                      const profile = profiles[String(u.fid)];
+                      return (
+                      <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ width: 72, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                          <button
+                            onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
+                            style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, textShadow: dark ? `0 0 8px ${C.amberGlow}66` : "none" }}
+                            title="Open in user panel"
+                          >
+                            #{u.fid}
+                          </button>
+                          {profile?.username ? (
+                            <a
+                              href={`https://farcaster.xyz/${profile.username}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ fontSize: 10, color: T.textSub, textDecoration: "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                              title={profile.displayName ?? profile.username}
+                            >
+                              @{profile.username}
+                            </a>
+                          ) : profile === undefined ? (
+                            <span style={{ fontSize: 10, color: T.textMute }}>…</span>
+                          ) : (
+                            <span style={{ fontSize: 10, color: T.textMute }}>—</span>
+                          )}
                         </div>
-                        <span style={{ fontSize: 10, color: T.textSub, width: 64, textAlign: "right", flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp</span>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 5, background: T.borderSub, borderRadius: 3, minWidth: 0 }}>
-                          <div style={{ height: 5, background: C.green, borderRadius: 3, width: `${((u.totalCheckIns || 0) / maxCheckins) * 100}%`, boxShadow: `0 0 6px ${C.green}88` }} />
+                        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ flex: 1, height: 5, background: T.borderSub, borderRadius: 3, minWidth: 0 }}>
+                              <div style={{ height: 5, background: C.blue, borderRadius: 3, width: `${((u.xp || 0) / maxXp) * 100}%`, boxShadow: `0 0 6px ${C.blue}88` }} />
+                            </div>
+                            <span style={{ fontSize: 10, color: T.textSub, width: 64, textAlign: "right", flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp</span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ flex: 1, height: 5, background: T.borderSub, borderRadius: 3, minWidth: 0 }}>
+                              <div style={{ height: 5, background: C.green, borderRadius: 3, width: `${((u.totalCheckIns || 0) / maxCheckins) * 100}%`, boxShadow: `0 0 6px ${C.green}88` }} />
+                            </div>
+                            <span style={{ fontSize: 10, color: T.textSub, width: 64, textAlign: "right", flexShrink: 0 }}>{u.totalCheckIns || 0} ci</span>
+                          </div>
                         </div>
-                        <span style={{ fontSize: 10, color: T.textSub, width: 64, textAlign: "right", flexShrink: 0 }}>{u.totalCheckIns || 0} ci</span>
                       </div>
-                    </div>
+                      );
+                    })}
                   </div>
-                  );
-                })}
-              </div>
+                )}
+
+                <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.textMute, margin: "0 0 8px" }}>
+                  Unconverted Opens · {ghostUsers.length}
+                </p>
+                {ghostUsers.length === 0 ? (
+                  <p style={{ fontSize: 12, color: T.textMute }}>None — every opener has progressed.</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 140, overflowY: "auto", paddingRight: 10 }}>
+                    {ghostUsers.map((u) => {
+                      const profile = profiles[String(u.fid)];
+                      return (
+                        <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12, opacity: 0.6 }}>
+                          <button
+                            onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
+                            style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0 }}
+                            title="Open in user panel"
+                          >
+                            #{u.fid}
+                          </button>
+                          {profile?.username ? (
+                            <span style={{ fontSize: 10, color: T.textSub }}>@{profile.username}</span>
+                          ) : (
+                            <span style={{ fontSize: 10, color: T.textMute }}>—</span>
+                          )}
+                          <span style={{ fontSize: 10, color: T.textMute, marginLeft: "auto" }}>0 xp · 0 ci</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
           </div>
 

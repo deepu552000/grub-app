@@ -258,6 +258,7 @@ function AdminDashboardInner() {
 
   const [users, setUsers] = useState<DebugUser[]>([]);
   const [txns, setTxns] = useState<TxnEntry[]>([]);
+  const [profiles, setProfiles] = useState<Record<string, { username: string | null; displayName: string | null }>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
@@ -399,6 +400,39 @@ function AdminDashboardInner() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Resolve FID -> Farcaster username/displayName once users are loaded.
+  // Only fetches fids we don't already have cached.
+  useEffect(() => {
+    if (users.length === 0) return;
+    const fidsToResolve = users
+      .map((u) => u.fid)
+      .filter((fid) => !(fid in profiles));
+    if (fidsToResolve.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await authedPost("/api/admin/resolve-fids", { fids: fidsToResolve });
+        if (cancelled || !res?.users) return;
+        setProfiles((prev) => {
+          const next = { ...prev };
+          for (const u of res.users) {
+            next[String(u.fid)] = { username: u.username, displayName: u.displayName };
+          }
+          // mark any fid we asked for but got nothing back so we don't retry forever
+          for (const fid of fidsToResolve) {
+            if (!(fid in next)) next[fid] = { username: null, displayName: null };
+          }
+          return next;
+        });
+      } catch (err) {
+        console.error("Failed to resolve fid usernames:", err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [users, profiles, authedPost]);
 
   // Derived stats
   const usdcTxns = txns.filter((t) => t.amountUsd > 0);
@@ -582,15 +616,34 @@ function AdminDashboardInner() {
               <p style={{ fontSize: 13, color: T.textMute }}>No players yet.</p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto", paddingRight: 10 }}>
-                {[...users].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => (
+                {[...users].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
+                  const profile = profiles[String(u.fid)];
+                  return (
                   <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <button
-                      onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                      style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", width: 72, textAlign: "left", padding: 0, flexShrink: 0, textShadow: dark ? `0 0 8px ${C.amberGlow}66` : "none" }}
-                      title="Open in user panel"
-                    >
-                      #{u.fid}
-                    </button>
+                    <div style={{ width: 72, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                      <button
+                        onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
+                        style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, textShadow: dark ? `0 0 8px ${C.amberGlow}66` : "none" }}
+                        title="Open in user panel"
+                      >
+                        #{u.fid}
+                      </button>
+                      {profile?.username ? (
+                        <a
+                          href={`https://farcaster.xyz/${profile.username}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ fontSize: 10, color: T.textSub, textDecoration: "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                          title={profile.displayName ?? profile.username}
+                        >
+                          @{profile.username}
+                        </a>
+                      ) : profile === undefined ? (
+                        <span style={{ fontSize: 10, color: T.textMute }}>…</span>
+                      ) : (
+                        <span style={{ fontSize: 10, color: T.textMute }}>—</span>
+                      )}
+                    </div>
                     <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{ flex: 1, height: 5, background: T.borderSub, borderRadius: 3, minWidth: 0 }}>
@@ -606,7 +659,8 @@ function AdminDashboardInner() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
