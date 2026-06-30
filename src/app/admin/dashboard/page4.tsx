@@ -13,9 +13,7 @@ type DebugUser = {
   accessoriesUnlockedCount: number;
   accessoriesUnlocked: string[];
   hasNotifToken?: boolean;
-  hasAddedApp?: boolean;
   lastVisit: string;
-  lastCheckInDay?: string;
   referrals?: {
     referredBy: number | null;
     referredCount: number;
@@ -486,9 +484,6 @@ function AdminDashboardInner() {
   const maxCheckins = Math.max(1, ...users.map((u) => u.totalCheckIns || 0));
   const realUsers = users.filter((u) => (u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0);
   const ghostUsers = users.filter((u) => !((u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0));
-  const addedButNotifOff = users
-    .filter((u) => u.hasAddedApp && !u.hasNotifToken)
-    .sort((a, b) => (b.totalCheckIns || 0) - (a.totalCheckIns || 0));
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -647,7 +642,6 @@ function AdminDashboardInner() {
           <KpiCard label="DEGEN Paid Out" value={totalDegenPaid.toFixed(0)}   sub="referral rewards"          accent={C.purple} dark={dark} />
           <KpiCard label="Acc. Owners"    value={String(usersWithAcc)}        sub={`of ${users.length} players`}   accent={C.amber}  dark={dark} />
           <KpiCard label="Referrers"      value={String(referrers.length)}    sub="with ≥1 referred user"     accent={C.amberDim} dark={dark} />
-          <KpiCard label="Notifs Off"     value={String(addedButNotifOff.length)} sub="added app, no notif token" accent={C.red}    dark={dark} />
         </div>
 
         {/* ── Charts row ── */}
@@ -911,66 +905,6 @@ function AdminDashboardInner() {
                       <td style={{ padding: "9px 14px", fontFamily: "monospace", color: dark ? C.amberGlow : "#7c3aed", fontSize: 11 }}>{e.fid}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right", color: T.textSub }}>{e.appFid}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right", color: T.creamMute }}>{timeAgo(e.ts)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* ── Added App but Notifications Off ── */}
-        <SectionLabel dark={dark} accent={C.red}>Added App, Notifications Off</SectionLabel>
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
-            <span style={{ fontSize: 12, color: T.textMute }}>
-              Users who added the mini-app but have no stored notification token — {addedButNotifOff.length} of {users.filter((u) => u.hasAddedApp).length} added
-            </span>
-          </div>
-          <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
-                  {["FID", "Added", "Notif", "Last Check-in", "Last Seen"].map((h, i) => (
-                    <th key={h} style={{
-                      textAlign: i >= 3 ? "right" : "left",
-                      padding: "9px 14px",
-                      color: T.creamMute,
-                      fontWeight: 700,
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
-                      fontSize: 10,
-                      borderBottom: `1px solid ${T.border}`,
-                      background: T.surfaceAlt,
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {addedButNotifOff.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>None — everyone who added the app has notifications on.</td>
-                  </tr>
-                ) : addedButNotifOff.map((u, i) => {
-                  const profile = profiles[String(u.fid)];
-                  return (
-                    <tr key={u.fid} style={{ borderBottom: `1px solid ${T.borderSub}`, background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55" }}>
-                      <td style={{ padding: "9px 14px" }}>
-                        <button
-                          onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                          style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, fontWeight: 600 }}
-                          title="Open in user panel"
-                        >
-                          #{u.fid}
-                        </button>
-                        {profile?.username && (
-                          <span style={{ fontSize: 10, color: T.textMute, marginLeft: 6 }}>@{profile.username}</span>
-                        )}
-                      </td>
-                      <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasAddedApp} dark={dark} /></td>
-                      <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasNotifToken} dark={dark} /></td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.textSub }}>{u.lastCheckInDay ?? "never"}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.creamMute }}>{u.lastVisit && u.lastVisit !== "unknown" ? timeAgo(new Date(u.lastVisit).getTime()) : "unknown"}</td>
                     </tr>
                   );
                 })}
