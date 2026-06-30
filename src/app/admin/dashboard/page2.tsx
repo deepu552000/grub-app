@@ -22,14 +22,6 @@ type DebugUser = {
   };
 };
 
-type WebhookLogEntry = {
-  ts: number;
-  appFid: number;
-  fid: number;
-  event: string;
-  payload: any;
-};
-
 type TxnEntry = {
   fid: number;
   type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin";
@@ -291,7 +283,6 @@ function AdminDashboardInner() {
 
   const [users, setUsers] = useState<DebugUser[]>([]);
   const [txns, setTxns] = useState<TxnEntry[]>([]);
-  const [webhookEvents, setWebhookEvents] = useState<WebhookLogEntry[]>([]);
   const [profiles, setProfiles] = useState<Record<string, { username: string | null; displayName: string | null }>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -422,7 +413,6 @@ function AdminDashboardInner() {
         setUsers([]); setTxns([]); return;
       }
       setUsers(debugRes.users ?? []);
-      setWebhookEvents(debugRes.webhookEvents ?? []);
       setTxns(txnRes.log ?? []);
       setLastLoaded(new Date());
     } catch (err: any) {
@@ -849,62 +839,6 @@ function AdminDashboardInner() {
                           ↗ view
                         </a>
                       </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* ── Webhook Event Log ── */}
-        <SectionLabel dark={dark}>Webhook Event Log</SectionLabel>
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
-            <span style={{ fontSize: 12, color: T.textMute }}>
-              Raw Farcaster/Base App events — last {webhookEvents.length} (capped at 500 in KV)
-            </span>
-          </div>
-          <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
-                  {["Event", "FID", "App FID", "When"].map((h, i) => (
-                    <th key={h} style={{
-                      textAlign: i >= 2 ? "right" : "left",
-                      padding: "9px 14px",
-                      color: T.creamMute,
-                      fontWeight: 700,
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
-                      fontSize: 10,
-                      borderBottom: `1px solid ${T.border}`,
-                      background: T.surfaceAlt,
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {webhookEvents.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No webhook events logged yet.</td>
-                  </tr>
-                ) : webhookEvents.map((e, i) => {
-                  const meta: Record<string, { color: string; bg: string }> = {
-                    miniapp_added: { color: C.green, bg: C.greenDim },
-                    miniapp_removed: { color: C.red, bg: C.redDim },
-                    notifications_enabled: { color: C.blue, bg: C.blueDim },
-                    notifications_disabled: { color: T.textSub, bg: T.surfaceAlt },
-                  };
-                  const m = meta[e.event] ?? { color: T.textSub, bg: T.surfaceAlt };
-                  return (
-                    <tr key={i} style={{ borderBottom: `1px solid ${T.borderSub}`, background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55" }}>
-                      <td style={{ padding: "9px 14px" }}>
-                        <Badge color={m.color} bg={m.bg}>{e.event}</Badge>
-                      </td>
-                      <td style={{ padding: "9px 14px", fontFamily: "monospace", color: dark ? C.amberGlow : "#7c3aed", fontSize: 11 }}>{e.fid}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.textSub }}>{e.appFid}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.creamMute }}>{timeAgo(e.ts)}</td>
                     </tr>
                   );
                 })}

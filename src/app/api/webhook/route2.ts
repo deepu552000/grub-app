@@ -25,7 +25,6 @@ import {
   removeNotificationDetails,
   markAppAdded,
   unmarkAppAdded,
-  logWebhookEvent,
 } from "@/lib/notification-tokens";
 
 export async function POST(request: NextRequest) {
@@ -44,12 +43,6 @@ export async function POST(request: NextRequest) {
   const { fid, event } = data;
   const appFid = data.appFid;
   console.log("appFid received:", appFid, "fid:", fid);
-
-  // Audit log — fire and forget, never let logging failures block the
-  // webhook response (Base App needs this fast, see note above).
-  logWebhookEvent(appFid, fid, event.event, body).catch((err) =>
-    console.error("Failed to write webhook event log:", err),
-  );
 
   switch (event.event) {
     case "miniapp_added": {

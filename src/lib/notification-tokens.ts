@@ -36,6 +36,45 @@ function addedSetKey(appFid: number) {
   return `grub:added-fids:${appFid}`;
 }
 
+// Raw audit log of every webhook event received, newest first. Capped at
+// the last 500 entries so it doesn't grow forever. This is our paper trail
+// since Vercel's free-tier log retention is too short to rely on, and we
+// don't have a log drain integration (requires Pro).
+const EVENT_LOG_KEY = "grub:events:log";
+const EVENT_LOG_MAX = 2000;
+
+export type WebhookLogEntry = {
+  ts: number;
+  appFid: number;
+  fid: number;
+  event: string;
+  payload: any;
+};
+
+export async function logWebhookEvent(
+  appFid: number,
+  fid: number,
+  eventType: string,
+  payload: any,
+) {
+  const entry: WebhookLogEntry = { ts: Date.now(), appFid, fid, event: eventType, payload };
+  await kv.lpush(EVENT_LOG_KEY, JSON.stringify(entry));
+  await kv.ltrim(EVENT_LOG_KEY, 0, EVENT_LOG_MAX - 1);
+}
+
+export async function getWebhookEventLog(limit = 100): Promise<WebhookLogEntry[]> {
+  const raw = await kv.lrange<string>(EVENT_LOG_KEY, 0, limit - 1);
+  return (raw ?? [])
+    .map((r) => {
+      try {
+        return typeof r === "string" ? JSON.parse(r) : r;
+      } catch {
+        return null;
+      }
+    })
+    .filter((e): e is WebhookLogEntry => e !== null);
+}
+
 export async function markAppAdded(fid: number, appFid: number) {
   await kv.sadd(addedSetKey(appFid), fid);
 }
