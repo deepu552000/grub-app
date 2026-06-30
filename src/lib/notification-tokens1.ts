@@ -28,27 +28,6 @@ function fidSetKey(appFid: number) {
   return `grub:notif-fids:${appFid}`;
 }
 
-// Separate set tracking who has the app ADDED, regardless of whether
-// notifications are currently on. miniapp_added fires even when the user
-// declines/has no notificationDetails, so this needs its own tracking —
-// it must NOT be inferred from the notif-token set.
-function addedSetKey(appFid: number) {
-  return `grub:added-fids:${appFid}`;
-}
-
-export async function markAppAdded(fid: number, appFid: number) {
-  await kv.sadd(addedSetKey(appFid), fid);
-}
-
-export async function unmarkAppAdded(fid: number, appFid: number) {
-  await kv.srem(addedSetKey(appFid), fid);
-}
-
-export async function getAllAddedFids(appFid: number): Promise<number[]> {
-  const fids = await kv.smembers(addedSetKey(appFid));
-  return (fids ?? []).map((f) => Number(f));
-}
-
 export async function saveNotificationDetails(
   fid: number,
   appFid: number,

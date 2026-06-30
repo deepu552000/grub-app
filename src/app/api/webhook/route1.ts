@@ -23,8 +23,6 @@ import {
 import {
   saveNotificationDetails,
   removeNotificationDetails,
-  markAppAdded,
-  unmarkAppAdded,
 } from "@/lib/notification-tokens";
 
 export async function POST(request: NextRequest) {
@@ -46,10 +44,6 @@ export async function POST(request: NextRequest) {
 
   switch (event.event) {
     case "miniapp_added": {
-      // Always record the add — this must happen whether or not
-      // notificationDetails came with it (user may have declined notifs
-      // while still adding the app).
-      await markAppAdded(fid, appFid);
       if (event.notificationDetails) {
         await saveNotificationDetails(fid, appFid, event.notificationDetails);
       }
@@ -57,7 +51,6 @@ export async function POST(request: NextRequest) {
     }
 
     case "miniapp_removed": {
-      await unmarkAppAdded(fid, appFid);
       await removeNotificationDetails(fid, appFid);
       break;
     }
