@@ -39,7 +39,6 @@ type PetState = {
   totalCheckIns: number; // lifetime check-in count, first 5 are free
   lastEventDay: string;  // date key of last applied daily event
   accessories: AccessoryState;
-  notifPromptDismissed: boolean; // true once user tapped Enable or X on the notif nudge banner
 };
 
 type FloatingNumber = {
@@ -323,7 +322,6 @@ const defaultState: PetState = {
   totalCheckIns: 0,
   lastEventDay: "",
   accessories: createEmptyAccessoryState(),
-  notifPromptDismissed: false,
 };
 
 function clamp(value: number) {
@@ -449,6 +447,10 @@ export default function ClientPage() {
     setHydrated(true);
   }
   const [fid, setFid] = useState<number | null>(null);
+  // Live "are notifications currently on" flag, sourced from sdk.context on
+  // every app open — not persisted, so it always reflects reality even if
+  // the user enables/disables notifications outside of our banner flow.
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [lastAction, setLastAction] = useState("You found a tiny white kitty.");
   const [carePulse, setCarePulse] = useState<ActionType | "">("");
   const [poked, setPoked] = useState(false);
@@ -489,6 +491,13 @@ export default function ClientPage() {
         // order to dismiss the splash screen correctly.
         sdk.actions.ready().catch(() => {});
         clearTimeout(fallbackTimer);
+
+        // Live signal from Farcaster client — non-null only when the user
+        // actually has notifications enabled for this mini app right now.
+        // This is re-checked on every app open, so if the user disables
+        // notifications later, this naturally becomes falsy again and the
+        // nudge banner comes back.
+        setNotificationsEnabled(!!ctx?.client?.notificationDetails);
 
         if (ctx?.user?.fid) {
           // FID known — DB load useEffect takes over, loading screen stays until DB responds
@@ -604,27 +613,35 @@ export default function ClientPage() {
   }
 
   // ── Notification Nudge Banner ─────────────────────────────────────────────
-  // Shows once a user has done at least 1 check-in (so they're somewhat
-  // invested) and haven't already dismissed/enabled it. Persisted to DB via
-  // notifPromptDismissed so it never shows again for this user once handled.
-  const showNotifBanner = state.totalCheckIns >= 1 && !state.notifPromptDismissed;
+  // Shows on every app open once a user has done at least 1 check-in, as
+  // long as notifications aren't currently enabled (per live sdk.context
+  // status) and the user hasn't dismissed it for THIS session. Nothing here
+  // is persisted across sessions — that's intentional. If the user disables
+  // notifications later, notificationsEnabled flips back to false next time
+  // they open the app and the banner returns on its own.
+  const [notifDismissedThisSession, setNotifDismissedThisSession] = useState(false);
+  const showNotifBanner =
+    state.totalCheckIns >= 1 && !notificationsEnabled && !notifDismissedThisSession;
   const [notifEnabling, setNotifEnabling] = useState(false);
 
   function dismissNotifBanner() {
-    setState((cur) => ({ ...cur, notifPromptDismissed: true }));
+    setNotifDismissedThisSession(true);
   }
 
   async function handleEnableNotifications() {
     setNotifEnabling(true);
     try {
       await sdk.actions.addMiniApp();
-      // Whether accepted or rejected, the SDK resolves/rejects — either way
-      // we only want to show this prompt once per user.
+      // Re-fetch context to get the real post-action notification status —
+      // addMiniApp() resolving doesn't guarantee notifications were granted
+      // (e.g. app was already added, or user dismissed the native prompt).
+      const ctx = await sdk.context;
+      setNotificationsEnabled(!!ctx?.client?.notificationDetails);
     } catch {
-      // user rejected, or app already added — nothing more to do
+      // user rejected, or action unsupported — leave notificationsEnabled
+      // as-is; the banner will simply keep showing, which is correct.
     } finally {
       setNotifEnabling(false);
-      dismissNotifBanner();
     }
   }
   // ─────────────────────────────────────────────────────────────────────────
