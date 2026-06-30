@@ -39,6 +39,7 @@ type PetState = {
   totalCheckIns: number; // lifetime check-in count, first 5 are free
   lastEventDay: string;  // date key of last applied daily event
   accessories: AccessoryState;
+  notifPromptDismissed: boolean; // true once user tapped Enable or X on the notif nudge banner
 };
 
 type FloatingNumber = {
@@ -322,6 +323,7 @@ const defaultState: PetState = {
   totalCheckIns: 0,
   lastEventDay: "",
   accessories: createEmptyAccessoryState(),
+  notifPromptDismissed: false,
 };
 
 function clamp(value: number) {
@@ -599,6 +601,31 @@ export default function ClientPage() {
     }));
     setFestivalBubbles(newBubbles);
     setTimeout(() => setFestivalBubbles([]), 2200);
+  }
+
+  // ── Notification Nudge Banner ─────────────────────────────────────────────
+  // Shows once a user has done at least 1 check-in (so they're somewhat
+  // invested) and haven't already dismissed/enabled it. Persisted to DB via
+  // notifPromptDismissed so it never shows again for this user once handled.
+  const showNotifBanner = state.totalCheckIns >= 1 && !state.notifPromptDismissed;
+  const [notifEnabling, setNotifEnabling] = useState(false);
+
+  function dismissNotifBanner() {
+    setState((cur) => ({ ...cur, notifPromptDismissed: true }));
+  }
+
+  async function handleEnableNotifications() {
+    setNotifEnabling(true);
+    try {
+      await sdk.actions.addMiniApp();
+      // Whether accepted or rejected, the SDK resolves/rejects — either way
+      // we only want to show this prompt once per user.
+    } catch {
+      // user rejected, or app already added — nothing more to do
+    } finally {
+      setNotifEnabling(false);
+      dismissNotifBanner();
+    }
   }
   // ─────────────────────────────────────────────────────────────────────────
   const [poolDegen, setPoolDegen] = useState<number | null>(null);
@@ -1277,6 +1304,64 @@ export default function ClientPage() {
                 ✕
               </button>
             </div>
+          </div>
+        )}
+
+        {/* ── NOTIFICATION NUDGE BANNER ── */}
+        {showNotifBanner && (
+          <div
+            style={{
+              margin: "8px 8px 0",
+              padding: "9px 12px",
+              background: "linear-gradient(135deg, rgba(255,200,120,0.28), rgba(255,150,90,0.20))",
+              border: "1.5px solid rgba(220,140,40,0.38)",
+              borderRadius: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
+            }}
+          >
+            <span style={{ fontSize: "1.3rem", lineHeight: 1, flexShrink: 0 }}>🔔</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#49332d", marginBottom: 1 }}>
+                Don't let Grub starve!
+              </div>
+              <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
+                Turn on notifications so she can reach you when she's hungry.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleEnableNotifications}
+              disabled={notifEnabling}
+              style={{
+                background: "#49332d",
+                color: "#fff8ef",
+                border: "none",
+                borderRadius: 8,
+                padding: "6px 10px",
+                fontSize: "0.72rem",
+                fontWeight: 700,
+                cursor: notifEnabling ? "default" : "pointer",
+                opacity: notifEnabling ? 0.7 : 1,
+                flexShrink: 0,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {notifEnabling ? "..." : "Enable"}
+            </button>
+            <button
+              type="button"
+              onClick={dismissNotifBanner}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 2px", lineHeight: 1,
+                flexShrink: 0,
+              }}
+            >
+              ✕
+            </button>
           </div>
         )}
 
