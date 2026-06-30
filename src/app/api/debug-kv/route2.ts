@@ -102,14 +102,7 @@ export async function GET(req: NextRequest) {
           };
         }
 
-        // streak (lifetime check-in count, never resets) and checkinStreak
-        // (consecutive run, resets to 1 only on a missed day — it's
-        // allowed to keep climbing past 7 indefinitely, e.g. 8, 14, 21...
-        // as long as the user never misses a day) are different counters
-        // by design and will legitimately diverge. The only truly
-        // impossible state is checkinStreak exceeding streak, since the
-        // consecutive run can never be longer than the lifetime total.
-        const streakBug = (state.checkinStreak ?? 0) > (state.streak ?? 0);
+        const streakBug = state.streak !== state.checkinStreak;
 
         const unlockedAccessories: string[] = Array.isArray(state.accessories?.unlocked)
           ? state.accessories.unlocked
