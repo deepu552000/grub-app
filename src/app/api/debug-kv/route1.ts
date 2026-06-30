@@ -6,9 +6,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { verifyToken } from "@clerk/nextjs/server";
-import { getAllFidsForApp } from "@/lib/notification-tokens";
-
-const APP_FID = 9152;
 
 export async function GET(req: NextRequest) {
   const token = req.headers.get("Authorization")?.replace("Bearer ", "");
@@ -26,10 +23,6 @@ export async function GET(req: NextRequest) {
 
     // ── Scan all grub pet keys ────────────────────────────────────────────
     const keys = await kv.keys("grub:pet:*");
-
-    // Fids that have a stored Farcaster notification token (i.e. they
-    // tapped "Add" on the mini-app, not just opened it once).
-    const notifFids = new Set(await getAllFidsForApp(APP_FID));
 
     const users = await Promise.all(
       keys.map(async (key) => {
@@ -77,7 +70,6 @@ export async function GET(req: NextRequest) {
           actionsToday: state.actionsToday ?? {},
           accessoriesUnlockedCount: unlockedAccessories.length,
           accessoriesUnlocked: unlockedAccessories,
-          hasNotifToken: notifFids.has(Number(fid)),
           referrals: {
             referredBy: referredByFid ? Number(referredByFid) : null,
             referredCount: referredUsers.length,
@@ -92,12 +84,10 @@ export async function GET(req: NextRequest) {
     const usersWithAccessories = users.filter(
       (u) => ((u as any).accessoriesUnlockedCount ?? 0) > 0
     );
-    const notifiableCount = users.filter((u) => (u as any).hasNotifToken).length;
 
     return NextResponse.json({
       ping,
       totalUsers: keys.length,
-      notifiableCount,
       buggedStreakCount: bugged.length,
       usersWithAccessoriesCount: usersWithAccessories.length,
       users,

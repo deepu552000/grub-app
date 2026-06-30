@@ -12,6 +12,7 @@ type DebugUser = {
   totalCheckIns: number;
   accessoriesUnlockedCount: number;
   accessoriesUnlocked: string[];
+  hasNotifToken?: boolean;
   lastVisit: string;
   referrals?: {
     referredBy: number | null;
@@ -113,6 +114,30 @@ function KpiCard({ label, value, sub, accent, dark = true }: { label: string; va
       <p style={{ fontSize: 28, fontWeight: 700, margin: 0, color: cream, lineHeight: 1 }}>{value}</p>
       {sub && <p style={{ fontSize: 12, color: textSub, margin: "6px 0 0" }}>{sub}</p>}
     </div>
+  );
+}
+
+function NotifPill({ on, dark = true }: { on?: boolean; dark?: boolean }) {
+  const onColor = C.green;
+  const offColor = dark ? "#6b7280" : "#9ca3af";
+  return (
+    <span style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 4,
+      fontSize: 10,
+      fontWeight: 700,
+      letterSpacing: "0.04em",
+      padding: "2px 7px",
+      borderRadius: 10,
+      flexShrink: 0,
+      color: on ? onColor : offColor,
+      background: on ? `${onColor}1a` : (dark ? "#ffffff0d" : "#0000000d"),
+      border: `1px solid ${on ? onColor + "55" : offColor + "55"}`,
+    }}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: on ? onColor : offColor, boxShadow: on ? `0 0 5px ${onColor}` : "none" }} />
+      {on ? "ON" : "OFF"}
+    </span>
   );
 }
 
@@ -668,6 +693,7 @@ function AdminDashboardInner() {
                             <span style={{ fontSize: 10, color: T.textSub, width: 64, textAlign: "right", flexShrink: 0 }}>{u.totalCheckIns || 0} ci</span>
                           </div>
                         </div>
+                        <NotifPill on={u.hasNotifToken} dark={dark} />
                       </div>
                       );
                     })}
@@ -706,6 +732,7 @@ function AdminDashboardInner() {
                             <span style={{ fontSize: 12, color: dark ? "#e5e7eb" : T.textSub }}>—</span>
                           )}
                           <span style={{ fontSize: 12, color: dark ? "#cbd5e1" : T.textMute, marginLeft: "auto" }}>0 xp · 0 ci</span>
+                          <NotifPill on={u.hasNotifToken} dark={dark} />
                         </div>
                       );
                     })}

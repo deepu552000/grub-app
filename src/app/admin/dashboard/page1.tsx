@@ -619,7 +619,7 @@ function AdminDashboardInner() {
               <p style={{ fontSize: 13, color: T.textMute }}>No players yet.</p>
             ) : (
               <>
-                <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.green, margin: "0 0 8px" }}>
+                <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.green, margin: "0 0 8px" }}>
                   Real Players · {realUsers.length}
                 </p>
                 {realUsers.length === 0 ? (
@@ -674,7 +674,7 @@ function AdminDashboardInner() {
                   </div>
                 )}
 
-                <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.textMute, margin: "0 0 8px" }}>
+                <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: dark ? "#cbd5e1" : T.textMute, margin: "0 0 8px" }}>
                   Unconverted Opens · {ghostUsers.length}
                 </p>
                 {ghostUsers.length === 0 ? (
@@ -684,20 +684,28 @@ function AdminDashboardInner() {
                     {ghostUsers.map((u) => {
                       const profile = profiles[String(u.fid)];
                       return (
-                        <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12, opacity: 0.6 }}>
+                        <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12, opacity: 0.85 }}>
                           <button
                             onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                            style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0 }}
+                            style={{ fontSize: 13, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, fontWeight: 600 }}
                             title="Open in user panel"
                           >
                             #{u.fid}
                           </button>
                           {profile?.username ? (
-                            <span style={{ fontSize: 10, color: T.textSub }}>@{profile.username}</span>
+                            <a
+                              href={`https://farcaster.xyz/${profile.username}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ fontSize: 12, color: dark ? "#e5e7eb" : T.textSub, textDecoration: "none" }}
+                              title={profile.displayName ?? profile.username}
+                            >
+                              @{profile.username}
+                            </a>
                           ) : (
-                            <span style={{ fontSize: 10, color: T.textMute }}>—</span>
+                            <span style={{ fontSize: 12, color: dark ? "#e5e7eb" : T.textSub }}>—</span>
                           )}
-                          <span style={{ fontSize: 10, color: T.textMute, marginLeft: "auto" }}>0 xp · 0 ci</span>
+                          <span style={{ fontSize: 12, color: dark ? "#cbd5e1" : T.textMute, marginLeft: "auto" }}>0 xp · 0 ci</span>
                         </div>
                       );
                     })}

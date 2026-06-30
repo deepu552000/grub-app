@@ -20,7 +20,6 @@ type UserEntry = {
   actionsToday: Record<string, unknown>;
   accessoriesUnlockedCount: number;
   accessoriesUnlocked: string[];
-  hasNotifToken?: boolean;
   referrals: {
     referredBy: number | null;
     referredCount: number;
@@ -33,7 +32,6 @@ type UserEntry = {
 type DebugData = {
   ping: string;
   totalUsers: number;
-  notifiableCount: number;
   buggedStreakCount: number;
   usersWithAccessoriesCount: number;
   users: UserEntry[];
@@ -82,7 +80,6 @@ export default function DebugKVPage() {
         {data && (
           <div style={styles.stats}>
             <Stat label="Total Users" value={data.totalUsers} />
-            <Stat label="Notifiable" value={data.notifiableCount} />
             <Stat label="Streak Bugs" value={data.buggedStreakCount} warn={data.buggedStreakCount > 0} />
             <Stat label="With Accessories" value={data.usersWithAccessoriesCount} />
             <Stat label="KV Ping" value={data.ping === "pong" ? "✅" : "❌"} />
@@ -105,7 +102,7 @@ export default function DebugKVPage() {
             <table style={styles.table}>
               <thead>
                 <tr>
-                  {["FID", "Streak", "CheckinStreak", "Bug?", "XP", "Bond", "Glimmer", "Hunger", "Happiness", "Total Check-ins", "Accessories", "Notif", "Referrals", "Last Visit"].map((h) => (
+                  {["FID", "Streak", "CheckinStreak", "Bug?", "XP", "Bond", "Glimmer", "Hunger", "Happiness", "Total Check-ins", "Accessories", "Referrals", "Last Visit"].map((h) => (
                     <th key={h} style={styles.th}>{h}</th>
                   ))}
                 </tr>
@@ -131,12 +128,6 @@ export default function DebugKVPage() {
                       <td style={styles.tdNum}>{u.happiness}</td>
                       <td style={styles.tdNum}>{u.totalCheckIns}</td>
                       <td style={styles.tdNum}>{u.accessoriesUnlockedCount}</td>
-                      <td style={{ ...styles.td, textAlign: "center" }}>
-                        <Tag
-                          label={u.hasNotifToken ? "ON" : "OFF"}
-                          color={u.hasNotifToken ? "#4ade80" : "#64748b"}
-                        />
-                      </td>
                       <td style={styles.tdNum}>{u.referrals?.referredCount ?? 0}</td>
                       <td style={{ ...styles.td, fontSize: 11, color: "#94a3b8" }}>
                         {u.lastVisit === "unknown" ? "—" : new Date(u.lastVisit).toLocaleDateString()}
@@ -144,7 +135,7 @@ export default function DebugKVPage() {
                     </tr>
                     {expanded === u.fid && (
                       <tr key={`${u.fid}-expand`}>
-                        <td colSpan={14} style={styles.expandCell}>
+                        <td colSpan={13} style={styles.expandCell}>
                           <div style={styles.expandGrid}>
                             <Section title="Actions Today">
                               <pre style={styles.pre}>{JSON.stringify(u.actionsToday, null, 2)}</pre>
