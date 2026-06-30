@@ -862,7 +862,7 @@ function AdminDashboardInner() {
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
             <span style={{ fontSize: 12, color: T.textMute }}>
-              Raw Farcaster/Base App events — last {webhookEvents.length} (capped at 500 in KV)
+              Raw Farcaster/Base App events — last {webhookEvents.length} (capped at 2000 in KV)
             </span>
           </div>
           <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
