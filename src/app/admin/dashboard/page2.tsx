@@ -653,6 +653,7 @@ function AdminDashboardInner() {
           <KpiCard label="DEGEN Paid Out" value={totalDegenPaid.toFixed(0)}   sub="referral rewards"          accent={C.purple} dark={dark} />
           <KpiCard label="Acc. Owners"    value={String(usersWithAcc)}        sub={`of ${users.length} players`}   accent={C.amber}  dark={dark} />
           <KpiCard label="Referrers"      value={String(referrers.length)}    sub="with ≥1 referred user"     accent={C.amberDim} dark={dark} />
+          <KpiCard label="Notifs Off"     value={String(addedButNotifOffCount)} sub="added app, no notif token" accent={C.red}    dark={dark} />
         </div>
 
         {/* ── Charts row ── */}
@@ -714,6 +715,7 @@ function AdminDashboardInner() {
                             <span style={{ fontSize: 10, color: T.textSub, width: 64, textAlign: "right", flexShrink: 0 }}>{u.totalCheckIns || 0} ci</span>
                           </div>
                         </div>
+                        <NotifPill on={u.hasNotifToken} dark={dark} />
                       </div>
                       );
                     })}
@@ -752,6 +754,7 @@ function AdminDashboardInner() {
                             <span style={{ fontSize: 12, color: dark ? "#e5e7eb" : T.textSub }}>—</span>
                           )}
                           <span style={{ fontSize: 12, color: dark ? "#cbd5e1" : T.textMute, marginLeft: "auto" }}>0 xp · 0 ci</span>
+                          <NotifPill on={u.hasNotifToken} dark={dark} />
                         </div>
                       );
                     })}
