@@ -26,29 +26,34 @@ export async function GET(req: NextRequest) {
 
     // ── Scan all grub pet keys ────────────────────────────────────────────
     const keys = await kv.keys("grub:pet:*");
+    const petFids = keys.map((key) => key.replace("grub:pet:", ""));
 
-    // Fids that have a stored Farcaster notification token (i.e. they
-    // tapped "Add" on the mini-app, not just opened it once).
+    // Fids that have a stored Farcaster notification token (i.e. notifs
+    // are currently ON for them).
     const notifFids = new Set(await getAllFidsForApp(APP_FID));
     // Fids that have added the mini app, regardless of notif status.
+    // Tracked independently of notifFids — see lib/notification-tokens.ts.
     const addedFids = new Set(await getAllAddedFids(APP_FID));
 
     // Raw webhook event log — last 100, newest first. Our paper trail
     // since we don't have Vercel log drains (Pro-only).
     const webhookEvents = await getWebhookEventLog(100);
 
+    // Union of every fid we know about from any source — pet state,
+    // notif tokens, or "added" events — so someone who added the app but
+    // never opened it (no grub:pet:* key) still shows up everywhere.
+    const allFids = new Set<string>([
+      ...petFids,
+      ...[...notifFids].map(String),
+      ...[...addedFids].map(String),
+    ]);
+
     const users = await Promise.all(
-      keys.map(async (key) => {
-        const state = await kv.get<any>(key);
-        const fid = key.replace("grub:pet:", "");
+      [...allFids].map(async (fid) => {
+        const state = await kv.get<any>(`grub:pet:${fid}`);
 
-        if (!state) return { fid, key, error: "empty state" };
-
-        const streakBug = state.streak !== state.checkinStreak;
-
-        const unlockedAccessories: string[] = Array.isArray(state.accessories?.unlocked)
-          ? state.accessories.unlocked
-          : [];
+        const hasNotifToken = notifFids.has(Number(fid));
+        const hasAddedApp = addedFids.has(Number(fid));
 
         const referredUsers: number[] = await kv.get<number[]>(`referrer:${fid}:referred`) ?? [];
         const referredByFid = await kv.get<string>(`ref:${fid}`) ?? null;
@@ -64,6 +69,44 @@ export async function GET(req: NextRequest) {
         const degenEarned =
           referralDetails.filter((r) => r.status === "paid").length * 2 +
           referralDetails.length * 1;
+
+        // No pet state at all — added/notif-token-only fid that never
+        // opened the mini-app. Still return a full record so it shows
+        // up in the dashboard, just with zeroed-out pet stats.
+        if (!state) {
+          return {
+            fid,
+            noPetState: true,
+            streak: 0,
+            checkinStreak: 0,
+            streakBug: false,
+            totalCheckIns: 0,
+            xp: 0,
+            bond: 0,
+            glimmer: 0,
+            hunger: 0,
+            happiness: 0,
+            lastCheckInDay: "never",
+            lastVisit: "unknown",
+            actionsToday: {},
+            accessoriesUnlockedCount: 0,
+            accessoriesUnlocked: [],
+            hasNotifToken,
+            hasAddedApp,
+            referrals: {
+              referredBy: referredByFid ? Number(referredByFid) : null,
+              referredCount: referredUsers.length,
+              referredUsers: referralDetails,
+              degenEarned,
+            },
+          };
+        }
+
+        const streakBug = state.streak !== state.checkinStreak;
+
+        const unlockedAccessories: string[] = Array.isArray(state.accessories?.unlocked)
+          ? state.accessories.unlocked
+          : [];
 
         return {
           fid,
@@ -83,8 +126,8 @@ export async function GET(req: NextRequest) {
           actionsToday: state.actionsToday ?? {},
           accessoriesUnlockedCount: unlockedAccessories.length,
           accessoriesUnlocked: unlockedAccessories,
-          hasNotifToken: notifFids.has(Number(fid)),
-          hasAddedApp: addedFids.has(Number(fid)),
+          hasNotifToken,
+          hasAddedApp,
           referrals: {
             referredBy: referredByFid ? Number(referredByFid) : null,
             referredCount: referredUsers.length,
@@ -107,7 +150,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       ping,
-      totalUsers: keys.length,
+      totalUsers: users.length,
+      petOnlyUserCount: petFids.length,
       webhookEvents,
       notifiableCount,
       addedCount,

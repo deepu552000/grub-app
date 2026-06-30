@@ -14,6 +14,7 @@ type DebugUser = {
   accessoriesUnlocked: string[];
   hasNotifToken?: boolean;
   hasAddedApp?: boolean;
+  noPetState?: boolean;
   lastVisit: string;
   lastCheckInDay?: string;
   referrals?: {
@@ -486,9 +487,14 @@ function AdminDashboardInner() {
   const maxCheckins = Math.max(1, ...users.map((u) => u.totalCheckIns || 0));
   const realUsers = users.filter((u) => (u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0);
   const ghostUsers = users.filter((u) => !((u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0));
-  const addedButNotifOff = users
-    .filter((u) => u.hasAddedApp && !u.hasNotifToken)
-    .sort((a, b) => (b.totalCheckIns || 0) - (a.totalCheckIns || 0));
+  const notifStatusUsers = [...users].sort((a, b) => {
+    // Flag cases first (added but no token), then by check-ins desc
+    const aFlag = a.hasAddedApp && !a.hasNotifToken ? 1 : 0;
+    const bFlag = b.hasAddedApp && !b.hasNotifToken ? 1 : 0;
+    if (aFlag !== bFlag) return bFlag - aFlag;
+    return (b.totalCheckIns || 0) - (a.totalCheckIns || 0);
+  });
+  const addedButNotifOffCount = users.filter((u) => u.hasAddedApp && !u.hasNotifToken).length;
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -647,7 +653,7 @@ function AdminDashboardInner() {
           <KpiCard label="DEGEN Paid Out" value={totalDegenPaid.toFixed(0)}   sub="referral rewards"          accent={C.purple} dark={dark} />
           <KpiCard label="Acc. Owners"    value={String(usersWithAcc)}        sub={`of ${users.length} players`}   accent={C.amber}  dark={dark} />
           <KpiCard label="Referrers"      value={String(referrers.length)}    sub="with ≥1 referred user"     accent={C.amberDim} dark={dark} />
-          <KpiCard label="Notifs Off"     value={String(addedButNotifOff.length)} sub="added app, no notif token" accent={C.red}    dark={dark} />
+          <KpiCard label="Notifs Off"     value={String(addedButNotifOffCount)} sub="added app, no notif token" accent={C.red}    dark={dark} />
         </div>
 
         {/* ── Charts row ── */}
@@ -919,21 +925,21 @@ function AdminDashboardInner() {
           </div>
         </div>
 
-        {/* ── Added App but Notifications Off ── */}
-        <SectionLabel dark={dark} accent={C.red}>Added App, Notifications Off</SectionLabel>
+        {/* ── All Users — Notification Status ── */}
+        <SectionLabel dark={dark} accent={C.red}>All Users — App & Notification Status</SectionLabel>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
             <span style={{ fontSize: 12, color: T.textMute }}>
-              Users who added the mini-app but have no stored notification token — {addedButNotifOff.length} of {users.filter((u) => u.hasAddedApp).length} added
+              Every known fid (pet state, notif token, or added event) — {notifStatusUsers.length} total · {addedButNotifOffCount} added with notifs off
             </span>
           </div>
-          <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
+          <div style={{ overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
-                  {["FID", "Added", "Notif", "Last Check-in", "Last Seen"].map((h, i) => (
+                  {["FID", "Check-ins", "Last Check-in", "Last Seen", "Notif", "Added"].map((h, i) => (
                     <th key={h} style={{
-                      textAlign: i >= 3 ? "right" : "left",
+                      textAlign: i >= 1 && i <= 3 ? "right" : "left",
                       padding: "9px 14px",
                       color: T.creamMute,
                       fontWeight: 700,
@@ -947,14 +953,18 @@ function AdminDashboardInner() {
                 </tr>
               </thead>
               <tbody>
-                {addedButNotifOff.length === 0 ? (
+                {notifStatusUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>None — everyone who added the app has notifications on.</td>
+                    <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No users found.</td>
                   </tr>
-                ) : addedButNotifOff.map((u, i) => {
+                ) : notifStatusUsers.map((u, i) => {
                   const profile = profiles[String(u.fid)];
+                  const flagged = u.hasAddedApp && !u.hasNotifToken;
                   return (
-                    <tr key={u.fid} style={{ borderBottom: `1px solid ${T.borderSub}`, background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55" }}>
+                    <tr key={u.fid} style={{
+                      borderBottom: `1px solid ${T.borderSub}`,
+                      background: flagged ? (dark ? C.redDim + "55" : "#fee2e215") : (i % 2 === 0 ? "transparent" : T.surfaceAlt + "55"),
+                    }}>
                       <td style={{ padding: "9px 14px" }}>
                         <button
                           onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
@@ -966,11 +976,15 @@ function AdminDashboardInner() {
                         {profile?.username && (
                           <span style={{ fontSize: 10, color: T.textMute, marginLeft: 6 }}>@{profile.username}</span>
                         )}
+                        {u.noPetState && (
+                          <span style={{ fontSize: 9, color: T.textMute, marginLeft: 6, fontStyle: "italic" }}>never opened</span>
+                        )}
                       </td>
-                      <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasAddedApp} dark={dark} /></td>
-                      <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasNotifToken} dark={dark} /></td>
+                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.textSub, fontVariantNumeric: "tabular-nums" }}>{u.totalCheckIns ?? 0}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right", color: T.textSub }}>{u.lastCheckInDay ?? "never"}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right", color: T.creamMute }}>{u.lastVisit && u.lastVisit !== "unknown" ? timeAgo(new Date(u.lastVisit).getTime()) : "unknown"}</td>
+                      <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasNotifToken} dark={dark} /></td>
+                      <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasAddedApp} dark={dark} /></td>
                     </tr>
                   );
                 })}

@@ -6,6 +6,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { verifyToken } from "@clerk/nextjs/server";
+import { getAllFidsForApp, getAllAddedFids, getWebhookEventLog } from "@/lib/notification-tokens";
+
+const APP_FID = 9152;
 
 export async function GET(req: NextRequest) {
   const token = req.headers.get("Authorization")?.replace("Bearer ", "");
@@ -23,6 +26,16 @@ export async function GET(req: NextRequest) {
 
     // ── Scan all grub pet keys ────────────────────────────────────────────
     const keys = await kv.keys("grub:pet:*");
+
+    // Fids that have a stored Farcaster notification token (i.e. they
+    // tapped "Add" on the mini-app, not just opened it once).
+    const notifFids = new Set(await getAllFidsForApp(APP_FID));
+    // Fids that have added the mini app, regardless of notif status.
+    const addedFids = new Set(await getAllAddedFids(APP_FID));
+
+    // Raw webhook event log — last 10, newest first. Our paper trail
+    // since we don't have Vercel log drains (Pro-only).
+    const webhookEvents = await getWebhookEventLog(10);
 
     const users = await Promise.all(
       keys.map(async (key) => {
@@ -70,6 +83,8 @@ export async function GET(req: NextRequest) {
           actionsToday: state.actionsToday ?? {},
           accessoriesUnlockedCount: unlockedAccessories.length,
           accessoriesUnlocked: unlockedAccessories,
+          hasNotifToken: notifFids.has(Number(fid)),
+          hasAddedApp: addedFids.has(Number(fid)),
           referrals: {
             referredBy: referredByFid ? Number(referredByFid) : null,
             referredCount: referredUsers.length,
@@ -84,10 +99,20 @@ export async function GET(req: NextRequest) {
     const usersWithAccessories = users.filter(
       (u) => ((u as any).accessoriesUnlockedCount ?? 0) > 0
     );
+    const notifiableCount = users.filter((u) => (u as any).hasNotifToken).length;
+    const addedCount = users.filter((u) => (u as any).hasAddedApp).length;
+    const addedButNotifOff = users.filter(
+      (u) => (u as any).hasAddedApp && !(u as any).hasNotifToken
+    );
 
     return NextResponse.json({
       ping,
       totalUsers: keys.length,
+      webhookEvents,
+      notifiableCount,
+      addedCount,
+      addedButNotifOffCount: addedButNotifOff.length,
+      addedButNotifOff: addedButNotifOff.map((u) => (u as any).fid),
       buggedStreakCount: bugged.length,
       usersWithAccessoriesCount: usersWithAccessories.length,
       users,
