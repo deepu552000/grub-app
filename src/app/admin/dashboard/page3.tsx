@@ -1,10 +1,10 @@
 // app/admin/dashboard/page.tsx
-// Open at: /admin/dashboard?secret=YOUR_SECRET
+// Protected by Clerk — only signed-in users can reach this page
 
 "use client";
 
 import { useEffect, useState, useCallback, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useAuth, useClerk } from "@clerk/nextjs";
 
 type DebugUser = {
   fid: string;
@@ -253,8 +253,8 @@ function Panel({ children }: { children: React.ReactNode }) {
 // ── Main dashboard ────────────────────────────────────────────────────────────
 
 function AdminDashboardInner() {
-  const searchParams = useSearchParams();
-  const secret = searchParams.get("secret") ?? "";
+  const { getToken } = useAuth();
+  const { signOut } = useClerk();
 
   const [users, setUsers] = useState<DebugUser[]>([]);
   const [txns, setTxns] = useState<TxnEntry[]>([]);
@@ -301,18 +301,24 @@ function AdminDashboardInner() {
   const [accessoryToUnlock, setAccessoryToUnlock] = useState("");
   const [newReferrerFid, setNewReferrerFid] = useState("");
 
-  const authedGet = useCallback((path: string) => {
-    const sep = path.includes("?") ? "&" : "?";
-    return fetch(`${path}${sep}secret=${encodeURIComponent(secret)}`).then((r) => r.json());
-  }, [secret]);
+  const authedGet = useCallback(async (path: string) => {
+    const token = await getToken();
+    return fetch(path, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((r) => r.json());
+  }, [getToken]);
 
-  const authedPost = useCallback((path: string, body: Record<string, any>) => {
+  const authedPost = useCallback(async (path: string, body: Record<string, any>) => {
+    const token = await getToken();
     return fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...body, secret }),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
     }).then((r) => r.json());
-  }, [secret]);
+  }, [getToken]);
 
   const loadUserControl = useCallback(async (fid: string) => {
     if (!fid) return;
@@ -377,7 +383,7 @@ function AdminDashboardInner() {
         authedGet("/api/txn-log?all=1"),
       ]);
       if (debugRes.error === "Unauthorized" || txnRes.error === "Unauthorized") {
-        setError("Wrong secret — check your ?secret= in the URL.");
+        setError("Unauthorized — you may not have access to this dashboard.");
         setUsers([]); setTxns([]); return;
       }
       setUsers(debugRes.users ?? []);
@@ -391,13 +397,8 @@ function AdminDashboardInner() {
   }, [authedGet]);
 
   useEffect(() => {
-    if (!secret) {
-      setError("No secret provided. Open as /admin/dashboard?secret=YOUR_SECRET");
-      setLoading(false);
-      return;
-    }
     load();
-  }, [load, secret]);
+  }, [load]);
 
   // Derived stats
   const usdcTxns = txns.filter((t) => t.amountUsd > 0);
@@ -520,6 +521,23 @@ function AdminDashboardInner() {
             }}
           >
             {loading ? "Syncing…" : "↻ Refresh"}
+          </button>
+          <button
+            onClick={() => signOut({ redirectUrl: "/admin" })}
+            style={{
+              background: C.redDim,
+              border: `1px solid ${C.red}55`,
+              borderRadius: 8,
+              color: C.red,
+              padding: "7px 16px",
+              fontSize: 12,
+              fontWeight: 700,
+              fontFamily: "inherit",
+              cursor: "pointer",
+              letterSpacing: "0.03em",
+            }}
+          >
+            Sign Out
           </button>
         </div>
       </div>
