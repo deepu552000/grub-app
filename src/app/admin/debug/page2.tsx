@@ -46,25 +46,6 @@ export default function DebugKVPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [backfillResult, setBackfillResult] = useState<any>(null);
-  const [backfilling, setBackfilling] = useState(false);
-
-  async function runBackfill() {
-    setBackfilling(true);
-    setBackfillResult(null);
-    try {
-      const token = await getToken();
-      const res = await fetch("/api/debug-backfill-added", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const body = await res.json();
-      setBackfillResult(body);
-    } catch (e: any) {
-      setBackfillResult({ success: false, error: e.message });
-    } finally {
-      setBackfilling(false);
-    }
-  }
 
   useEffect(() => {
     (async () => {
@@ -106,21 +87,6 @@ export default function DebugKVPage() {
             <Stat label="With Accessories" value={data.usersWithAccessoriesCount} />
             <Stat label="KV Ping" value={data.ping === "pong" ? "✅" : "❌"} />
           </div>
-        )}
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <button
-          onClick={runBackfill}
-          disabled={backfilling}
-          style={styles.backfillBtn}
-        >
-          {backfilling ? "Backfilling…" : "Run added/notif backfill"}
-        </button>
-        {backfillResult && (
-          <pre style={{ ...styles.pre, marginTop: 8 }}>
-            {JSON.stringify(backfillResult, null, 2)}
-          </pre>
         )}
       </div>
 
@@ -266,5 +232,4 @@ const styles: Record<string, React.CSSProperties> = {
   dim: { color: "#64748b", fontSize: 12, margin: "2px 0", display: "block" },
   tag: { display: "inline-block", fontSize: 11, padding: "2px 8px", borderRadius: 99, border: "1px solid", marginRight: 4, marginBottom: 4 },
   refRow: { display: "flex", gap: 10, alignItems: "center", fontSize: 12, marginBottom: 4 },
-  backfillBtn: { background: "#7c3aed22", color: "#a78bfa", border: "1px solid #7c3aed44", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" },
 };

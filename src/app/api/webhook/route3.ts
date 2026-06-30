@@ -70,11 +70,6 @@ export async function POST(request: NextRequest) {
     }
 
     case "notifications_enabled": {
-      // A user can't have notifications enabled without having added the
-      // app — if markAppAdded was ever missed (e.g. a miniapp_added event
-      // arrived without notificationDetails, or the add predates this
-      // tracking), this backfills it so the two sets never desync.
-      await markAppAdded(fid, appFid);
       await saveNotificationDetails(fid, appFid, event.notificationDetails);
       break;
     }
