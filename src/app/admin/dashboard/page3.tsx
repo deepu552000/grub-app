@@ -213,7 +213,7 @@ function Input({ value, onChange, placeholder, onKeyDown, style }: {
 function NumberInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <div>
-      <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamDim, display: "block", marginBottom: 5 }}>{label}</label>
+      <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamMute, display: "block", marginBottom: 5 }}>{label}</label>
       <input
         type="number"
         value={value}
@@ -1375,8 +1375,8 @@ function AdminDashboardInner() {
                     <span key={r.fid} style={{
                       fontSize: 11, padding: "3px 9px", borderRadius: 5,
                       background: r.status === "paid" ? C.greenDim : T.surfaceAlt,
-                      color: r.status === "paid" ? C.green : T.cream,
-                      border: `1px solid ${r.status === "paid" ? C.green + "66" : C.creamDim + "77"}`,
+                      color: r.status === "paid" ? C.green : T.textSub,
+                      border: `1px solid ${r.status === "paid" ? C.green + "66" : T.border}`,
                       whiteSpace: "nowrap",
                     }}>
                       #{r.fid} · {r.checkins} {r.checkins === 1 ? "Check In" : "Check Ins"}
@@ -1432,7 +1432,7 @@ function AdminDashboardInner() {
                   {controlState.state.banned ? "BANNED" : "Active"}
                 </span>
                 {controlState.referral?.referredByFid && (
-                  <span style={{ fontSize: 11, fontWeight: 600, color: dark ? C.amberGlow2 : "#92400e" }}>sponsored by FID {controlState.referral.referredByFid}</span>
+                  <span style={{ fontSize: 11, color: T.textMute }}>sponsored by FID {controlState.referral.referredByFid}</span>
                 )}
                 <div style={{ marginLeft: "auto", display: "flex", gap: 16 }}>
                   {[
@@ -1469,9 +1469,9 @@ function AdminDashboardInner() {
                           onClick={() => { setLookupFid(String(r.fid)); loadUserControl(String(r.fid)); }}
                           style={{
                             fontSize: 11, padding: "3px 9px", borderRadius: 5, cursor: "pointer", fontFamily: "inherit",
-                            background: r.status === "paid" ? C.greenDim : T.surfaceAlt,
-                            color: r.status === "paid" ? C.green : T.cream,
-                            border: `1px solid ${r.status === "paid" ? C.green + "66" : C.creamDim + "77"}`,
+                            background: r.status === "paid" ? C.greenDim : T.surface,
+                            color: r.status === "paid" ? C.green : T.textSub,
+                            border: `1px solid ${r.status === "paid" ? C.green + "66" : T.border}`,
                             whiteSpace: "nowrap",
                           }}
                           title="Open in user panel"
@@ -1546,7 +1546,7 @@ function AdminDashboardInner() {
                   {/* Current accessories */}
                   <div style={{ minHeight: 48, marginBottom: 14 }}>
                     {controlState.state.accessoriesUnlocked.length === 0 ? (
-                      <p style={{ fontSize: 12, color: T.textSub }}>None unlocked yet.</p>
+                      <p style={{ fontSize: 12, color: T.textMute }}>None unlocked yet.</p>
                     ) : (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                         {controlState.state.accessoriesUnlocked.map((id: string) => (
