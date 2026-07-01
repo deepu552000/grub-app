@@ -292,50 +292,6 @@ function Btn({ onClick, disabled, variant = "default", children }: {
   );
 }
 
-function FilterToggle({ label, value, onChange, dark = true }: {
-  label: string; value: "all" | "on" | "off"; onChange: (v: "all" | "on" | "off") => void; dark?: boolean;
-}) {
-  const T = dark
-    ? { surface: C.surfaceAlt, border: C.border, textMute: C.creamMute, text: C.cream }
-    : { surface: "#f3f3f0", border: "#e5e5e2", textMute: "#8a8a85", text: "#1a1a18" };
-  const opts: { key: "all" | "on" | "off"; label: string; onColor: string }[] = [
-    { key: "all", label: "All", onColor: T.text },
-    { key: "on", label: "On", onColor: C.green },
-    { key: "off", label: "Off", onColor: C.red },
-  ];
-  return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.textMute }}>{label}</span>
-      <div style={{ display: "inline-flex", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: 2, gap: 2 }}>
-        {opts.map((o) => {
-          const active = value === o.key;
-          return (
-            <button
-              key={o.key}
-              onClick={() => onChange(o.key)}
-              style={{
-                border: "none",
-                borderRadius: 6,
-                padding: "4px 10px",
-                fontSize: 11,
-                fontWeight: 700,
-                fontFamily: "inherit",
-                cursor: "pointer",
-                background: active ? o.onColor + "22" : "transparent",
-                color: active ? o.onColor : T.textMute,
-                boxShadow: active ? `inset 0 0 0 1px ${o.onColor}66` : "none",
-                transition: "all 0.12s",
-              }}
-            >
-              {o.label}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function Panel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: "1.25rem", boxShadow: `inset 0 1px 0 ${C.amberGlow}0a` }}>
@@ -361,7 +317,6 @@ function AdminDashboardInner() {
   const [failedPayouts, setFailedPayouts] = useState<FailedPayout[]>([]);
   const [poolDegen, setPoolDegen] = useState<number | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
-  const [dismissDrafts, setDismissDrafts] = useState<Record<string, string>>({});
   const [playerSearchQuery, setPlayerSearchQuery] = useState("");
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
 
@@ -395,8 +350,6 @@ function AdminDashboardInner() {
 
   const [lookupFid, setLookupFid] = useState("");
   const [userSearch, setUserSearch] = useState("");
-  const [notifFilter, setNotifFilter] = useState<"all" | "on" | "off">("all");
-  const [addedFilter, setAddedFilter] = useState<"all" | "on" | "off">("all");
   const [controlState, setControlState] = useState<any>(null);
   const [controlError, setControlError] = useState<string | null>(null);
   const [controlLoading, setControlLoading] = useState(false);
@@ -473,19 +426,13 @@ function AdminDashboardInner() {
     }
   }, [lookupFid, loadUserControl, authedPost, addToast]);
 
-  const resolveFailedPayout = useCallback(async (id: string, action: "retry" | "dismiss", confirmed = false, txHash?: string) => {
+  const resolveFailedPayout = useCallback(async (id: string, action: "retry" | "dismiss", confirmed = false) => {
     setRetryingId(id);
     try {
-      const res = await authedPost("/api/admin/failed-payouts", { id, action, confirmed, txHash });
+      const res = await authedPost("/api/admin/failed-payouts", { id, action, confirmed });
       if (res.ok) {
         setFailedPayouts((prev) => prev.filter((p) => p.id !== id));
-        setDismissDrafts((prev) => { const next = { ...prev }; delete next[id]; return next; });
-        addToast(
-          action === "retry"
-            ? `✓ Payout sent (${res.txHash?.slice(0, 10)}…)`
-            : res.backfilled ? "✓ Dismissed — txn log backfilled" : "✓ Dismissed",
-          "success"
-        );
+        addToast(action === "retry" ? `✓ Payout sent (${res.txHash?.slice(0, 10)}…)` : "✓ Dismissed", "success");
       } else if (res.requiresConfirmation) {
         addToast(`⚠️ This may already be sent — check Basescan for tx ${res.broadcastTxHash?.slice(0, 10)}…, then click Retry again to confirm`, "error");
         setFailedPayouts((prev) =>
@@ -638,21 +585,6 @@ function AdminDashboardInner() {
     return (b.totalCheckIns || 0) - (a.totalCheckIns || 0);
   });
   const addedButNotifOffCount = users.filter((u) => u.hasAddedApp && !u.hasNotifToken).length;
-
-  const notifStatusQuery = userSearch.trim().toLowerCase();
-  let notifStatusFiltered = notifStatusQuery
-    ? notifStatusUsers.filter((u) => {
-        const uname = profiles[String(u.fid)]?.username?.toLowerCase() ?? "";
-        return String(u.fid).includes(notifStatusQuery) || uname.includes(notifStatusQuery.replace(/^@/, ""));
-      })
-    : notifStatusUsers.filter((u) => globalMatchesFid(u.fid));
-  if (notifFilter !== "all") {
-    notifStatusFiltered = notifStatusFiltered.filter((u) => (notifFilter === "on" ? !!u.hasNotifToken : !u.hasNotifToken));
-  }
-  if (addedFilter !== "all") {
-    notifStatusFiltered = notifStatusFiltered.filter((u) => (addedFilter === "on" ? !!u.hasAddedApp : !u.hasAddedApp));
-  }
-  const notifStatusFilterActive = notifFilter !== "all" || addedFilter !== "all" || !!userSearch.trim() || !!globalSearchQuery;
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -883,27 +815,7 @@ function AdminDashboardInner() {
                       {retryingId === p.id ? "Retrying…" : p.broadcastTxHash ? "⚠️ Confirm Retry" : "↻ Retry"}
                     </Btn>
                     <Btn onClick={() => resolveFailedPayout(p.id, "dismiss")} disabled={retryingId === p.id} variant="red">
-                      Dismiss (no txn)
-                    </Btn>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 2 }}>
-                    <input
-                      type="text"
-                      placeholder="Verified tx hash from Basescan (optional)"
-                      value={dismissDrafts[p.id] ?? ""}
-                      onChange={(e) => setDismissDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                      style={{
-                        flex: 1, minWidth: 220, fontSize: 11, fontFamily: "monospace",
-                        padding: "4px 8px", borderRadius: 6,
-                        border: `1px solid ${T.border}`, background: T.surface, color: T.cream,
-                      }}
-                    />
-                    <Btn
-                      onClick={() => resolveFailedPayout(p.id, "dismiss", false, dismissDrafts[p.id]?.trim())}
-                      disabled={retryingId === p.id || !dismissDrafts[p.id]?.trim()}
-                      variant="amber"
-                    >
-                      Dismiss + Log Txn
+                      Dismiss
                     </Btn>
                   </div>
                   {p.broadcastTxHash && (
@@ -1249,22 +1161,14 @@ function AdminDashboardInner() {
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}`, gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 12, color: T.textMute }}>
-              Every known fid (pet state, notif token, or added event) —{" "}
-              {notifStatusFilterActive
-                ? `${notifStatusFiltered.length}/${notifStatusUsers.length}`
-                : notifStatusUsers.length}{" "}
-              total · {addedButNotifOffCount} added with notifs off
+              Every known fid (pet state, notif token, or added event) — {notifStatusUsers.length} total · {addedButNotifOffCount} added with notifs off
             </span>
-            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-              <FilterToggle label="Notif" value={notifFilter} onChange={setNotifFilter} dark={dark} />
-              <FilterToggle label="Added" value={addedFilter} onChange={setAddedFilter} dark={dark} />
-              <Input
-                value={userSearch}
-                onChange={setUserSearch}
-                placeholder="Search fid or @username…"
-                style={{ width: 220, fontSize: 12, padding: "6px 10px" }}
-              />
-            </div>
+            <Input
+              value={userSearch}
+              onChange={setUserSearch}
+              placeholder="Search fid or @username…"
+              style={{ width: 220, fontSize: 12, padding: "6px 10px" }}
+            />
           </div>
           <div style={{ overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -1287,13 +1191,18 @@ function AdminDashboardInner() {
               </thead>
               <tbody>
                 {(() => {
-                  const filtered = notifStatusFiltered;
-                  const noneReason = notifStatusQuery
+                  const q = userSearch.trim().toLowerCase();
+                  const filtered = q
+                    ? notifStatusUsers.filter((u) => {
+                        // Local box has text — it takes precedence, global is ignored
+                        const uname = profiles[String(u.fid)]?.username?.toLowerCase() ?? "";
+                        return String(u.fid).includes(q) || uname.includes(q.replace(/^@/, ""));
+                      })
+                    : notifStatusUsers.filter((u) => globalMatchesFid(u.fid)); // local empty — fall back to global
+                  const noneReason = q
                     ? `No users matching "${userSearch}".`
                     : globalSearchQuery
                     ? `No users matching global "${globalSearchQuery}".`
-                    : notifFilter !== "all" || addedFilter !== "all"
-                    ? "No users match this filter."
                     : "No users found.";
                   return filtered.length === 0 ? (
                     <tr>

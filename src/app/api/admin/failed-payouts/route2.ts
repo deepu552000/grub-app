@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { id, action, confirmed, txHash } = await req.json();
+    const { id, action, confirmed } = await req.json();
     if (!id || !action) {
       return NextResponse.json({ ok: false, reason: "missing id or action" }, { status: 400 });
     }
@@ -90,29 +90,9 @@ export async function POST(req: NextRequest) {
     const record = list[idx];
 
     if (action === "dismiss") {
-      // If the admin has verified (on Basescan, or via manual payment) that
-      // this DEGEN actually moved, they can pass the real txHash here so the
-      // dismiss backfills the txn log instead of silently losing the record.
-      // Without this, a payout that was ACTUALLY successful but got marked
-      // "failed" (e.g. broadcast-but-unconfirmed, or a pre-fix legacy record
-      // with no broadcastTxHash) just vanishes from history on dismiss.
-      if (txHash) {
-        await logDegenTxn({
-          fid: record.fid,
-          toFid: record.toFid,
-          type: record.type,
-          txHash,
-          amountDegen: record.amountDegen,
-          toWallet: record.toWallet,
-        });
-        if (record.sideEffect) {
-          await kv.set(record.sideEffect.kvKey, record.sideEffect.kvValue);
-        }
-      }
-
       list.splice(idx, 1);
       await kv.set(FAILED_PAYOUTS_KEY, list);
-      return NextResponse.json({ ok: true, dismissed: record.id, backfilled: !!txHash });
+      return NextResponse.json({ ok: true, dismissed: record.id });
     }
 
     if (action === "retry") {
