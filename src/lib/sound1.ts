@@ -5,11 +5,10 @@
  *
  * - Sound effects (tap/feed/play/groom/nap/etc.) are still generated live
  *   with the Web Audio API — no files needed for those.
- * - Background music now plays real audio files (four lullaby tracks —
- *   two "Moonmilk Lullaby" and two "Lullaby" tracks), and the user can pick
- *   which one plays from a small track picker in the UI. A procedural
- *   "Chiptune" option is kept as a fallback in case the mp3 files aren't
- *   deployed yet.
+ * - Background music now plays real audio files (the two "Moonmilk Lullaby"
+ *   tracks), and the user can pick which one plays from a small track
+ *   picker in the UI. A procedural "Chiptune" option is kept as a fallback
+ *   in case the mp3 files aren't deployed yet.
  *
  * Usage inside a component:
  *
@@ -44,12 +43,10 @@ export type MusicTrack = {
   src: string | null;
 };
 
-// Drop the four mp3s at these paths under /public in your project.
+// Drop the two mp3s at these paths under /public in your project.
 export const MUSIC_TRACKS: MusicTrack[] = [
   { id: "moonmilk-1", name: "Moonmilk Lullaby I", src: "/sounds/moonmilk-lullaby-1.mp3" },
   { id: "moonmilk-2", name: "Moonmilk Lullaby II", src: "/sounds/moonmilk-lullaby-2.mp3" },
-  { id: "lullaby-1", name: "Lullaby I", src: "/sounds/lullaby-1.mp3" },
-  { id: "lullaby-2", name: "Lullaby II", src: "/sounds/lullaby-2.mp3" },
 ];
 
 const VOLUME_KEY = "grub-sound-volume";
