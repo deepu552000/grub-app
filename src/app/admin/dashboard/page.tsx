@@ -552,13 +552,17 @@ function AdminDashboardInner() {
   // Player Progress panel search — must satisfy its own box AND the global box
   const playerMatchesSearch = useCallback((u: DebugUser) => {
     const q = playerSearchQuery.trim().toLowerCase();
-    const profile = profiles[String(u.fid)];
-    const localOk = !q || (
-      String(u.fid).toLowerCase().includes(q) ||
-      (profile?.username ?? "").toLowerCase().includes(q) ||
-      (profile?.displayName ?? "").toLowerCase().includes(q)
-    );
-    return localOk && globalMatchesFid(u.fid);
+    if (q) {
+      // Local box has text — it takes precedence, global is ignored for this panel
+      const profile = profiles[String(u.fid)];
+      return (
+        String(u.fid).toLowerCase().includes(q) ||
+        (profile?.username ?? "").toLowerCase().includes(q) ||
+        (profile?.displayName ?? "").toLowerCase().includes(q)
+      );
+    }
+    // Local box empty — fall back to global search
+    return globalMatchesFid(u.fid);
   }, [playerSearchQuery, profiles, globalMatchesFid]);
 
   const filteredRealUsers = realUsers.filter(playerMatchesSearch);
@@ -1161,16 +1165,14 @@ function AdminDashboardInner() {
               <tbody>
                 {(() => {
                   const q = userSearch.trim().toLowerCase();
-                  const localFiltered = q
+                  const filtered = q
                     ? notifStatusUsers.filter((u) => {
+                        // Local box has text — it takes precedence, global is ignored
                         const uname = profiles[String(u.fid)]?.username?.toLowerCase() ?? "";
                         return String(u.fid).includes(q) || uname.includes(q.replace(/^@/, ""));
                       })
-                    : notifStatusUsers;
-                  const filtered = localFiltered.filter((u) => globalMatchesFid(u.fid));
-                  const noneReason = q && globalSearchQuery
-                    ? `No users matching "${userSearch}" + global "${globalSearchQuery}".`
-                    : q
+                    : notifStatusUsers.filter((u) => globalMatchesFid(u.fid)); // local empty — fall back to global
+                  const noneReason = q
                     ? `No users matching "${userSearch}".`
                     : globalSearchQuery
                     ? `No users matching global "${globalSearchQuery}".`
