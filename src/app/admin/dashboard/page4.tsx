@@ -1491,7 +1491,7 @@ function AdminDashboardInner() {
 
                   {/* Adjust stats */}
                   <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px" }}>
-                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamDim, margin: "0 0 12px" }}>Adjust Stats</p>
+                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 12px" }}>Adjust Stats</p>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginBottom: 12 }}>
                       {(["xp", "bond", "glimmer", "hunger", "happiness"] as const).map((f) => (
                         <NumberInput key={f} label={f} value={statDrafts[f]} onChange={(v) => setStatDrafts((d) => ({ ...d, [f]: v }))} />
@@ -1508,8 +1508,8 @@ function AdminDashboardInner() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {/* Set referrer */}
                     <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px", border: `1px solid ${T.border}` }}>
-                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: dark ? C.amberGlow2 : "#7c3aed", margin: "0 0 4px" }}>Set Sponsor</p>
-                      <p style={{ fontSize: 11, color: T.textSub, margin: "0 0 10px" }}>Replaces their current sponsor — no need to remove first.</p>
+                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: dark ? C.amberGlow : "#7c3aed", margin: "0 0 4px" }}>Set Sponsor</p>
+                      <p style={{ fontSize: 11, color: T.textMute, margin: "0 0 10px" }}>Replaces their current sponsor — no need to remove first.</p>
                       <div style={{ display: "flex", gap: 8 }}>
                         <Input value={newReferrerFid} onChange={setNewReferrerFid} placeholder="Sponsor FID" />
                         <Btn onClick={() => runAction("edit_referral", { newReferrerFid })} disabled={!newReferrerFid} variant="amber">Set</Btn>
@@ -1518,16 +1518,16 @@ function AdminDashboardInner() {
 
                     {/* Remove referral */}
                     <div style={{ background: C.redDim, borderRadius: 10, padding: "14px", border: `1px solid ${C.red}44` }}>
-                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#fca5a5", margin: "0 0 4px" }}>Remove Sponsor</p>
-                      <p style={{ fontSize: 11, color: "#e5b3b3", margin: "0 0 10px" }}>Removes the user who sponsored this player (referredBy).</p>
+                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.red, margin: "0 0 4px" }}>Remove Sponsor</p>
+                      <p style={{ fontSize: 11, color: T.textMute, margin: "0 0 10px" }}>Removes the user who sponsored this player (referredBy).</p>
                       <Btn onClick={() => runAction("edit_referral", { removeReferral: true })} variant="red">✕ Remove Sponsor</Btn>
                     </div>
                   </div>
 
                   {/* Ban */}
                   <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px" }}>
-                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamDim, margin: "0 0 6px" }}>Account Status</p>
-                    <p style={{ fontSize: 11, color: T.textSub, margin: "0 0 10px" }}>Banning blocks feeding, unlocking, and check-ins.</p>
+                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 6px" }}>Account Status</p>
+                    <p style={{ fontSize: 11, color: T.textMute, margin: "0 0 10px" }}>Banning blocks feeding, unlocking, and check-ins.</p>
                     <Btn
                       onClick={() => runAction(controlState.state.banned ? "unban" : "ban")}
                       variant={controlState.state.banned ? "green" : "red"}
@@ -1539,7 +1539,7 @@ function AdminDashboardInner() {
 
                 {/* Right col — Accessories */}
                 <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px" }}>
-                  <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamDim, margin: "0 0 12px" }}>
+                  <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 12px" }}>
                     Accessories — {controlState.state.accessoriesUnlocked.length} unlocked
                   </p>
 
