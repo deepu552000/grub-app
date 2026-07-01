@@ -1735,9 +1735,7 @@ export default function ClientPage() {
                   : streakRewardEarned
                   ? "✦ Check In · +5 XP bonus!"
                   : isFreeCheckin
-                  ? freeCheckInsLeft === 1
-                    ? "✦ Check In · Last Free One!"
-                    : `✦ Check In · Free (${freeCheckInsLeft} left)`
+                  ? `✦ Check In · Free (${freeCheckInsLeft} left)`
                   : "✦ Check In · $0.01"}
               </button>
               {checkinError && (
@@ -1747,9 +1745,7 @@ export default function ClientPage() {
               )}
               <small>
                 {isFreeCheckin
-                  ? freeCheckInsLeft === 1
-                    ? `Last free check-in · $0.01/day starts tomorrow`
-                    : `First 5 days free · then $0.01/day on Base`
+                  ? `First 5 days free · then $0.01/day on Base`
                   : "Wallet payment on Base"}
               </small>
             </div>
