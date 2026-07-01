@@ -35,9 +35,9 @@ export async function GET(req: NextRequest) {
     // Tracked independently of notifFids — see lib/notification-tokens.ts.
     const addedFids = new Set(await getAllAddedFids(APP_FID));
 
-    // Raw webhook event log — last 500, newest first. Our paper trail
+    // Raw webhook event log — last 100, newest first. Our paper trail
     // since we don't have Vercel log drains (Pro-only).
-    const webhookEvents = await getWebhookEventLog(500);
+    const webhookEvents = await getWebhookEventLog(100);
 
     // Union of every fid we know about from any source — pet state,
     // notif tokens, or "added" events — so someone who added the app but

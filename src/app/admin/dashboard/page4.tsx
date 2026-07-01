@@ -531,7 +531,7 @@ function AdminDashboardInner() {
   const byType: Record<string, number> = {};
   for (const t of txns) byType[t.type] = (byType[t.type] ?? 0) + 1;
 
-  const sortedTxns = [...txns].sort((a, b) => b.ts - a.ts).slice(0, 500);
+  const sortedTxns = [...txns].sort((a, b) => b.ts - a.ts).slice(0, 40);
   const maxXp = Math.max(1, ...users.map((u) => u.xp || 0));
   const maxCheckins = Math.max(1, ...users.map((u) => u.totalCheckIns || 0));
   const realUsers = users.filter((u) => (u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0);
@@ -1079,7 +1079,7 @@ function AdminDashboardInner() {
             <span style={{ fontSize: 12, color: T.textMute }}>
               {globalSearchQuery
                 ? `${filteredWebhookEvents.length} matching "${globalSearchQuery}" (of ${webhookEvents.length})`
-                : `Raw Farcaster/Base App events — last ${webhookEvents.length} (up to 500 fetched, 2000 stored in KV)`}
+                : `Raw Farcaster/Base App events — last ${webhookEvents.length} (capped at 2000 in KV)`}
             </span>
           </div>
           <div style={{ overflowX: "auto", maxHeight: 240, overflowY: "auto" }}>
