@@ -47,6 +47,7 @@ export type MusicTrack = {
 export const MUSIC_TRACKS: MusicTrack[] = [
   { id: "moonmilk-1", name: "Moonmilk Lullaby I", src: "/sounds/moonmilk-lullaby-1.mp3" },
   { id: "moonmilk-2", name: "Moonmilk Lullaby II", src: "/sounds/moonmilk-lullaby-2.mp3" },
+  { id: "chiptune", name: "Chiptune (generated)", src: null },
 ];
 
 const VOLUME_KEY = "grub-sound-volume";
