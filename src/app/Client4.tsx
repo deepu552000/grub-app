@@ -447,7 +447,7 @@ export default function ClientPage() {
     setState(s);
     setHydrated(true);
   }
-  const { playSfx, sfxOn, toggleSfx, musicOn, toggleMusic, volume, setVolume, musicTrack, setMusicTrack, musicTracks } = useGrubSound();
+  const { playSfx, muted, toggleMute, volume, setVolume, musicOn, toggleMusic } = useGrubSound();
   const [volumePopoverOpen, setVolumePopoverOpen] = useState(false);
   useEffect(() => {
     if (!volumePopoverOpen) return;
@@ -1290,10 +1290,18 @@ export default function ClientPage() {
             <button
               className="ghost-button"
               type="button"
-              aria-label="Sound settings"
-              onClick={() => setVolumePopoverOpen((o) => !o)}
+              aria-label={muted ? "Unmute sound" : "Mute sound"}
+              onClick={() => {
+                toggleMute();
+                setVolumePopoverOpen(false);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setVolumePopoverOpen((o) => !o);
+              }}
+              onDoubleClick={() => setVolumePopoverOpen((o) => !o)}
             >
-              {sfxOn || musicOn ? "🔊" : "🔇"}
+              {muted ? "🔇" : musicOn ? "🔊" : "🔈"}
             </button>
             {volumePopoverOpen && (
               <div
@@ -1305,74 +1313,12 @@ export default function ClientPage() {
                   background: "#fff",
                   border: "1px solid #eee0d8",
                   borderRadius: 12,
-                  padding: "12px 14px",
+                  padding: "10px 12px",
                   boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
                   zIndex: 20,
-                  minWidth: 190,
+                  minWidth: 160,
                 }}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 8,
-                  }}
-                >
-                  <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "#5c4a3f" }}>🎵 Music</span>
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    style={{ fontSize: "0.7rem", padding: "4px 10px" }}
-                    onClick={toggleMusic}
-                  >
-                    {musicOn ? "On" : "Off"}
-                  </button>
-                </div>
-                <div style={{ marginBottom: 10 }}>
-                  {musicTracks.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setMusicTrack(t.id)}
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        textAlign: "left",
-                        fontSize: "0.72rem",
-                        padding: "6px 8px",
-                        marginBottom: 4,
-                        borderRadius: 8,
-                        border: musicTrack === t.id ? "1px solid #d98f5f" : "1px solid #f0e6de",
-                        background: musicTrack === t.id ? "#fdf1e6" : "transparent",
-                        color: "#5c4a3f",
-                        fontWeight: musicTrack === t.id ? 700 : 500,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {musicTrack === t.id ? "▸ " : ""}
-                      {t.name}
-                    </button>
-                  ))}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 10,
-                  }}
-                >
-                  <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "#5c4a3f" }}>🔔 Sound Effects</span>
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    style={{ fontSize: "0.7rem", padding: "4px 10px" }}
-                    onClick={toggleSfx}
-                  >
-                    {sfxOn ? "On" : "Off"}
-                  </button>
-                </div>
                 <div style={{ fontSize: "0.7rem", color: "#a8988e", marginBottom: 6, fontWeight: 600 }}>
                   Volume
                 </div>
@@ -1385,6 +1331,16 @@ export default function ClientPage() {
                   onChange={(e) => setVolume(parseFloat(e.target.value))}
                   style={{ width: "100%" }}
                 />
+                <button
+                  type="button"
+                  className="ghost-button"
+                  style={{ marginTop: 8, width: "100%", fontSize: "0.75rem" }}
+                  onClick={() => {
+                    toggleMusic();
+                  }}
+                >
+                  {musicOn ? "Pause music" : "Play music"}
+                </button>
               </div>
             )}
             <button className="ghost-button" type="button" onClick={() => setShowFaq(true)}>

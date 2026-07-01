@@ -447,7 +447,7 @@ export default function ClientPage() {
     setState(s);
     setHydrated(true);
   }
-  const { playSfx, sfxOn, toggleSfx, musicOn, toggleMusic, volume, setVolume, musicTrack, setMusicTrack, musicTracks } = useGrubSound();
+  const { playSfx, sfxOn, toggleSfx, musicOn, toggleMusic, volume, setVolume } = useGrubSound();
   const [volumePopoverOpen, setVolumePopoverOpen] = useState(false);
   useEffect(() => {
     if (!volumePopoverOpen) return;
@@ -1328,32 +1328,6 @@ export default function ClientPage() {
                   >
                     {musicOn ? "On" : "Off"}
                   </button>
-                </div>
-                <div style={{ marginBottom: 10 }}>
-                  {musicTracks.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setMusicTrack(t.id)}
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        textAlign: "left",
-                        fontSize: "0.72rem",
-                        padding: "6px 8px",
-                        marginBottom: 4,
-                        borderRadius: 8,
-                        border: musicTrack === t.id ? "1px solid #d98f5f" : "1px solid #f0e6de",
-                        background: musicTrack === t.id ? "#fdf1e6" : "transparent",
-                        color: "#5c4a3f",
-                        fontWeight: musicTrack === t.id ? 700 : 500,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {musicTrack === t.id ? "▸ " : ""}
-                      {t.name}
-                    </button>
-                  ))}
                 </div>
                 <div
                   style={{

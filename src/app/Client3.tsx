@@ -3,7 +3,6 @@
 import sdk from "@farcaster/miniapp-sdk";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState, useRef } from "react";
-import { useGrubSound } from "@/lib/sound";
 import { ACCESSORIES, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage, groupEquippedByLayer, type Accessory, type AccessorySlot } from "@/lib/accessories";
 import {
   type AccessoryState,
@@ -447,14 +446,6 @@ export default function ClientPage() {
     setState(s);
     setHydrated(true);
   }
-  const { playSfx, sfxOn, toggleSfx, musicOn, toggleMusic, volume, setVolume, musicTrack, setMusicTrack, musicTracks } = useGrubSound();
-  const [volumePopoverOpen, setVolumePopoverOpen] = useState(false);
-  useEffect(() => {
-    if (!volumePopoverOpen) return;
-    const close = () => setVolumePopoverOpen(false);
-    window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
-  }, [volumePopoverOpen]);
   const [fid, setFid] = useState<number | null>(null);
   // Live "are notifications currently on" flag, sourced from sdk.context on
   // every app open — not persisted, so it always reflects reality even if
@@ -579,16 +570,6 @@ export default function ClientPage() {
   const progress = nextStage
     ? Math.min(100, ((state.xp - stage.minXp) / (nextStage.minXp - stage.minXp)) * 100)
     : 100;
-
-  // Play a little fanfare the moment Grub evolves to a new stage.
-  const prevStageRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!hydrated) return;
-    if (prevStageRef.current !== null && stageIndex > prevStageRef.current) {
-      playSfx("evolve");
-    }
-    prevStageRef.current = stageIndex;
-  }, [stageIndex, hydrated]);
   const growth = Math.min(
     100,
     Math.round(state.xp / 8 + state.care * 0.24 + state.happiness * 0.16 + state.streak * 3),
@@ -845,7 +826,6 @@ export default function ClientPage() {
     setLastAction(isSeventhDay
       ? "7-day streak! +5 XP bonus dropped. Keep it going!"
       : "Day started! Care for Grub to earn XP and keep your streak.");
-    playSfx("checkin");
 
     // Notify referral system — fire and forget, non-blocking
     if (fid) {
@@ -953,20 +933,17 @@ export default function ClientPage() {
         nap: "napped",
       };
       setLastAction(`Already ${labels[action]} enough for today. Come back tomorrow.`);
-      playSfx("error");
       return;
     }
 
     if (action === "feed" && state.glimmer < FEED_GLIMMER_COST) {
       setLastAction("Not enough glimmer to feed. It builds up while you're away - come back later.");
-      playSfx("error");
       return;
     }
 
     setCarePulse(action);
     window.setTimeout(() => setCarePulse(""), 620);
     sdk.haptics.selectionChanged().catch(() => {});
-    playSfx(action);
 
     // Compute labels outside setState to avoid double-fire in React Strict Mode
     const baseXp = xpPerAction[action];
@@ -1044,7 +1021,6 @@ export default function ClientPage() {
     setPoked(true);
     window.setTimeout(() => setPoked(false), 420);
     sdk.haptics.selectionChanged().catch(() => {});
-    playSfx("tap");
 
     if (point) {
       const rippleId = floatId++;
@@ -1234,12 +1210,10 @@ export default function ClientPage() {
       });
       setClosetMessage(null);
       setLastAction("New accessory unlocked! Tap Equip to dress up Grub.");
-      playSfx("unlock");
       console.log("[UNLOCK] complete ✅");
     } catch (err: any) {
       console.error("[UNLOCK] error caught:", err?.message ?? err);
       const msg: string = err?.message ?? String(err);
-      playSfx("error");
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
         setClosetMessage("Cancelled. Tap Unlock to try again.");
       } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect") || msg.toLowerCase().includes("account")) {
@@ -1259,17 +1233,14 @@ export default function ClientPage() {
     if (result.ok === true) {
       setState((prev) => ({ ...prev, accessories: result.newState }));
       setClosetMessage(null);
-      playSfx("equip");
     } else {
       setClosetMessage(result.reason);
-      playSfx("error");
     }
   }
 
   function handleRemoveAccessory(slot: AccessorySlot) {
     setState((prev) => ({ ...prev, accessories: removeAccessory(prev.accessories, slot) }));
     setClosetMessage(null);
-    playSfx("tap");
   }
 
   if (!hydrated) return (
@@ -1286,111 +1257,9 @@ export default function ClientPage() {
           <div>
             <h1>Grub</h1>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
-            <button
-              className="ghost-button"
-              type="button"
-              aria-label="Sound settings"
-              onClick={() => setVolumePopoverOpen((o) => !o)}
-            >
-              {sfxOn || musicOn ? "🔊" : "🔇"}
-            </button>
-            {volumePopoverOpen && (
-              <div
-                onPointerDown={(e) => e.stopPropagation()}
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 8px)",
-                  right: 0,
-                  background: "#fff",
-                  border: "1px solid #eee0d8",
-                  borderRadius: 12,
-                  padding: "12px 14px",
-                  boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-                  zIndex: 20,
-                  minWidth: 190,
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 8,
-                  }}
-                >
-                  <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "#5c4a3f" }}>🎵 Music</span>
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    style={{ fontSize: "0.7rem", padding: "4px 10px" }}
-                    onClick={toggleMusic}
-                  >
-                    {musicOn ? "On" : "Off"}
-                  </button>
-                </div>
-                <div style={{ marginBottom: 10 }}>
-                  {musicTracks.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setMusicTrack(t.id)}
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        textAlign: "left",
-                        fontSize: "0.72rem",
-                        padding: "6px 8px",
-                        marginBottom: 4,
-                        borderRadius: 8,
-                        border: musicTrack === t.id ? "1px solid #d98f5f" : "1px solid #f0e6de",
-                        background: musicTrack === t.id ? "#fdf1e6" : "transparent",
-                        color: "#5c4a3f",
-                        fontWeight: musicTrack === t.id ? 700 : 500,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {musicTrack === t.id ? "▸ " : ""}
-                      {t.name}
-                    </button>
-                  ))}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 10,
-                  }}
-                >
-                  <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "#5c4a3f" }}>🔔 Sound Effects</span>
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    style={{ fontSize: "0.7rem", padding: "4px 10px" }}
-                    onClick={toggleSfx}
-                  >
-                    {sfxOn ? "On" : "Off"}
-                  </button>
-                </div>
-                <div style={{ fontSize: "0.7rem", color: "#a8988e", marginBottom: 6, fontWeight: 600 }}>
-                  Volume
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={volume}
-                  onChange={(e) => setVolume(parseFloat(e.target.value))}
-                  style={{ width: "100%" }}
-                />
-              </div>
-            )}
-            <button className="ghost-button" type="button" onClick={() => setShowFaq(true)}>
-              ?
-            </button>
-          </div>
+          <button className="ghost-button" type="button" onClick={() => setShowFaq(true)}>
+            ?
+          </button>
         </header>
 
         {/* ── REFERRAL FESTIVAL BANNER ── */}
