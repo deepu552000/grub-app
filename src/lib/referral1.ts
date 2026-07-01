@@ -4,46 +4,11 @@
 // Used by /api/referral/register and /api/referral/checkin
 
 import { ethers } from "ethers";
-import { kv } from "@vercel/kv";
 
 const DEGEN_CONTRACT = "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed";
 const DEGEN_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
-
-const FAILED_PAYOUTS_KEY = "failed-payouts";
-
-// A DEGEN payout that failed to send (e.g. treasury wallet ran out of DEGEN,
-// RPC hiccup, bad wallet address, etc). Logged so it can be retried from the
-// dashboard once the underlying issue (usually: refill the treasury) is fixed.
-export type FailedPayout = {
-  id: string;
-  fid: number;               // the fid whose wallet was supposed to receive DEGEN
-  toFid: number;              // the fid whose action triggered the payout
-  toWallet: string;
-  amountDegen: number;
-  type: "referral_join" | "referral_checkin";
-  reason: string;
-  ts: number;
-  // Optional KV write to apply once the retry succeeds (e.g. marking a
-  // referral checkin as "paid" — skipped on the original failed attempt).
-  sideEffect?: { kvKey: string; kvValue: any } | null;
-};
-
-export async function recordFailedPayout(
-  entry: Omit<FailedPayout, "id" | "ts">
-): Promise<FailedPayout> {
-  const record: FailedPayout = {
-    ...entry,
-    id: `${entry.type}:${entry.toFid}:${Date.now()}`,
-    ts: Date.now(),
-  };
-  const list = (await kv.get<FailedPayout[]>(FAILED_PAYOUTS_KEY)) ?? [];
-  list.push(record);
-  await kv.set(FAILED_PAYOUTS_KEY, list);
-  console.error(`[referral] payout FAILED — logged for retry: ${record.id} (${record.reason})`);
-  return record;
-}
 
 // Send DEGEN from treasury wallet to a recipient address.
 // amount = whole DEGEN units (e.g. 1 or 2)

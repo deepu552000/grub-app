@@ -33,6 +33,18 @@ type WebhookLogEntry = {
   payload: any;
 };
 
+type FailedPayout = {
+  id: string;
+  fid: number;
+  toFid: number;
+  toWallet: string;
+  amountDegen: number;
+  type: "referral_join" | "referral_checkin";
+  reason: string;
+  ts: number;
+  sideEffect?: { kvKey: string; kvValue: any } | null;
+};
+
 type TxnEntry = {
   fid: number;
   type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin";
@@ -171,8 +183,8 @@ function Badge({ color, bg, children }: { color: string; bg: string; children: R
   );
 }
 
-function Input({ value, onChange, placeholder, onKeyDown }: {
-  value: string; onChange: (v: string) => void; placeholder?: string; onKeyDown?: React.KeyboardEventHandler;
+function Input({ value, onChange, placeholder, onKeyDown, style }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; onKeyDown?: React.KeyboardEventHandler; style?: React.CSSProperties;
 }) {
   return (
     <input
@@ -191,6 +203,7 @@ function Input({ value, onChange, placeholder, onKeyDown }: {
         fontSize: 13,
         outline: "none",
         fontFamily: "inherit",
+        ...style,
       }}
     />
   );
@@ -300,6 +313,9 @@ function AdminDashboardInner() {
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
   const [dark, setDark] = useState(true);
+  const [failedPayouts, setFailedPayouts] = useState<FailedPayout[]>([]);
+  const [poolDegen, setPoolDegen] = useState<number | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
 
   // Result modal (replaces toast)
   const [modal, setModal] = useState<{ msg: string; type: "success" | "error" } | null>(null);
@@ -330,6 +346,7 @@ function AdminDashboardInner() {
   };
 
   const [lookupFid, setLookupFid] = useState("");
+  const [userSearch, setUserSearch] = useState("");
   const [controlState, setControlState] = useState<any>(null);
   const [controlError, setControlError] = useState<string | null>(null);
   const [controlLoading, setControlLoading] = useState(false);
@@ -406,6 +423,29 @@ function AdminDashboardInner() {
     }
   }, [lookupFid, loadUserControl, authedPost, addToast]);
 
+  const resolveFailedPayout = useCallback(async (id: string, action: "retry" | "dismiss") => {
+    setRetryingId(id);
+    try {
+      const res = await authedPost("/api/admin/failed-payouts", { id, action });
+      if (res.ok) {
+        setFailedPayouts((prev) => prev.filter((p) => p.id !== id));
+        addToast(action === "retry" ? `✓ Payout sent (${res.txHash?.slice(0, 10)}…)` : "✓ Dismissed", "success");
+      } else {
+        addToast(`✕ ${res.detail ?? res.reason ?? "Retry failed"}`, "error");
+        if (action === "retry") {
+          // still failing — refresh the reason/timestamp shown for this record
+          setFailedPayouts((prev) =>
+            prev.map((p) => (p.id === id ? { ...p, reason: res.detail ?? p.reason, ts: Date.now() } : p))
+          );
+        }
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Retry failed"}`, "error");
+    } finally {
+      setRetryingId(null);
+    }
+  }, [authedPost, addToast]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -416,9 +456,10 @@ function AdminDashboardInner() {
     setLookupFid("");
     setStatDrafts({ xp: "", bond: "", glimmer: "", hunger: "", happiness: "" });
     try {
-      const [debugRes, txnRes] = await Promise.all([
+      const [debugRes, txnRes, failedRes] = await Promise.all([
         authedGet("/api/debug-kv"),
         authedGet("/api/txn-log?all=1"),
+        authedGet("/api/admin/failed-payouts"),
       ]);
       if (debugRes.error === "Unauthorized" || txnRes.error === "Unauthorized") {
         setError("Unauthorized — you may not have access to this dashboard.");
@@ -427,7 +468,13 @@ function AdminDashboardInner() {
       setUsers(debugRes.users ?? []);
       setWebhookEvents(debugRes.webhookEvents ?? []);
       setTxns(txnRes.log ?? []);
+      setFailedPayouts(failedRes?.payouts ?? []);
       setLastLoaded(new Date());
+      // Treasury balance — non-blocking, don't let a pool-check hiccup break the main load
+      fetch("/api/referral/pool")
+        .then((r) => r.json())
+        .then((p) => setPoolDegen(typeof p?.poolDegen === "number" ? p.poolDegen : null))
+        .catch(() => setPoolDegen(null));
     } catch (err: any) {
       setError(err?.message ?? "Failed to load");
     } finally {
@@ -641,6 +688,57 @@ function AdminDashboardInner() {
             gap: 8,
           }}>
             <span style={{ fontSize: 16 }}>⚠️</span> {error}
+          </div>
+        )}
+
+        {/* ── Treasury balance + failed payouts alert ── */}
+        {poolDegen !== null && (
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 10,
+            padding: "6px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600,
+            background: poolDegen < 20 ? C.redDim : (dark ? T.surfaceAlt : "#eef2ff"),
+            color: poolDegen < 20 ? C.red : T.textSub,
+            border: `1px solid ${poolDegen < 20 ? C.red + "55" : T.border}`,
+          }}>
+            💰 Treasury: {poolDegen.toLocaleString(undefined, { maximumFractionDigits: 2 })} DEGEN
+            {poolDegen < 20 && " — low, refill soon"}
+          </div>
+        )}
+
+        {failedPayouts.length > 0 && (
+          <div style={{
+            background: C.redDim, border: `1px solid ${C.red}55`, borderRadius: 12,
+            padding: "14px 16px", marginBottom: "1rem",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 16 }}>⚠️</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.red }}>
+                {failedPayouts.length} DEGEN payout{failedPayouts.length > 1 ? "s" : ""} failed to send
+              </span>
+              <span style={{ fontSize: 11, color: T.textMute }}>— likely treasury ran out of DEGEN. Refill, then retry below.</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {failedPayouts.map((p) => (
+                <div key={p.id} style={{
+                  display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+                  padding: "8px 10px", borderRadius: 8, background: dark ? "#1a0a0a" : "#fff5f5",
+                  fontSize: 12,
+                }}>
+                  <span style={{ fontFamily: "monospace", color: T.cream, fontWeight: 600 }}>
+                    {p.amountDegen} DEGEN → fid {p.fid}
+                  </span>
+                  <span style={{ color: T.textMute }}>({p.type.replace("_", " ")}, triggered by fid {p.toFid})</span>
+                  <span style={{ color: C.red, fontStyle: "italic" }}>{p.reason}</span>
+                  <span style={{ color: T.textMute, marginLeft: "auto" }}>{timeAgo(p.ts)}</span>
+                  <Btn onClick={() => resolveFailedPayout(p.id, "retry")} disabled={retryingId === p.id} variant="green">
+                    {retryingId === p.id ? "Retrying…" : "↻ Retry"}
+                  </Btn>
+                  <Btn onClick={() => resolveFailedPayout(p.id, "dismiss")} disabled={retryingId === p.id} variant="red">
+                    Dismiss
+                  </Btn>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -925,10 +1023,16 @@ function AdminDashboardInner() {
         {/* ── All Users — Notification Status ── */}
         <SectionLabel dark={dark} accent={C.red}>All Users — App & Notification Status</SectionLabel>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}`, gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 12, color: T.textMute }}>
               Every known fid (pet state, notif token, or added event) — {notifStatusUsers.length} total · {addedButNotifOffCount} added with notifs off
             </span>
+            <Input
+              value={userSearch}
+              onChange={setUserSearch}
+              placeholder="Search fid or @username…"
+              style={{ width: 220, fontSize: 12, padding: "6px 10px" }}
+            />
           </div>
           <div style={{ overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -950,11 +1054,21 @@ function AdminDashboardInner() {
                 </tr>
               </thead>
               <tbody>
-                {notifStatusUsers.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No users found.</td>
-                  </tr>
-                ) : notifStatusUsers.map((u, i) => {
+                {(() => {
+                  const q = userSearch.trim().toLowerCase();
+                  const filtered = q
+                    ? notifStatusUsers.filter((u) => {
+                        const uname = profiles[String(u.fid)]?.username?.toLowerCase() ?? "";
+                        return String(u.fid).includes(q) || uname.includes(q.replace(/^@/, ""));
+                      })
+                    : notifStatusUsers;
+                  return filtered.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>
+                        {q ? `No users matching "${userSearch}".` : "No users found."}
+                      </td>
+                    </tr>
+                  ) : filtered.map((u, i) => {
                   const profile = profiles[String(u.fid)];
                   const flagged = u.hasAddedApp && !u.hasNotifToken;
                   return (
@@ -984,7 +1098,8 @@ function AdminDashboardInner() {
                       <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasAddedApp} dark={dark} /></td>
                     </tr>
                   );
-                })}
+                  });
+                })()}
               </tbody>
             </table>
           </div>
