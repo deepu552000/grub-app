@@ -537,7 +537,21 @@ function AdminDashboardInner() {
   const realUsers = users.filter((u) => (u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0);
   const ghostUsers = users.filter((u) => !((u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0));
 
-  // Global dashboard-wide search (fid or username) — combines with each panel's own search below
+  const playerMatchesSearch = useCallback((u: DebugUser) => {
+    const q = playerSearchQuery.trim().toLowerCase();
+    if (!q) return true;
+    const profile = profiles[String(u.fid)];
+    return (
+      String(u.fid).toLowerCase().includes(q) ||
+      (profile?.username ?? "").toLowerCase().includes(q) ||
+      (profile?.displayName ?? "").toLowerCase().includes(q)
+    );
+  }, [playerSearchQuery, profiles]);
+
+  const filteredRealUsers = realUsers.filter(playerMatchesSearch);
+  const filteredGhostUsers = ghostUsers.filter(playerMatchesSearch);
+
+  // Global dashboard-wide search (fid or username) — drives txn log, webhook log, referral tree
   const globalMatchesFid = useCallback((fid: number | string) => {
     const q = globalSearchQuery.trim().toLowerCase();
     if (!q) return true;
@@ -548,21 +562,6 @@ function AdminDashboardInner() {
       (profile?.displayName ?? "").toLowerCase().includes(q)
     );
   }, [globalSearchQuery, profiles]);
-
-  // Player Progress panel search — must satisfy its own box AND the global box
-  const playerMatchesSearch = useCallback((u: DebugUser) => {
-    const q = playerSearchQuery.trim().toLowerCase();
-    const profile = profiles[String(u.fid)];
-    const localOk = !q || (
-      String(u.fid).toLowerCase().includes(q) ||
-      (profile?.username ?? "").toLowerCase().includes(q) ||
-      (profile?.displayName ?? "").toLowerCase().includes(q)
-    );
-    return localOk && globalMatchesFid(u.fid);
-  }, [playerSearchQuery, profiles, globalMatchesFid]);
-
-  const filteredRealUsers = realUsers.filter(playerMatchesSearch);
-  const filteredGhostUsers = ghostUsers.filter(playerMatchesSearch);
 
   const filteredSortedTxns = sortedTxns.filter((t) => globalMatchesFid(t.fid) || globalMatchesFid(t.toFid ?? ""));
   const filteredWebhookEvents = webhookEvents.filter((e) => globalMatchesFid(e.fid));
@@ -863,10 +862,10 @@ function AdminDashboardInner() {
             ) : (
               <>
                 <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.green, margin: "0 0 8px" }}>
-                  Real Players · {(playerSearchQuery || globalSearchQuery) ? `${filteredRealUsers.length}/${realUsers.length}` : realUsers.length}
+                  Real Players · {playerSearchQuery ? `${filteredRealUsers.length}/${realUsers.length}` : realUsers.length}
                 </p>
                 {filteredRealUsers.length === 0 ? (
-                  <p style={{ fontSize: 12, color: T.textMute, margin: "0 0 14px" }}>{(playerSearchQuery || globalSearchQuery) ? "No matches." : "None yet."}</p>
+                  <p style={{ fontSize: 12, color: T.textMute, margin: "0 0 14px" }}>{playerSearchQuery ? "No matches." : "None yet."}</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 16 }}>
                     {[...filteredRealUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
@@ -918,10 +917,10 @@ function AdminDashboardInner() {
                 )}
 
                 <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: dark ? "#cbd5e1" : T.textMute, margin: "0 0 8px" }}>
-                  Unconverted Opens · {(playerSearchQuery || globalSearchQuery) ? `${filteredGhostUsers.length}/${ghostUsers.length}` : ghostUsers.length}
+                  Unconverted Opens · {playerSearchQuery ? `${filteredGhostUsers.length}/${ghostUsers.length}` : ghostUsers.length}
                 </p>
                 {filteredGhostUsers.length === 0 ? (
-                  <p style={{ fontSize: 12, color: T.textMute }}>{(playerSearchQuery || globalSearchQuery) ? "No matches." : "None — every opener has progressed."}</p>
+                  <p style={{ fontSize: 12, color: T.textMute }}>{playerSearchQuery ? "No matches." : "None — every opener has progressed."}</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 140, overflowY: "auto", paddingRight: 10 }}>
                     {filteredGhostUsers.map((u) => {
@@ -1161,24 +1160,16 @@ function AdminDashboardInner() {
               <tbody>
                 {(() => {
                   const q = userSearch.trim().toLowerCase();
-                  const localFiltered = q
+                  const filtered = q
                     ? notifStatusUsers.filter((u) => {
                         const uname = profiles[String(u.fid)]?.username?.toLowerCase() ?? "";
                         return String(u.fid).includes(q) || uname.includes(q.replace(/^@/, ""));
                       })
                     : notifStatusUsers;
-                  const filtered = localFiltered.filter((u) => globalMatchesFid(u.fid));
-                  const noneReason = q && globalSearchQuery
-                    ? `No users matching "${userSearch}" + global "${globalSearchQuery}".`
-                    : q
-                    ? `No users matching "${userSearch}".`
-                    : globalSearchQuery
-                    ? `No users matching global "${globalSearchQuery}".`
-                    : "No users found.";
                   return filtered.length === 0 ? (
                     <tr>
                       <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>
-                        {noneReason}
+                        {q ? `No users matching "${userSearch}".` : "No users found."}
                       </td>
                     </tr>
                   ) : filtered.map((u, i) => {
