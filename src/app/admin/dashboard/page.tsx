@@ -999,10 +999,10 @@ function AdminDashboardInner() {
                 : `Showing last ${sortedTxns.length} of ${txns.length} total`}
             </span>
           </div>
-          <div style={{ overflowX: "auto" }}>
+          <div style={{ overflowX: "auto", maxHeight: 240, overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
-                <tr style={{ background: T.surfaceAlt }}>
+                <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
                   {["Type", "FID", "Detail", "Amount", "When", "Tx"].map((h, i) => (
                     <th key={h} style={{
                       textAlign: i >= 3 ? "right" : "left",
@@ -1013,6 +1013,7 @@ function AdminDashboardInner() {
                       textTransform: "uppercase",
                       fontSize: 10,
                       borderBottom: `1px solid ${T.border}`,
+                      background: T.surfaceAlt,
                     }}>{h}</th>
                   ))}
                 </tr>
@@ -1081,7 +1082,7 @@ function AdminDashboardInner() {
                 : `Raw Farcaster/Base App events — last ${webhookEvents.length} (capped at 2000 in KV)`}
             </span>
           </div>
-          <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
+          <div style={{ overflowX: "auto", maxHeight: 240, overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
