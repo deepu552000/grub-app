@@ -20,16 +20,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  console.log(`[send-notification-all] → title="${title}" body="${body}"`);
-
   const result = await sendNotificationToAll(APP_FID, {
     notificationId: `grub-broadcast-${Date.now()}`,
     title: title.slice(0, 32),
     body: body.slice(0, 128),
     targetUrl: targetUrl ?? APP_URL,
   });
-
-  console.log(`[send-notification-all] ← result=${JSON.stringify(result)}`);
 
   return NextResponse.json(result);
 }
