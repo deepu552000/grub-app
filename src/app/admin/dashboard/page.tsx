@@ -1448,6 +1448,42 @@ function AdminDashboardInner() {
                 </div>
               </div>
 
+              {(() => {
+                const managedUser = users.find((u) => String(u.fid) === String(controlState.fid));
+                const referred = managedUser?.referrals?.referredUsers ?? [];
+                if (referred.length === 0) return null;
+                return (
+                  <div style={{ marginBottom: 20, background: T.surfaceAlt, borderRadius: 10, padding: "12px 14px", border: `1px solid ${T.border}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: 0 }}>
+                        Referred Users — {referred.length}
+                      </p>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: dark ? C.amberGlow2 : "#92400e" }}>
+                        +{managedUser?.referrals?.degenEarned ?? 0} DEGEN earned
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {referred.map((r) => (
+                        <button
+                          key={r.fid}
+                          onClick={() => { setLookupFid(String(r.fid)); loadUserControl(String(r.fid)); }}
+                          style={{
+                            fontSize: 11, padding: "3px 9px", borderRadius: 5, cursor: "pointer", fontFamily: "inherit",
+                            background: r.status === "paid" ? C.greenDim : T.surface,
+                            color: r.status === "paid" ? C.green : T.textSub,
+                            border: `1px solid ${r.status === "paid" ? C.green + "66" : T.border}`,
+                            whiteSpace: "nowrap",
+                          }}
+                          title="Open in user panel"
+                        >
+                          #{r.fid} · {r.checkins} {r.checkins === 1 ? "Check In" : "Check Ins"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
 
                 {/* Left col */}

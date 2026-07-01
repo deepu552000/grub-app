@@ -1248,12 +1248,14 @@ function AdminDashboardInner() {
         <SectionLabel dark={dark} accent={C.red}>All Users — App & Notification Status</SectionLabel>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}`, gap: 12, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, color: T.textMute }}>
+            <span style={{ fontSize: 12, color: T.textSub }}>
               Every known fid (pet state, notif token, or added event) —{" "}
-              {notifStatusFilterActive
-                ? `${notifStatusFiltered.length}/${notifStatusUsers.length}`
-                : notifStatusUsers.length}{" "}
-              total · {addedButNotifOffCount} added with notifs off
+              <strong style={{ color: T.cream, fontWeight: 700 }}>
+                {notifStatusFilterActive
+                  ? `${notifStatusFiltered.length}/${notifStatusUsers.length}`
+                  : notifStatusUsers.length}
+              </strong>{" "}
+              total · <strong style={{ color: T.cream, fontWeight: 700 }}>{addedButNotifOffCount}</strong> added with notifs off
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
               <FilterToggle label="Notif" value={notifFilter} onChange={setNotifFilter} dark={dark} />
@@ -1318,15 +1320,23 @@ function AdminDashboardInner() {
                           #{u.fid}
                         </button>
                         {profile?.username && (
-                          <span style={{ fontSize: 10, color: T.textMute, marginLeft: 6 }}>@{profile.username}</span>
+                          <a
+                            href={`https://farcaster.xyz/${profile.username}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ fontSize: 10, color: T.textSub, textDecoration: "none", marginLeft: 6 }}
+                            title={profile.displayName ?? profile.username}
+                          >
+                            @{profile.username}
+                          </a>
                         )}
                         {u.noPetState && (
                           <span style={{ fontSize: 9, color: T.textMute, marginLeft: 6, fontStyle: "italic" }}>never opened</span>
                         )}
                       </td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.textSub, fontVariantNumeric: "tabular-nums" }}>{u.totalCheckIns ?? 0}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.textSub }}>{u.lastCheckInDay ?? "never"}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.creamMute }}>{u.lastVisit && u.lastVisit !== "unknown" ? timeAgo(new Date(u.lastVisit).getTime()) : "unknown"}</td>
+                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.cream, fontVariantNumeric: "tabular-nums" }}>{u.totalCheckIns ?? 0}</td>
+                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.cream }}>{u.lastCheckInDay ?? "never"}</td>
+                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.cream }}>{u.lastVisit && u.lastVisit !== "unknown" ? timeAgo(new Date(u.lastVisit).getTime()) : "unknown"}</td>
                       <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasNotifToken} dark={dark} /></td>
                       <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasAddedApp} dark={dark} /></td>
                     </tr>
