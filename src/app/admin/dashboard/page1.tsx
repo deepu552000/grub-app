@@ -33,6 +33,18 @@ type WebhookLogEntry = {
   payload: any;
 };
 
+type FailedPayout = {
+  id: string;
+  fid: number;
+  toFid: number;
+  toWallet: string;
+  amountDegen: number;
+  type: "referral_join" | "referral_checkin";
+  reason: string;
+  ts: number;
+  sideEffect?: { kvKey: string; kvValue: any } | null;
+};
+
 type TxnEntry = {
   fid: number;
   type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin";
@@ -171,8 +183,8 @@ function Badge({ color, bg, children }: { color: string; bg: string; children: R
   );
 }
 
-function Input({ value, onChange, placeholder, onKeyDown }: {
-  value: string; onChange: (v: string) => void; placeholder?: string; onKeyDown?: React.KeyboardEventHandler;
+function Input({ value, onChange, placeholder, onKeyDown, style }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; onKeyDown?: React.KeyboardEventHandler; style?: React.CSSProperties;
 }) {
   return (
     <input
@@ -191,6 +203,7 @@ function Input({ value, onChange, placeholder, onKeyDown }: {
         fontSize: 13,
         outline: "none",
         fontFamily: "inherit",
+        ...style,
       }}
     />
   );
@@ -300,6 +313,11 @@ function AdminDashboardInner() {
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
   const [dark, setDark] = useState(true);
+  const [failedPayouts, setFailedPayouts] = useState<FailedPayout[]>([]);
+  const [poolDegen, setPoolDegen] = useState<number | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [playerSearchQuery, setPlayerSearchQuery] = useState("");
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
 
   // Result modal (replaces toast)
   const [modal, setModal] = useState<{ msg: string; type: "success" | "error" } | null>(null);
@@ -330,6 +348,7 @@ function AdminDashboardInner() {
   };
 
   const [lookupFid, setLookupFid] = useState("");
+  const [userSearch, setUserSearch] = useState("");
   const [controlState, setControlState] = useState<any>(null);
   const [controlError, setControlError] = useState<string | null>(null);
   const [controlLoading, setControlLoading] = useState(false);
@@ -406,6 +425,29 @@ function AdminDashboardInner() {
     }
   }, [lookupFid, loadUserControl, authedPost, addToast]);
 
+  const resolveFailedPayout = useCallback(async (id: string, action: "retry" | "dismiss") => {
+    setRetryingId(id);
+    try {
+      const res = await authedPost("/api/admin/failed-payouts", { id, action });
+      if (res.ok) {
+        setFailedPayouts((prev) => prev.filter((p) => p.id !== id));
+        addToast(action === "retry" ? `✓ Payout sent (${res.txHash?.slice(0, 10)}…)` : "✓ Dismissed", "success");
+      } else {
+        addToast(`✕ ${res.detail ?? res.reason ?? "Retry failed"}`, "error");
+        if (action === "retry") {
+          // still failing — refresh the reason/timestamp shown for this record
+          setFailedPayouts((prev) =>
+            prev.map((p) => (p.id === id ? { ...p, reason: res.detail ?? p.reason, ts: Date.now() } : p))
+          );
+        }
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Retry failed"}`, "error");
+    } finally {
+      setRetryingId(null);
+    }
+  }, [authedPost, addToast]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -416,9 +458,10 @@ function AdminDashboardInner() {
     setLookupFid("");
     setStatDrafts({ xp: "", bond: "", glimmer: "", hunger: "", happiness: "" });
     try {
-      const [debugRes, txnRes] = await Promise.all([
+      const [debugRes, txnRes, failedRes] = await Promise.all([
         authedGet("/api/debug-kv"),
         authedGet("/api/txn-log?all=1"),
+        authedGet("/api/admin/failed-payouts"),
       ]);
       if (debugRes.error === "Unauthorized" || txnRes.error === "Unauthorized") {
         setError("Unauthorized — you may not have access to this dashboard.");
@@ -427,7 +470,13 @@ function AdminDashboardInner() {
       setUsers(debugRes.users ?? []);
       setWebhookEvents(debugRes.webhookEvents ?? []);
       setTxns(txnRes.log ?? []);
+      setFailedPayouts(failedRes?.payouts ?? []);
       setLastLoaded(new Date());
+      // Treasury balance — non-blocking, don't let a pool-check hiccup break the main load
+      fetch("/api/referral/pool")
+        .then((r) => r.json())
+        .then((p) => setPoolDegen(typeof p?.poolDegen === "number" ? p.poolDegen : null))
+        .catch(() => setPoolDegen(null));
     } catch (err: any) {
       setError(err?.message ?? "Failed to load");
     } finally {
@@ -482,11 +531,46 @@ function AdminDashboardInner() {
   const byType: Record<string, number> = {};
   for (const t of txns) byType[t.type] = (byType[t.type] ?? 0) + 1;
 
-  const sortedTxns = [...txns].sort((a, b) => b.ts - a.ts).slice(0, 40);
+  const sortedTxns = [...txns].sort((a, b) => b.ts - a.ts).slice(0, 500);
   const maxXp = Math.max(1, ...users.map((u) => u.xp || 0));
   const maxCheckins = Math.max(1, ...users.map((u) => u.totalCheckIns || 0));
   const realUsers = users.filter((u) => (u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0);
   const ghostUsers = users.filter((u) => !((u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0));
+
+  // Global dashboard-wide search (fid or username) — combines with each panel's own search below
+  const globalMatchesFid = useCallback((fid: number | string) => {
+    const q = globalSearchQuery.trim().toLowerCase();
+    if (!q) return true;
+    const profile = profiles[String(fid)];
+    return (
+      String(fid).toLowerCase().includes(q) ||
+      (profile?.username ?? "").toLowerCase().includes(q) ||
+      (profile?.displayName ?? "").toLowerCase().includes(q)
+    );
+  }, [globalSearchQuery, profiles]);
+
+  // Player Progress panel search — must satisfy its own box AND the global box
+  const playerMatchesSearch = useCallback((u: DebugUser) => {
+    const q = playerSearchQuery.trim().toLowerCase();
+    if (q) {
+      // Local box has text — it takes precedence, global is ignored for this panel
+      const profile = profiles[String(u.fid)];
+      return (
+        String(u.fid).toLowerCase().includes(q) ||
+        (profile?.username ?? "").toLowerCase().includes(q) ||
+        (profile?.displayName ?? "").toLowerCase().includes(q)
+      );
+    }
+    // Local box empty — fall back to global search
+    return globalMatchesFid(u.fid);
+  }, [playerSearchQuery, profiles, globalMatchesFid]);
+
+  const filteredRealUsers = realUsers.filter(playerMatchesSearch);
+  const filteredGhostUsers = ghostUsers.filter(playerMatchesSearch);
+
+  const filteredSortedTxns = sortedTxns.filter((t) => globalMatchesFid(t.fid) || globalMatchesFid(t.toFid ?? ""));
+  const filteredWebhookEvents = webhookEvents.filter((e) => globalMatchesFid(e.fid));
+  const filteredReferrers = referrers.filter((u) => globalMatchesFid(u.fid));
   const notifStatusUsers = [...users].sort((a, b) => {
     // Flag cases first (added but no token), then by check-ins desc
     const aFlag = a.hasAddedApp && !a.hasNotifToken ? 1 : 0;
@@ -562,6 +646,39 @@ function AdminDashboardInner() {
           <span style={{ fontSize: 11, color: T.textMute, paddingLeft: 12, borderLeft: `1px solid ${T.border}` }}>Admin Console</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {/* Global dashboard search */}
+          <div style={{ position: "relative", width: 200 }}>
+            <input
+              value={globalSearchQuery}
+              onChange={(e) => setGlobalSearchQuery(e.target.value)}
+              placeholder="🔍 Search FID / @user…"
+              title="Filters Transaction Log, Webhook Log & Referral Tree"
+              style={{
+                width: "100%",
+                fontSize: 12,
+                padding: "6px 26px 6px 10px",
+                borderRadius: 8,
+                background: T.surfaceAlt,
+                border: `1px solid ${T.border}`,
+                color: T.cream,
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+            {globalSearchQuery && (
+              <button
+                onClick={() => setGlobalSearchQuery("")}
+                style={{
+                  position: "absolute", right: 7, top: "50%", transform: "translateY(-50%)",
+                  background: "transparent", border: "none", cursor: "pointer",
+                  color: T.textMute, fontSize: 12, lineHeight: 1, padding: 2,
+                }}
+                title="Clear search"
+              >
+                ✕
+              </button>
+            )}
+          </div>
           {lastLoaded && (
             <span style={{ fontSize: 11, color: T.creamMute }}>
               Last sync {timeAgo(lastLoaded.getTime())}
@@ -644,6 +761,57 @@ function AdminDashboardInner() {
           </div>
         )}
 
+        {/* ── Treasury balance + failed payouts alert ── */}
+        {poolDegen !== null && (
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 10,
+            padding: "6px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600,
+            background: poolDegen < 20 ? C.redDim : (dark ? T.surfaceAlt : "#eef2ff"),
+            color: poolDegen < 20 ? C.red : T.textSub,
+            border: `1px solid ${poolDegen < 20 ? C.red + "55" : T.border}`,
+          }}>
+            💰 Treasury: {poolDegen.toLocaleString(undefined, { maximumFractionDigits: 2 })} DEGEN
+            {poolDegen < 20 && " — low, refill soon"}
+          </div>
+        )}
+
+        {failedPayouts.length > 0 && (
+          <div style={{
+            background: C.redDim, border: `1px solid ${C.red}55`, borderRadius: 12,
+            padding: "14px 16px", marginBottom: "1rem",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 16 }}>⚠️</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.red }}>
+                {failedPayouts.length} DEGEN payout{failedPayouts.length > 1 ? "s" : ""} failed to send
+              </span>
+              <span style={{ fontSize: 11, color: T.textMute }}>— likely treasury ran out of DEGEN. Refill, then retry below.</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {failedPayouts.map((p) => (
+                <div key={p.id} style={{
+                  display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+                  padding: "8px 10px", borderRadius: 8, background: dark ? "#1a0a0a" : "#fff5f5",
+                  fontSize: 12,
+                }}>
+                  <span style={{ fontFamily: "monospace", color: T.cream, fontWeight: 600 }}>
+                    {p.amountDegen} DEGEN → fid {p.fid}
+                  </span>
+                  <span style={{ color: T.textMute }}>({p.type.replace("_", " ")}, triggered by fid {p.toFid})</span>
+                  <span style={{ color: C.red, fontStyle: "italic" }}>{p.reason}</span>
+                  <span style={{ color: T.textMute, marginLeft: "auto" }}>{timeAgo(p.ts)}</span>
+                  <Btn onClick={() => resolveFailedPayout(p.id, "retry")} disabled={retryingId === p.id} variant="green">
+                    {retryingId === p.id ? "Retrying…" : "↻ Retry"}
+                  </Btn>
+                  <Btn onClick={() => resolveFailedPayout(p.id, "dismiss")} disabled={retryingId === p.id} variant="red">
+                    Dismiss
+                  </Btn>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── KPI row ── */}
         <SectionLabel dark={dark}>Overview</SectionLabel>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -660,19 +828,52 @@ function AdminDashboardInner() {
 
           {/* Player progress */}
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}>
-            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 14px" }}>Player Progress</p>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
+              <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: 0 }}>Player Progress</p>
+              <div style={{ position: "relative", width: 150, flexShrink: 0 }}>
+                <input
+                  value={playerSearchQuery}
+                  onChange={(e) => setPlayerSearchQuery(e.target.value)}
+                  placeholder="Search FID / @user"
+                  style={{
+                    width: "100%",
+                    fontSize: 11,
+                    padding: "6px 24px 6px 10px",
+                    borderRadius: 7,
+                    background: T.surfaceAlt,
+                    border: `1px solid ${T.border}`,
+                    color: T.cream,
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+                {playerSearchQuery && (
+                  <button
+                    onClick={() => setPlayerSearchQuery("")}
+                    style={{
+                      position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+                      background: "transparent", border: "none", cursor: "pointer",
+                      color: T.textMute, fontSize: 12, lineHeight: 1, padding: 2,
+                    }}
+                    title="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
             {users.length === 0 ? (
               <p style={{ fontSize: 13, color: T.textMute }}>No players yet.</p>
             ) : (
               <>
                 <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.green, margin: "0 0 8px" }}>
-                  Real Players · {realUsers.length}
+                  Real Players · {(playerSearchQuery || globalSearchQuery) ? `${filteredRealUsers.length}/${realUsers.length}` : realUsers.length}
                 </p>
-                {realUsers.length === 0 ? (
-                  <p style={{ fontSize: 12, color: T.textMute, margin: "0 0 14px" }}>None yet.</p>
+                {filteredRealUsers.length === 0 ? (
+                  <p style={{ fontSize: 12, color: T.textMute, margin: "0 0 14px" }}>{(playerSearchQuery || globalSearchQuery) ? "No matches." : "None yet."}</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 16 }}>
-                    {[...realUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
+                    {[...filteredRealUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
                       const profile = profiles[String(u.fid)];
                       return (
                       <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -721,13 +922,13 @@ function AdminDashboardInner() {
                 )}
 
                 <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: dark ? "#cbd5e1" : T.textMute, margin: "0 0 8px" }}>
-                  Unconverted Opens · {ghostUsers.length}
+                  Unconverted Opens · {(playerSearchQuery || globalSearchQuery) ? `${filteredGhostUsers.length}/${ghostUsers.length}` : ghostUsers.length}
                 </p>
-                {ghostUsers.length === 0 ? (
-                  <p style={{ fontSize: 12, color: T.textMute }}>None — every opener has progressed.</p>
+                {filteredGhostUsers.length === 0 ? (
+                  <p style={{ fontSize: 12, color: T.textMute }}>{(playerSearchQuery || globalSearchQuery) ? "No matches." : "None — every opener has progressed."}</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 140, overflowY: "auto", paddingRight: 10 }}>
-                    {ghostUsers.map((u) => {
+                    {filteredGhostUsers.map((u) => {
                       const profile = profiles[String(u.fid)];
                       return (
                         <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12, opacity: 0.85 }}>
@@ -792,12 +993,16 @@ function AdminDashboardInner() {
         <SectionLabel dark={dark}>Transaction Log</SectionLabel>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
-            <span style={{ fontSize: 12, color: T.textMute }}>Showing last {sortedTxns.length} of {txns.length} total</span>
+            <span style={{ fontSize: 12, color: T.textMute }}>
+              {globalSearchQuery
+                ? `Showing ${filteredSortedTxns.length} matching "${globalSearchQuery}" (of last ${sortedTxns.length})`
+                : `Showing last ${sortedTxns.length} of ${txns.length} total`}
+            </span>
           </div>
-          <div style={{ overflowX: "auto" }}>
+          <div style={{ overflowX: "auto", maxHeight: 240, overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
-                <tr style={{ background: T.surfaceAlt }}>
+                <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
                   {["Type", "FID", "Detail", "Amount", "When", "Tx"].map((h, i) => (
                     <th key={h} style={{
                       textAlign: i >= 3 ? "right" : "left",
@@ -808,16 +1013,17 @@ function AdminDashboardInner() {
                       textTransform: "uppercase",
                       fontSize: 10,
                       borderBottom: `1px solid ${T.border}`,
+                      background: T.surfaceAlt,
                     }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {sortedTxns.length === 0 ? (
+                {filteredSortedTxns.length === 0 ? (
                   <tr>
-                    <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No transactions logged yet.</td>
+                    <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>{globalSearchQuery ? "No matching transactions." : "No transactions logged yet."}</td>
                   </tr>
-                ) : sortedTxns.map((t, i) => {
+                ) : filteredSortedTxns.map((t, i) => {
                   const meta = TYPE_META[t.type] ?? { color: T.textSub, bg: T.surfaceAlt, label: t.type };
                   let detail = "—";
                   let amount = "—";
@@ -871,10 +1077,12 @@ function AdminDashboardInner() {
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
             <span style={{ fontSize: 12, color: T.textMute }}>
-              Raw Farcaster/Base App events — last {webhookEvents.length} (capped at 2000 in KV)
+              {globalSearchQuery
+                ? `${filteredWebhookEvents.length} matching "${globalSearchQuery}" (of ${webhookEvents.length})`
+                : `Raw Farcaster/Base App events — last ${webhookEvents.length} (up to 500 fetched, 2000 stored in KV)`}
             </span>
           </div>
-          <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
+          <div style={{ overflowX: "auto", maxHeight: 240, overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
@@ -894,11 +1102,11 @@ function AdminDashboardInner() {
                 </tr>
               </thead>
               <tbody>
-                {webhookEvents.length === 0 ? (
+                {filteredWebhookEvents.length === 0 ? (
                   <tr>
-                    <td colSpan={4} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No webhook events logged yet.</td>
+                    <td colSpan={4} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>{globalSearchQuery ? "No matching events." : "No webhook events logged yet."}</td>
                   </tr>
-                ) : webhookEvents.map((e, i) => {
+                ) : filteredWebhookEvents.map((e, i) => {
                   const meta: Record<string, { color: string; bg: string }> = {
                     miniapp_added: { color: C.green, bg: C.greenDim },
                     miniapp_removed: { color: C.red, bg: C.redDim },
@@ -925,10 +1133,16 @@ function AdminDashboardInner() {
         {/* ── All Users — Notification Status ── */}
         <SectionLabel dark={dark} accent={C.red}>All Users — App & Notification Status</SectionLabel>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}`, gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 12, color: T.textMute }}>
               Every known fid (pet state, notif token, or added event) — {notifStatusUsers.length} total · {addedButNotifOffCount} added with notifs off
             </span>
+            <Input
+              value={userSearch}
+              onChange={setUserSearch}
+              placeholder="Search fid or @username…"
+              style={{ width: 220, fontSize: 12, padding: "6px 10px" }}
+            />
           </div>
           <div style={{ overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -950,11 +1164,27 @@ function AdminDashboardInner() {
                 </tr>
               </thead>
               <tbody>
-                {notifStatusUsers.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No users found.</td>
-                  </tr>
-                ) : notifStatusUsers.map((u, i) => {
+                {(() => {
+                  const q = userSearch.trim().toLowerCase();
+                  const filtered = q
+                    ? notifStatusUsers.filter((u) => {
+                        // Local box has text — it takes precedence, global is ignored
+                        const uname = profiles[String(u.fid)]?.username?.toLowerCase() ?? "";
+                        return String(u.fid).includes(q) || uname.includes(q.replace(/^@/, ""));
+                      })
+                    : notifStatusUsers.filter((u) => globalMatchesFid(u.fid)); // local empty — fall back to global
+                  const noneReason = q
+                    ? `No users matching "${userSearch}".`
+                    : globalSearchQuery
+                    ? `No users matching global "${globalSearchQuery}".`
+                    : "No users found.";
+                  return filtered.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>
+                        {noneReason}
+                      </td>
+                    </tr>
+                  ) : filtered.map((u, i) => {
                   const profile = profiles[String(u.fid)];
                   const flagged = u.hasAddedApp && !u.hasNotifToken;
                   return (
@@ -984,7 +1214,8 @@ function AdminDashboardInner() {
                       <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasAddedApp} dark={dark} /></td>
                     </tr>
                   );
-                })}
+                  });
+                })()}
               </tbody>
             </table>
           </div>
@@ -992,11 +1223,11 @@ function AdminDashboardInner() {
 
         {/* ── Referral tree ── */}
         <SectionLabel dark={dark}>Referral Tree</SectionLabel>
-        {referrers.length === 0 ? (
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}><p style={{ fontSize: 13, color: T.textMute, margin: 0 }}>No referrals yet.</p></div>
+        {filteredReferrers.length === 0 ? (
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}><p style={{ fontSize: 13, color: T.textMute, margin: 0 }}>{globalSearchQuery ? "No matching referrers." : "No referrals yet."}</p></div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 10 }}>
-            {referrers.map((u) => (
+            {filteredReferrers.map((u) => (
               <div key={u.fid} style={{
                 background: T.surface,
                 border: `1px solid ${T.border}`,

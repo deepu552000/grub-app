@@ -43,6 +43,7 @@ type FailedPayout = {
   reason: string;
   ts: number;
   sideEffect?: { kvKey: string; kvValue: any } | null;
+  broadcastTxHash?: string | null;
 };
 
 type TxnEntry = {
@@ -425,19 +426,24 @@ function AdminDashboardInner() {
     }
   }, [lookupFid, loadUserControl, authedPost, addToast]);
 
-  const resolveFailedPayout = useCallback(async (id: string, action: "retry" | "dismiss") => {
+  const resolveFailedPayout = useCallback(async (id: string, action: "retry" | "dismiss", confirmed = false) => {
     setRetryingId(id);
     try {
-      const res = await authedPost("/api/admin/failed-payouts", { id, action });
+      const res = await authedPost("/api/admin/failed-payouts", { id, action, confirmed });
       if (res.ok) {
         setFailedPayouts((prev) => prev.filter((p) => p.id !== id));
         addToast(action === "retry" ? `✓ Payout sent (${res.txHash?.slice(0, 10)}…)` : "✓ Dismissed", "success");
+      } else if (res.requiresConfirmation) {
+        addToast(`⚠️ This may already be sent — check Basescan for tx ${res.broadcastTxHash?.slice(0, 10)}…, then click Retry again to confirm`, "error");
+        setFailedPayouts((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, broadcastTxHash: res.broadcastTxHash } : p))
+        );
       } else {
         addToast(`✕ ${res.detail ?? res.reason ?? "Retry failed"}`, "error");
         if (action === "retry") {
-          // still failing — refresh the reason/timestamp shown for this record
+          // still failing — refresh the reason/timestamp/hash shown for this record
           setFailedPayouts((prev) =>
-            prev.map((p) => (p.id === id ? { ...p, reason: res.detail ?? p.reason, ts: Date.now() } : p))
+            prev.map((p) => (p.id === id ? { ...p, reason: res.detail ?? p.reason, broadcastTxHash: res.broadcastTxHash ?? p.broadcastTxHash, ts: Date.now() } : p))
           );
         }
       }
@@ -790,22 +796,42 @@ function AdminDashboardInner() {
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {failedPayouts.map((p) => (
                 <div key={p.id} style={{
-                  display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+                  display: "flex", flexDirection: "column", gap: 4,
                   padding: "8px 10px", borderRadius: 8, background: dark ? "#1a0a0a" : "#fff5f5",
                   fontSize: 12,
                 }}>
-                  <span style={{ fontFamily: "monospace", color: T.cream, fontWeight: 600 }}>
-                    {p.amountDegen} DEGEN → fid {p.fid}
-                  </span>
-                  <span style={{ color: T.textMute }}>({p.type.replace("_", " ")}, triggered by fid {p.toFid})</span>
-                  <span style={{ color: C.red, fontStyle: "italic" }}>{p.reason}</span>
-                  <span style={{ color: T.textMute, marginLeft: "auto" }}>{timeAgo(p.ts)}</span>
-                  <Btn onClick={() => resolveFailedPayout(p.id, "retry")} disabled={retryingId === p.id} variant="green">
-                    {retryingId === p.id ? "Retrying…" : "↻ Retry"}
-                  </Btn>
-                  <Btn onClick={() => resolveFailedPayout(p.id, "dismiss")} disabled={retryingId === p.id} variant="red">
-                    Dismiss
-                  </Btn>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span style={{ fontFamily: "monospace", color: T.cream, fontWeight: 600 }}>
+                      {p.amountDegen} DEGEN → fid {p.fid}
+                    </span>
+                    <span style={{ color: T.textMute }}>({p.type.replace("_", " ")}, triggered by fid {p.toFid})</span>
+                    <span style={{ color: C.red, fontStyle: "italic" }}>{p.reason}</span>
+                    <span style={{ color: T.textMute, marginLeft: "auto" }}>{timeAgo(p.ts)}</span>
+                    <Btn
+                      onClick={() => resolveFailedPayout(p.id, "retry", !!p.broadcastTxHash)}
+                      disabled={retryingId === p.id}
+                      variant={p.broadcastTxHash ? "amber" : "green"}
+                    >
+                      {retryingId === p.id ? "Retrying…" : p.broadcastTxHash ? "⚠️ Confirm Retry" : "↻ Retry"}
+                    </Btn>
+                    <Btn onClick={() => resolveFailedPayout(p.id, "dismiss")} disabled={retryingId === p.id} variant="red">
+                      Dismiss
+                    </Btn>
+                  </div>
+                  {p.broadcastTxHash && (
+                    <div style={{ fontSize: 11, color: C.amberGlow, paddingLeft: 2 }}>
+                      ⚠️ Already broadcast — check{" "}
+                      <a
+                        href={`https://basescan.org/tx/${p.broadcastTxHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: C.amberGlow, textDecoration: "underline" }}
+                      >
+                        tx {p.broadcastTxHash.slice(0, 10)}…
+                      </a>{" "}
+                      on Basescan before retrying — if it landed, Dismiss instead.
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

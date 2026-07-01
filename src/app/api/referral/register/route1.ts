@@ -1,7 +1,7 @@
 // app/api/referral/register/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
-import { sendDegen, getWalletFromNeynar } from "@/lib/referral";
+import { sendDegen, getWalletFromNeynar, recordFailedPayout } from "@/lib/referral";
 
 async function logDegenTxn(entry: {
   fid: number;
@@ -78,7 +78,27 @@ export async function POST(req: NextRequest) {
 
     await kv.set(`ref:${referrerFID}:wallet`, wallet);
 
-    const txHash = await sendDegen(wallet, REFERRAL_DEGEN);
+    let txHash: string;
+    try {
+      txHash = await sendDegen(wallet, REFERRAL_DEGEN);
+    } catch (err: any) {
+      console.error("[referral/register] sendDegen failed:", err);
+      await recordFailedPayout({
+        fid: Number(referrerFID),
+        toFid: Number(newUserFID),
+        toWallet: wallet,
+        amountDegen: REFERRAL_DEGEN,
+        type: "referral_join",
+        reason: err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error",
+        sideEffect: null,
+      });
+      return NextResponse.json({
+        ok: true,
+        rewarded: false,
+        reason: "DEGEN payout failed — logged for retry in dashboard",
+        isNewJoiner: true,
+      });
+    }
 
     // Log the DEGEN payout
     await logDegenTxn({

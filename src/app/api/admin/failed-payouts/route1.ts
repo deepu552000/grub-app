@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { verifyToken } from "@clerk/nextjs/server";
-import { sendDegen, acquireLock, releaseLock, type FailedPayout } from "@/lib/referral";
+import { sendDegen, type FailedPayout } from "@/lib/referral";
 
 const FAILED_PAYOUTS_KEY = "failed-payouts";
 
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { id, action, confirmed } = await req.json();
+    const { id, action } = await req.json();
     if (!id || !action) {
       return NextResponse.json({ ok: false, reason: "missing id or action" }, { status: 400 });
     }
@@ -96,80 +96,36 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "retry") {
-      // This record's original attempt was broadcast on-chain but confirming
-      // it failed — the DEGEN may already be sitting in the recipient's
-      // wallet. Retrying blindly can double-pay. Require the caller to
-      // explicitly confirm they checked Basescan first.
-      if (record.broadcastTxHash && !confirmed) {
-        return NextResponse.json({
-          ok: false,
-          reason: `This payout was broadcast (tx ${record.broadcastTxHash}) but never confirmed — it may have already been sent. Check Basescan for that hash before retrying.`,
-          requiresConfirmation: true,
-          broadcastTxHash: record.broadcastTxHash,
-        });
-      }
-
-      // Same lock keys used by the natural checkin/register flow — this is
-      // what actually prevents the double-pay bug: if that fid's own next
-      // checkin (or a concurrent register call) is mid-payment right now,
-      // this bails out instead of racing it.
-      const lockKey = record.type === "referral_checkin"
-        ? `ref:${record.toFid}:paylock`
-        : `ref:${record.toFid}:joinlock`;
-
-      const gotLock = await acquireLock(lockKey, 30);
-      if (!gotLock) {
-        return NextResponse.json({
-          ok: false,
-          reason: "a payout for this fid is already being processed elsewhere (e.g. their own checkin just fired) — wait a few seconds and retry",
-        });
-      }
-
+      let txHash: string;
       try {
-        let txHash: string;
-        try {
-          txHash = await sendDegen(record.toWallet, record.amountDegen);
-        } catch (err: any) {
-          // Still failing (e.g. treasury still empty, or another broadcast-
-          // but-unconfirmed hiccup) — update reason/hash/timestamp in place
-          // so the dashboard shows the latest state, keep it in the list.
-          const updatedReason = err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error";
-          list[idx] = {
-            ...record,
-            reason: updatedReason,
-            broadcastTxHash: err?.broadcastTxHash ?? null,
-            ts: Date.now(),
-          };
-          await kv.set(FAILED_PAYOUTS_KEY, list);
-          return NextResponse.json({
-            ok: false,
-            reason: "retry failed — still logged",
-            detail: updatedReason,
-            broadcastTxHash: err?.broadcastTxHash ?? null,
-          });
-        }
-
-        // Success — remove from failed list, log the txn, apply any side effect
-        list.splice(idx, 1);
+        txHash = await sendDegen(record.toWallet, record.amountDegen);
+      } catch (err: any) {
+        // Still failing (e.g. treasury still empty) — update reason/timestamp
+        // in place so the dashboard shows the latest failure, keep it in the list.
+        const updatedReason = err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error";
+        list[idx] = { ...record, reason: updatedReason, ts: Date.now() };
         await kv.set(FAILED_PAYOUTS_KEY, list);
-
-        await logDegenTxn({
-          fid: record.fid,
-          toFid: record.toFid,
-          type: record.type,
-          txHash,
-          amountDegen: record.amountDegen,
-          toWallet: record.toWallet,
-        });
-
-        if (record.sideEffect) {
-          await kv.set(record.sideEffect.kvKey, record.sideEffect.kvValue);
-        }
-
-        return NextResponse.json({ ok: true, retried: record.id, txHash });
-      } finally {
-        await releaseLock(lockKey);
+        return NextResponse.json({ ok: false, reason: "retry failed — still logged", detail: updatedReason });
       }
+
+      // Success — remove from failed list, log the txn, apply any side effect
+      list.splice(idx, 1);
+      await kv.set(FAILED_PAYOUTS_KEY, list);
+
+      await logDegenTxn({
+        fid: record.fid,
+        toFid: record.toFid,
+        type: record.type,
+        txHash,
+        amountDegen: record.amountDegen,
+        toWallet: record.toWallet,
+      });
+
+      if (record.sideEffect) {
+        await kv.set(record.sideEffect.kvKey, record.sideEffect.kvValue);
+      }
+
+      return NextResponse.json({ ok: true, retried: record.id, txHash });
     }
 
     return NextResponse.json({ ok: false, reason: `unknown action "${action}"` }, { status: 400 });
