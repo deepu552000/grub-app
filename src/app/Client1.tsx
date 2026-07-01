@@ -703,13 +703,9 @@ export default function ClientPage() {
     setTimeout(() => setEventVisible(false), 600); // matches animation duration
   }
 
-  const hasFetchedEventRef = useRef(false);
-
   useEffect(() => {
     if (!hydrated) return;
-    if (hasFetchedEventRef.current) return;
     if (state.lastEventDay === todayKey()) return;
-    hasFetchedEventRef.current = true;
 
     fetch("/api/event")
       .then((r) => r.json())
