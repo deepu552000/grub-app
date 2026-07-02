@@ -1193,6 +1193,15 @@ export default function ClientPage() {
         if (res.ok && data.ok) {
           saved = true;
           console.log(`[CHECKIN] DB saved ✅ (attempt ${attempt})`);
+        } else if (attempt > 1 && String(data?.error ?? "").includes("already been used")) {
+          // Server-side ordering guarantees txHash is only marked used AFTER
+          // a successful save. If a RETRY hits this (not the first attempt),
+          // it means an earlier attempt's request actually succeeded on the
+          // server but its response never made it back to us (network drop,
+          // app backgrounded, etc). Treat as success — don't tell the user
+          // their paid checkin failed when it didn't.
+          saved = true;
+          console.log(`[CHECKIN] DB already saved by an earlier attempt ✅ (attempt ${attempt})`);
         } else {
           lastError = data?.error ?? `HTTP ${res.status}`;
           console.error(`[CHECKIN] DB save rejected (attempt ${attempt}):`, lastError);
@@ -1631,6 +1640,13 @@ export default function ClientPage() {
           if (res.ok && data.ok) {
             saved = true;
             console.log(`[UNLOCK] DB saved ✅ (attempt ${attempt})`);
+          } else if (attempt > 1 && String(data?.error ?? "").includes("already been used")) {
+            // Same reasoning as persistPaidCheckin: server only marks a
+            // txHash used AFTER a successful save, so hitting this on a
+            // RETRY (not the first try) means an earlier attempt actually
+            // succeeded server-side and we just never saw the response.
+            saved = true;
+            console.log(`[UNLOCK] DB already saved by an earlier attempt ✅ (attempt ${attempt})`);
           } else {
             lastError = data?.error ?? `HTTP ${res.status}`;
             console.error(`[UNLOCK] DB save rejected (attempt ${attempt}):`, lastError);

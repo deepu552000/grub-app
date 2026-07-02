@@ -195,6 +195,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
+      // Mark txHash as used (keep for 1 year)
+      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, accessoryId, ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
+
       // Ensure the accessory is actually in state before saving
       const unlocked: string[] = state?.accessories?.unlocked ?? [];
       if (!unlocked.includes(accessoryId)) {
@@ -216,20 +219,6 @@ export async function POST(req: NextRequest) {
         state,
       );
       await kv.set(key, sanitized);
-
-      // Mark txHash as used only NOW, after the state write actually
-      // succeeded (kept for 1 year). Previously this happened right after
-      // payment verification but BEFORE the save below — if that save ever
-      // failed (KV outage, etc.) the txHash was permanently burned with the
-      // accessory never actually persisted, and no retry could ever recover
-      // it since the replay guard would reject the same hash forever. Doing
-      // it last means a failed save can still be retried with the same
-      // txHash. Tradeoff: a tiny window now exists where two truly
-      // concurrent requests with the same txHash (e.g. two tabs) could both
-      // pass the verify step — acceptable, since a legitimate txHash can
-      // only ever pay for one unlock's worth of USDC regardless.
-      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, accessoryId, ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
-
       console.log(`[pet] ✅ accessory unlocked ${who} accessory=${accessoryId} tx=${txHash}`);
       return NextResponse.json({ ok: true });
     }
@@ -256,15 +245,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
+      // Mark txHash as used
+      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "checkin", ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
+
       // Save state
       const existingForCheckin = await kv.get<any>(key);
       const sanitizedCheckin = sanitizeState(existingForCheckin, state);
       await kv.set(key, sanitizedCheckin);
-
-      // Mark txHash as used only after the save succeeded — same reasoning
-      // as the unlock_accessory path above.
-      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "checkin", ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
-
       console.log(`[pet] ✅ checkin saved ${who} tx=${txHash}`);
       return NextResponse.json({ ok: true });
     }
