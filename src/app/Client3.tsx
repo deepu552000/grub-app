@@ -6,14 +6,6 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { connect, getAccount, sendTransaction, switchChain } from "wagmi/actions";
 import { base } from "wagmi/chains";
 import { wagmiConfig } from "@/lib/wagmi";
-import { Attribution } from "ox/erc8021";
-
-// Base Builder Code — appended as a data suffix to every USDC transfer so it
-// attributes both the Farcaster and Base App payment paths to this app.
-// From base.dev > Settings > Builder Codes.
-const BUILDER_CODE_SUFFIX = Attribution.toDataSuffix({
-  codes: ["bc_sj35j3xa"],
-});
 
 // ── Base App / injected-wallet identity helper ──────────────────────────────
 // Silently checks for an already-connected injected wallet (no popup) via
@@ -948,13 +940,7 @@ export default function ClientPage() {
     const microUsdc = Math.round(usdAmount * 1_000_000); // USDC = 6 decimals
     const paddedTo = RECIPIENT.replace(/^0x/, "").toLowerCase().padStart(64, "0");
     const paddedAmount = microUsdc.toString(16).padStart(64, "0");
-    const baseData = ("0x" + selector + paddedTo + paddedAmount) as `0x${string}`;
-    // Append the Builder Code attribution suffix — the contract only reads
-    // the first 68 bytes for transfer(address,uint256), so this trailing
-    // data is ignored on execution but stays readable on-chain/Basescan for
-    // attribution. Works for both payment paths below since both send this
-    // exact `data` string.
-    const data = (baseData + BUILDER_CODE_SUFFIX.slice(2)) as `0x${string}`;
+    const data = ("0x" + selector + paddedTo + paddedAmount) as `0x${string}`;
 
     // ── Path 1: Farcaster host (Warpcast etc.) — unchanged, first priority ──
     // Only re-probe getEthereumProvider() here if we DON'T already know the
@@ -989,54 +975,15 @@ export default function ClientPage() {
       }
     }
 
-    // ── Path 1.5: Injected wallet (window.ethereum) — e.g. Base App's own ──
-    // in-app browser, which very likely injects its own wallet provider
-    // directly (same pattern as MetaMask/Coinbase Wallet/Ledger Live's
-    // in-app browsers) so transactions confirm natively in the wallet's own
-    // UI — no external passkey/popup ceremony needed at all. This is tried
-    // BEFORE Base Account/wagmi because it's simpler and far more reliable
-    // inside a WebView, where WebAuthn/passkeys are known to hang silently.
-    if (typeof window !== "undefined" && (window as any).ethereum) {
-      try {
-        const injected = (window as any).ethereum;
-        const accounts: string[] = await injected.request({ method: "eth_requestAccounts" });
-        if (accounts && accounts.length > 0) {
-          console.log("[PAYMENT] wallet (injected):", accounts[0]);
-          if (!fid && !walletAddress) setWalletAddress(accounts[0].toLowerCase());
-
-          console.log("[PAYMENT] sending tx (injected), microUsdc:", microUsdc);
-          const txHash: string = await injected.request({
-            method: "eth_sendTransaction",
-            params: [{
-              from: accounts[0] as `0x${string}`,
-              to: USDC_CONTRACT,
-              data,
-            }],
-          });
-
-          if (!txHash) throw new Error("No transaction hash returned. Please try again.");
-          console.log("[PAYMENT] confirmed ✅ txHash (injected):", txHash);
-          return txHash;
-        }
-      } catch (err) {
-        // If the user explicitly rejected, don't silently fall through to a
-        // second wallet flow — surface it immediately.
-        const msg = (err as any)?.message?.toLowerCase?.() ?? "";
-        if (msg.includes("reject") || msg.includes("denied")) throw err;
-        // Otherwise (no accounts, method not supported, etc.) fall through
-        // to Path 2 below.
-        console.log("[PAYMENT] injected wallet attempt failed, falling back:", err);
-      }
-    }
-
-    // ── Path 2: last resort — Base Account via wagmi ──────────────────────
-    // Reached only if there's no Farcaster provider AND no injected wallet
-    // at all (e.g. a plain mobile Safari/Chrome tab with no wallet app
-    // context). Base's own docs recommend wagmi + the Base Account
-    // connector for exactly this case.
+    // ── Path 2: Base App / plain browser fallback — Base Account via wagmi ──
+    // sdk.wallet.getEthereumProvider() isn't available outside a Farcaster
+    // host, and Base App no longer reliably injects window.ethereum either
+    // (it's no longer treated as a Farcaster mini app as of Apr 9, 2026).
+    // Base's own docs recommend wagmi + the Base Account connector for this
+    // exact case, so that's what triggers the connect/confirm popup here.
     // connect() is the FIRST async call in this branch when fcWalletAvailable
     // is already known false — this keeps it tied to the original click.
-    console.log("[PAYMENT] no Farcaster/injected wallet — falling back to Base Account (wagmi)");
+    console.log("[PAYMENT] no Farcaster provider — falling back to Base Account (wagmi)");
 
     let account = getAccount(wagmiConfig);
     if (!account.address) {
