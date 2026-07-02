@@ -1316,7 +1316,7 @@ export default function ClientPage() {
         accessoryName: acc?.name,
       });
       setClosetMessage(null);
-      setLastAction(`New accessory unlocked! +${getUnlockXp(accessoryId)} XP. Tap Equip to dress up Grub.`);
+      setLastAction("New accessory unlocked! Tap Equip to dress up Grub.");
       playSfx("unlock");
       console.log("[UNLOCK] complete ✅");
     } catch (err: any) {

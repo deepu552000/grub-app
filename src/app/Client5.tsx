@@ -14,6 +14,11 @@ import {
   equipAccessory,
   removeAccessory,
   getEquippedForStage,
+  getDailyEquipXp,
+  getUnlockXp,
+  getUnlockXpForStage,
+  getEquipXpPerItemForStage,
+  getMaxEquipXpItemsForStage,
 } from "@/lib/pet-accessories-state";
 
 type Mood = "content" | "smug" | "hungry" | "feral" | "sleepy";
@@ -40,6 +45,10 @@ type PetState = {
   totalCheckIns: number; // lifetime check-in count, first 5 are free
   lastEventDay: string;  // date key of last applied daily event
   accessories: AccessoryState;
+  lastAccessoryXpAt: number; // timestamp of last equip-XP grant/check — a rolling
+                              // ~24h timer, paused (not advanced) while mood is
+                              // hungry/feral/sleepy, independent of check-in
+
 };
 
 type FloatingNumber = {
@@ -323,7 +332,56 @@ const defaultState: PetState = {
   totalCheckIns: 0,
   lastEventDay: "",
   accessories: createEmptyAccessoryState(),
+  lastAccessoryXpAt: Date.now(),
 };
+
+// Equip XP is checked on a rolling window, not a calendar day — someone who
+// equips at 3pm should get credit ~24h later, not "at next midnight" or "only
+// if they happen to check in". See moodFor() for the mood gate.
+const ACCESSORY_XP_INTERVAL_HOURS = 24;
+
+// Figures out how much equip XP (if any) to grant right now, and what the
+// new lastAccessoryXpAt timestamp should be. Shared by loadState() and
+// loadStateFromSaved() so both paths behave identically.
+//
+//   - Not enough time elapsed yet          → { xpAwarded: 0, nextAt: unchanged }
+//   - Enough time elapsed, mood is bad     → { xpAwarded: 0, nextAt: unchanged }
+//     (the clock pauses during hungry/feral/sleepy — it does NOT advance,
+//     so the very next good-mood check picks up right where it left off)
+//   - Enough time elapsed, mood is good    → { xpAwarded: <n>, nextAt: now }
+//     (resets the window even if 0 items were equipped — that "cycle" is
+//     spent either way; nothing equipped just means this cycle pays 0)
+function resolveAccessoryXpTick(
+  parsed: PetState,
+  decayedHunger: number,
+  decayedHappiness: number,
+  decayedCare: number,
+): { xpAwarded: number; nextAt: number } {
+  const lastAt = parsed.lastAccessoryXpAt ?? parsed.lastVisit ?? Date.now();
+  const hoursSince = Math.max(0, (Date.now() - lastAt) / 36e5);
+  if (hoursSince < ACCESSORY_XP_INTERVAL_HOURS) {
+    return { xpAwarded: 0, nextAt: lastAt };
+  }
+
+  // Build a candidate state to evaluate mood against the post-decay stats,
+  // not the stale pre-decay ones.
+  const candidateMood = moodFor({
+    ...parsed,
+    hunger: decayedHunger,
+    happiness: decayedHappiness,
+    care: decayedCare,
+    lastVisit: Date.now(),
+  });
+  if (candidateMood !== "content" && candidateMood !== "smug") {
+    return { xpAwarded: 0, nextAt: lastAt }; // paused — don't advance the clock
+  }
+
+  const stageObj = getStage(parsed.xp);
+  const currentStage = stages.findIndex((s) => s.name === stageObj.name) + 1;
+  const accessories = parsed.accessories ?? createEmptyAccessoryState();
+  const xpAwarded = getDailyEquipXp(accessories, currentStage);
+  return { xpAwarded, nextAt: Date.now() };
+}
 
 function clamp(value: number) {
   if (Number.isNaN(value)) return 0;
@@ -373,15 +431,20 @@ function loadState(): PetState {
         hoursPastGrace * BOND_DECAY_PER_HOUR,
     );
 
+    const decayedHunger = clamp(parsed.hunger - hoursAway * 1.2);
+    const decayedHappiness = clamp(parsed.happiness - hoursAway * 0.8);
+    const decayedCare = clamp(parsed.care - hoursAway * 1.0);
+    const accessoryXpTick = resolveAccessoryXpTick(parsed, decayedHunger, decayedHappiness, decayedCare);
+
     return {
       ...defaultState,
       ...parsed,
       bond: bondAfterDecay,
       glimmer: parsed.glimmer + mined,
-      hunger: clamp(parsed.hunger - hoursAway * 1.2),
-      happiness: clamp(parsed.happiness - hoursAway * 0.8),
+      hunger: decayedHunger,
+      happiness: decayedHappiness,
       energy: clamp(parsed.energy + hoursAway * 5),
-      care: clamp(parsed.care - hoursAway * 1.0),
+      care: decayedCare,
       lastVisit: Date.now(),
       // Daily caps reset on a new calendar day, not on a timer - simple and predictable.
       actionsToday: isNewCareDay
@@ -392,6 +455,10 @@ function loadState(): PetState {
       // Old saves won't have this field — fall back to empty so equip/unlock
       // logic never crashes on undefined.
       accessories: parsed.accessories ?? createEmptyAccessoryState(),
+      // Equip XP: recurring reward for keeping accessories on, gated by a
+      // rolling ~24h timer + good mood (see resolveAccessoryXpTick above).
+      xp: (parsed.xp ?? 0) + accessoryXpTick.xpAwarded,
+      lastAccessoryXpAt: accessoryXpTick.nextAt,
     };
   } catch {
     return { ...defaultState, lastVisit: Date.now() };
@@ -415,21 +482,28 @@ function loadStateFromSaved(parsed: PetState): PetState {
       : defaultState.bond) - hoursPastGrace * BOND_DECAY_PER_HOUR,
   );
 
+  const decayedHunger = clamp(parsed.hunger - hoursAway * 1.2);
+  const decayedHappiness = clamp(parsed.happiness - hoursAway * 0.8);
+  const decayedCare = clamp(parsed.care - hoursAway * 1.0);
+  const accessoryXpTick = resolveAccessoryXpTick(parsed, decayedHunger, decayedHappiness, decayedCare);
+
   return {
     ...defaultState,
     ...parsed,
     bond: bondAfterDecay,
     glimmer: parsed.glimmer + mined,
-    hunger: clamp(parsed.hunger - hoursAway * 1.2),
-    happiness: clamp(parsed.happiness - hoursAway * 0.8),
+    hunger: decayedHunger,
+    happiness: decayedHappiness,
     energy: clamp(parsed.energy + hoursAway * 5),
-    care: clamp(parsed.care - hoursAway * 1.0),
+    care: decayedCare,
     lastVisit: Date.now(),
     actionsToday: isNewCareDay
       ? { feed: 0, play: 0, groom: 0, nap: 0 }
       : { ...defaultState.actionsToday, ...parsed.actionsToday },
     tapsToday: isNewTapDay ? 0 : parsed.tapsToday ?? 0,
     accessories: parsed.accessories ?? createEmptyAccessoryState(),
+    xp: (parsed.xp ?? 0) + accessoryXpTick.xpAwarded,
+    lastAccessoryXpAt: accessoryXpTick.nextAt,
   };
 }
 
@@ -703,9 +777,13 @@ export default function ClientPage() {
     setTimeout(() => setEventVisible(false), 600); // matches animation duration
   }
 
+  const hasFetchedEventRef = useRef(false);
+
   useEffect(() => {
     if (!hydrated) return;
+    if (hasFetchedEventRef.current) return;
     if (state.lastEventDay === todayKey()) return;
+    hasFetchedEventRef.current = true;
 
     fetch("/api/event")
       .then((r) => r.json())
@@ -1184,8 +1262,13 @@ export default function ClientPage() {
       setState((prev) => {
         const alreadyUnlocked = prev.accessories.unlocked.includes(accessoryId);
         console.log("[UNLOCK] setState — alreadyUnlocked:", alreadyUnlocked, "unlocked list:", prev.accessories.unlocked);
+        // One-time XP reward for unlocking — not for equipping (that's the
+        // separate recurring equip-XP tick). Skipped on the already-unlocked
+        // race path so a double-fire can't double-pay.
+        const unlockXp = alreadyUnlocked ? 0 : getUnlockXp(accessoryId);
         const newState = alreadyUnlocked ? prev : {
           ...prev,
+          xp: prev.xp + unlockXp,
           accessories: {
             ...prev.accessories,
             unlocked: [...prev.accessories.unlocked, accessoryId],
@@ -1233,7 +1316,7 @@ export default function ClientPage() {
         accessoryName: acc?.name,
       });
       setClosetMessage(null);
-      setLastAction("New accessory unlocked! Tap Equip to dress up Grub.");
+      setLastAction(`New accessory unlocked! +${getUnlockXp(accessoryId)} XP. Tap Equip to dress up Grub.`);
       playSfx("unlock");
       console.log("[UNLOCK] complete ✅");
     } catch (err: any) {
@@ -1731,7 +1814,9 @@ export default function ClientPage() {
                   : streakRewardEarned
                   ? "✦ Check In · +5 XP bonus!"
                   : isFreeCheckin
-                  ? `✦ Check In · Free (${freeCheckInsLeft} left)`
+                  ? freeCheckInsLeft === 1
+                    ? "✦ Check In · Last Free One!"
+                    : `✦ Check In · Free (${freeCheckInsLeft} left)`
                   : "✦ Check In · $0.01"}
               </button>
               {checkinError && (
@@ -1741,7 +1826,9 @@ export default function ClientPage() {
               )}
               <small>
                 {isFreeCheckin
-                  ? `First 5 days free · then $0.01/day on Base`
+                  ? freeCheckInsLeft === 1
+                    ? `Last free check-in · $0.01/day starts tomorrow`
+                    : `First 5 days free · then $0.01/day on Base`
                   : "Wallet payment on Base"}
               </small>
             </div>
@@ -1942,12 +2029,20 @@ export default function ClientPage() {
               )}
 
               {/* Price hint */}
-              <p style={{ fontSize: "0.72rem", color: "#8a7a70", textAlign: "center", marginBottom: 8 }}>
+              <p style={{ fontSize: "0.72rem", color: "#8a7a70", textAlign: "center", marginBottom: 4 }}>
                 {closetStageView === 1 && "Stage 1 accessories · $0.10 each on Base"}
                 {closetStageView === 2 && "Stage 2 accessories · $0.20 each on Base"}
                 {closetStageView === 3 && "Stage 3 accessories · $0.30 each on Base"}
                 {closetStageView === 4 && "Stage 4 accessories · $0.40 each on Base"}
               </p>
+
+              {/* XP hint — unlock XP is one-time; equip XP is recurring, per
+                  item, per ~24h, and only pays out while Grub is content/smug. */}
+              <p style={{ fontSize: "0.7rem", color: "#8a7a70", textAlign: "center", marginBottom: 8 }}>
+                ✨ +{getUnlockXpForStage(closetStageView)} XP on unlock · +{getEquipXpPerItemForStage(closetStageView)} XP/day per item worn
+                {closetStageView === 4 ? ` (up to ${getMaxEquipXpItemsForStage(4)} items count toward XP)` : ""}
+              </p>
+
 
               {/* Accessory grid */}
               <div
@@ -2563,7 +2658,7 @@ const faqSections = [
   },
   {
     title: "👗 Closet & Accessories",
-    content: "The Closet lets you dress up Grub with accessories unlocked using USDC on Base.\n\nEach stage has its own accessories:\n• Stage 1 (Tiny Cloud) — $0.10 each: bows, glasses\n• Stage 2 (Pocket Purr) — $0.20 each: crown, cape, wand\n• Stage 3 (Pearl Floof) — $0.30 each: wings, wizard hat, tail charm\n• Stage 4 (Moonmilk Mythic) — $0.40 each: legendary set, 8 pieces\n\nHow it works:\n• Tap Unlock to purchase an accessory with USDC on Base\n• Once unlocked it is yours forever — no re-buying\n• Tap Equip to put it on Grub, Remove to take it off\n• You can mix and match freely within a stage\n• You can browse any stage's accessories but can only equip items that match Grub's current stage\n\nAccessories only show on Grub when she is Content or Smug. They are hidden when she is Hungry, Feral, or Sleepy — keep her happy to show off her outfits!",
+    content: "The Closet lets you dress up Grub with accessories unlocked using USDC on Base.\n\nEach stage has its own accessories:\n• Stage 1 (Tiny Cloud) — $0.10 each: bows, glasses\n• Stage 2 (Pocket Purr) — $0.20 each: crown, cape, wand\n• Stage 3 (Pearl Floof) — $0.30 each: wings, wizard hat, tail charm\n• Stage 4 (Moonmilk Mythic) — $0.40 each: legendary set, 8 pieces\n\nHow it works:\n• Tap Unlock to purchase an accessory with USDC on Base\n• Once unlocked it is yours forever — no re-buying\n• Tap Equip to put it on Grub, Remove to take it off\n• You can mix and match freely within a stage\n• You can browse any stage's accessories but can only equip items that match Grub's current stage\n\nAccessories only show on Grub when she is Content or Smug. They are hidden when she is Hungry, Feral, or Sleepy — keep her happy to show off her outfits!\n\nXP rewards:\n• Unlocking an accessory gives one-time bonus XP (+3 Stage 1, +5 Stage 2, +8 Stage 3, +12 Stage 4)\n• Wearing accessories gives recurring bonus XP roughly every 24 hours: +1 XP/item at Stage 1, +2 at Stage 2, +3 at Stage 3, +3 at Stage 4 (up to 3 items count at Stage 4, even though 5 slots are equippable)\n• This daily bonus only pays out while Grub is Content or Smug — if she's Hungry, Feral, or Sleepy, the bonus pauses (not lost) until her mood recovers\n• Buying an accessory and never equipping it only gets you the one-time unlock bonus — equip it to keep earning",
   },
   {
     title: "⚠️ Going Feral",
