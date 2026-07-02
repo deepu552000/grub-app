@@ -1,37 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
-import { ACCESSORIES } from "@/lib/accessories";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const RECIPIENT     = "0xCF8A44059652DB5Af8B4CB62938c5DC6916eB082";
-// Base's own public RPC — verifies directly against the chain instead of
-// going through Etherscan. Etherscan's free-tier API key does NOT cover Base
-// (confirmed: "Free API access is not supported for this chain. Please
-// upgrade your api plan") — every verify call was failing at the API layer,
-// which the old parsing code (see git history) silently treated as "not
-// confirmed yet" and burned the full 30s retry window before timing out,
-// even for real, correctly-paid transactions. Base RPC needs no key or paid
-// plan for eth_getTransactionReceipt. If this public endpoint's rate limits
-// ever become a problem at scale, swap BASE_RPC for a provider URL (Alchemy/
-// QuickNode/CDP) — the JSON-RPC shape is identical, no other code changes.
-const BASE_RPC = "https://mainnet.base.org";
+const BASESCAN_API  = "https://api.etherscan.io/v2/api";
+const BASESCAN_KEY  = process.env.BASESCAN_API_KEY ?? "";
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 // Checkin price in micro-USDC
 const CHECKIN_MICRO_USDC = 10_000; // $0.01
 
-// Accessory prices in micro-USDC (6 decimals), derived from lib/accessories.ts
-// (the single source of truth for the catalog) instead of a hand-maintained
-// duplicate list. A hardcoded copy here previously only covered the 6 Stage 1
-// items — every Stage 2/3/4 accessory (24 of 30) fell through to "Unknown
-// accessory" even after a verified payment, since this map is checked BEFORE
-// verifyUsdcTransfer ever runs. Deriving it from ACCESSORIES means a newly
-// added accessory is priced correctly here automatically, with no separate
-// edit required.
-const ACCESSORY_PRICES: Record<string, number> = Object.fromEntries(
-  ACCESSORIES.map((a) => [a.id, Math.round(a.costUsd * 1_000_000)]),
-);
+// Accessory prices in micro-USDC (6 decimals). Must match client-side.
+const ACCESSORY_PRICES: Record<string, number> = {
+  "bow-black":      100_000,  // $0.10
+  "bow-red":        100_000,
+  "party-hat-pink": 100_000,
+  "party-hat-blue": 100_000,
+  "glasses-gold":   100_000,
+  "glasses-black":  100_000,
+};
 
 // ── Identity helper ──────────────────────────────────────────────────────────
 // Grub users are identified by EITHER a Farcaster fid (Warpcast/Farcaster
@@ -55,45 +43,20 @@ function identityLabel(fid?: string | number | null, wallet?: string | null): st
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// Verify a USDC transfer on Base via Base's own RPC — polls up to 30s
+// Verify a USDC transfer on Base via Etherscan — polls up to 30s
 async function verifyUsdcTransfer(
   txHash: string,
   expectedMicroUsdc: number,
 ): Promise<{ ok: boolean; error?: string }> {
+  const url = `${BASESCAN_API}?chainid=8453&module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${BASESCAN_KEY}`;
   const recipientTopic = "0x000000000000000000000000" + RECIPIENT.replace(/^0x/, "").toLowerCase();
   const expectedHex    = "0x" + expectedMicroUsdc.toString(16).padStart(64, "0");
 
   const deadline = Date.now() + 30_000;
-  let attempts = 0;
   while (Date.now() < deadline) {
-    attempts++;
     try {
-      const res = await fetch(BASE_RPC, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_getTransactionReceipt",
-          params: [txHash],
-        }),
-      });
+      const res  = await fetch(url, { cache: "no-store" });
       const json = await res.json();
-
-      // Standard JSON-RPC error shape: { jsonrpc, id, error: { code, message } }.
-      // Distinct from "result is null" (receipt not mined yet, which is
-      // expected and just means keep polling) — an actual `error` field means
-      // something is wrong with the request itself (malformed hash, RPC
-      // rejecting the call, etc.) and isn't worth burning the full 30s on.
-      if (json?.error) {
-        console.error(`[pet] Base RPC error (attempt ${attempts}): ${JSON.stringify(json.error)}`);
-        return {
-          ok: false,
-          error: `Payment verification failed (RPC error: ${json.error.message ?? "unknown"}).`,
-        };
-      }
-
       const logs: any[] = json?.result?.logs ?? [];
 
       const match = logs.find(
