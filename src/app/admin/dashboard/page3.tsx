@@ -991,7 +991,7 @@ function AdminDashboardInner() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 16 }}>
                     {[...filteredRealUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
                       const profile = profiles[String(u.fid)];
-                      const notifFlagged = !u.hasNotifToken;
+                      const notifFlagged = u.hasAddedApp && !u.hasNotifToken;
                       return (
                       <div key={u.fid} style={{
                         display: "flex", alignItems: "center", gap: 12,
@@ -1025,13 +1025,13 @@ function AdminDashboardInner() {
                           )}
                           {notifFlagged && (
                             <span
-                              title={u.hasAddedApp ? "Added the app but notifications are off" : "Hasn't added the app — notifications are off"}
+                              title="Added the app but notifications are off"
                               style={{
                                 fontSize: 9, fontWeight: 700, color: C.red, whiteSpace: "nowrap",
                                 display: "inline-flex", alignItems: "center", gap: 3,
                               }}
                             >
-                              🔕 {u.hasAddedApp ? "notif off" : "not added, notif off"}
+                              🔕 notif off
                             </span>
                           )}
                         </div>
