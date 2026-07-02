@@ -991,22 +991,21 @@ function AdminDashboardInner() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 16 }}>
                     {[...filteredRealUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
                       const profile = profiles[String(u.fid)];
-                      const bothOff = !u.hasAddedApp && !u.hasNotifToken;
+                      const notifFlagged = !u.hasNotifToken;
                       return (
                       <div key={u.fid} style={{
                         display: "flex", alignItems: "center", gap: 12,
-                        background: bothOff ? (dark ? C.redDim + "55" : "#fee2e215") : "transparent",
+                        background: notifFlagged ? (dark ? C.redDim + "55" : "#fee2e215") : "transparent",
                         borderRadius: 8,
-                        padding: bothOff ? "4px 6px" : 0,
-                        border: bothOff ? `1px solid ${C.red}33` : "1px solid transparent",
+                        padding: notifFlagged ? "4px 6px" : 0,
+                        border: notifFlagged ? `1px solid ${C.red}33` : "1px solid transparent",
                       }}>
                         <div style={{ width: 72, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
                           <button
                             onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                            style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, textShadow: dark ? `0 0 8px ${C.amberGlow}66` : "none", display: "inline-flex", alignItems: "center", gap: 3 }}
+                            style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, textShadow: dark ? `0 0 8px ${C.amberGlow}66` : "none" }}
                             title="Open in user panel"
                           >
-                            {bothOff && <span style={{ color: C.red, fontWeight: 700 }}>🔕</span>}
                             #{u.fid}
                           </button>
                           {profile?.username ? (
@@ -1023,6 +1022,17 @@ function AdminDashboardInner() {
                             <span style={{ fontSize: 10, color: T.textMute }}>…</span>
                           ) : (
                             <span style={{ fontSize: 10, color: T.textMute }}>—</span>
+                          )}
+                          {notifFlagged && (
+                            <span
+                              title={u.hasAddedApp ? "Added the app but notifications are off" : "Hasn't added the app — notifications are off"}
+                              style={{
+                                fontSize: 9, fontWeight: 700, color: C.red, whiteSpace: "nowrap",
+                                display: "inline-flex", alignItems: "center", gap: 3,
+                              }}
+                            >
+                              🔕 {u.hasAddedApp ? "notif off" : "not added, notif off"}
+                            </span>
                           )}
                         </div>
                         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
@@ -1054,15 +1064,13 @@ function AdminDashboardInner() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 140, overflowY: "auto", paddingRight: 10 }}>
                     {filteredGhostUsers.map((u) => {
                       const profile = profiles[String(u.fid)];
-                      const bothOff = !u.hasAddedApp && !u.hasNotifToken;
                       return (
                         <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12, opacity: 0.85 }}>
                           <button
                             onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                            style={{ fontSize: 13, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 3 }}
+                            style={{ fontSize: 13, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, fontWeight: 600 }}
                             title="Open in user panel"
                           >
-                            {bothOff && <span style={{ color: C.red, fontWeight: 700 }}>🔕</span>}
                             #{u.fid}
                           </button>
                           {profile?.username ? (
