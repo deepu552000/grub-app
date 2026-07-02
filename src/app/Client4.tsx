@@ -940,17 +940,7 @@ export default function ClientPage() {
   // Sends exact USDC via eth_sendTransaction (ERC-20 transfer calldata).
   // Shows the native single-step "Confirm transaction" box in Farcaster/FC wallet.
   // eth_sendTransaction: user must explicitly confirm in wallet before txHash is returned.
-  // Returns both the txHash AND the wallet address that actually signed the
-  // transaction. The wallet address is needed because setWalletAddress()
-  // below is an async state update — the caller's `walletAddress` closure
-  // variable is still stale (often null) immediately after this function
-  // returns, until the next render. Callers MUST use the returned
-  // walletAddress (not the `walletAddress` state var) when building the
-  // identity for the follow-up /api/pet save, or the save silently no-ops /
-  // saves under the wrong (null) identity and the unlock/checkin is lost on
-  // refresh — this was the root cause of the "accessory reverts to locked
-  // after refresh" bug.
-  async function sendUsdcPayment(usdAmount: number, purpose: "checkin" | "accessory", accessoryId?: string): Promise<{ txHash: string; walletAddress: string | null }> {
+  async function sendUsdcPayment(usdAmount: number, purpose: "checkin" | "accessory", accessoryId?: string): Promise<string> {
     console.log("[PAYMENT] start, amount:", usdAmount, "purpose:", purpose);
 
     // Build ERC-20 transfer(address,uint256) calldata — shared by both paths.
@@ -995,7 +985,7 @@ export default function ClientPage() {
         // that confirmation IS the gate. Receipt polling via FC provider is not supported,
         // so we trust the hash and unlock immediately. Server-side verify-payment route
         // provides the on-chain double-check for audit purposes.
-        return { txHash, walletAddress: accounts[0] };
+        return txHash;
       }
     }
 
@@ -1026,7 +1016,7 @@ export default function ClientPage() {
 
           if (!txHash) throw new Error("No transaction hash returned. Please try again.");
           console.log("[PAYMENT] confirmed ✅ txHash (injected):", txHash);
-          return { txHash, walletAddress: accounts[0].toLowerCase() };
+          return txHash;
         }
       } catch (err) {
         // If the user explicitly rejected, don't silently fall through to a
@@ -1075,7 +1065,7 @@ export default function ClientPage() {
 
     if (!txHash) throw new Error("No transaction hash returned. Please try again.");
     console.log("[PAYMENT] confirmed ✅ txHash (Base Account):", txHash);
-    return { txHash, walletAddress: account.address.toLowerCase() };
+    return txHash;
   }
 
   // yesterday's date key
@@ -1089,12 +1079,8 @@ export default function ClientPage() {
   const missedYesterday = !checkedInToday && state.lastCheckInDay !== "" && state.lastCheckInDay !== yesterdayKey() && state.lastCheckInDay !== todayKey();
   const streakRewardEarned = checkinStreak > 0 && checkinStreak % 7 === 0;
 
-  // Applies check-in to state after payment confirmed (or for free days).
-  // paidWallet: the wallet address that actually signed the payment tx, if
-  // any — see sendUsdcPayment's docstring for why this can't come from the
-  // `walletAddress` state var (it's stale immediately after a first-time
-  // wallet connect).
-  function applyCheckIn(txHash?: string, paidWallet?: string | null) {
+  // Applies check-in to state after payment confirmed (or for free days)
+  function applyCheckIn(txHash?: string) {
     setState((current) => {
       const isNewDay = current.lastCheckInDay !== todayKey();
       if (!isNewDay) return current;
@@ -1131,26 +1117,15 @@ export default function ClientPage() {
       }).catch(() => {});
     }
 
-    // For paid checkins — save with action+txHash so server can verify payment.
-    // For free checkins (txHash undefined) — normal auto-save via useEffect is fine.
-    // Use paidWallet (fresh from this payment) over the possibly-stale
-    // walletAddress state var — same fix as handleUnlockAccessory, otherwise a
-    // user's first-ever paid checkin saves under a null identity and reverts
-    // on refresh.
-    const saveWallet = paidWallet ?? walletAddress;
-    const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-
-    if (!fid && saveWallet && saveWallet !== walletAddress) {
-      setWalletAddress(saveWallet);
-    }
-
-    if (saveIdentity && txHash) {
+    // For paid checkins — save with action+txHash so server can verify payment
+    // For free checkins (txHash undefined) — normal auto-save via useEffect is fine
+    if (identityParam && txHash) {
       setState((current) => {
         fetch("/api/pet", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            ...saveIdentity,
+            ...(fid ? { fid } : { wallet: walletAddress }),
             state: current,
             action: "checkin",
             txHash,
@@ -1165,8 +1140,6 @@ export default function ClientPage() {
         }).catch((e) => console.error("[CHECKIN] DB save failed", e));
         return current; // no state change, just using setState to get current value
       });
-    } else if (txHash) {
-      console.warn("[CHECKIN] no identity! DB save skipped");
     }
   }
 
@@ -1188,9 +1161,9 @@ export default function ClientPage() {
     // Paid check-in — exact $0.01 USDC on Base via contract call
     setCheckinPending(true);
     try {
-      const { txHash, walletAddress: paidWallet } = await sendUsdcPayment(CHECKIN_USD, "checkin");
+      const txHash = await sendUsdcPayment(CHECKIN_USD, "checkin");
 
-      applyCheckIn(txHash, paidWallet);
+      applyCheckIn(txHash);
       // Log confirmed check-in transaction — fire and forget
       logTransaction({
         type: "checkin",
@@ -1479,14 +1452,11 @@ export default function ClientPage() {
     console.log("[UNLOCK] price:", price);
 
     let txHash: string | null = null; // unlock is ONLY allowed after this is set by verified payment
-    let paidWallet: string | null = null; // wallet that actually signed the tx (may be brand new)
 
     try {
       console.log("[UNLOCK] calling sendUsdcPayment...");
-      const paymentResult = await sendUsdcPayment(price, "accessory", accessoryId);
-      txHash = paymentResult.txHash;
-      paidWallet = paymentResult.walletAddress;
-      console.log("[UNLOCK] tx submitted, txHash:", txHash, "paidWallet:", paidWallet);
+      txHash = await sendUsdcPayment(price, "accessory", accessoryId);
+      console.log("[UNLOCK] tx submitted, txHash:", txHash);
 
       // Hard guard — if txHash is still null/empty somehow, bail before touching state
       if (!txHash) throw new Error("Payment returned no transaction hash. Unlock aborted.");
@@ -1523,29 +1493,13 @@ export default function ClientPage() {
           console.log("[UNLOCK] localStorage saved");
         } catch (e) { console.error("[UNLOCK] localStorage failed", e); }
 
-        // Use the wallet that ACTUALLY signed this payment (paidWallet) as the
-        // primary source of truth, falling back to the walletAddress state var
-        // for cases where it was already known. Do NOT gate on the stale
-        // `identityParam` — if this is the user's very first payment, their
-        // wallet just got connected inside sendUsdcPayment and setWalletAddress()
-        // hasn't re-rendered yet, so identityParam is still null even though we
-        // now have a perfectly good wallet address to save under.
-        const saveWallet = paidWallet ?? walletAddress;
-        const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-
-        // Also sync React state so subsequent renders (debounced autosave,
-        // identityParam-based DB load, etc.) know about this wallet too.
-        if (!fid && saveWallet && saveWallet !== walletAddress) {
-          setWalletAddress(saveWallet);
-        }
-
-        if (saveIdentity) {
-          console.log("[UNLOCK] saving to DB, identity:", saveIdentity);
+        if (identityParam) {
+          console.log("[UNLOCK] saving to DB, identity:", identityParam);
           fetch("/api/pet", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              ...saveIdentity,
+              ...(fid ? { fid } : { wallet: walletAddress }),
               state: newState,
               action: "unlock_accessory",
               accessoryId,
