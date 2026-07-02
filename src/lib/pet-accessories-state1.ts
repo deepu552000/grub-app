@@ -20,57 +20,6 @@ export function createEmptyAccessoryState(): AccessoryState {
   return { unlocked: [], equipped: {} };
 }
 
-// ── Accessory XP economy ──────────────────────────────────────────────────
-//
-// Two separate rewards, decided together with product:
-//   1. Unlock XP  — one-time, granted the moment a payment unlocks an
-//      accessory. Scales with the accessory's price/stage.
-//   2. Equip XP   — recurring, granted every ~24h that accessory(ies) stay
-//      equipped AND the cat is in a good mood (content/smug). This is
-//      evaluated by the caller (Client.tsx) on a rolling timer, not tied to
-//      check-in, since equipping is passive ("the outfit is just on").
-//
-// Stage 4 has 5 equip slots, but XP only counts the first 3 equipped items
-// — a temporary decoupling until the equip UI itself is capped to 3 slots
-// at Stage 4 (planned, not yet built). Slots beyond the XP cap still work
-// cosmetically, they just don't add extra XP.
-const UNLOCK_XP_BY_STAGE: Record<number, number> = { 1: 3, 2: 5, 3: 8, 4: 12 };
-const EQUIP_XP_PER_ITEM_BY_STAGE: Record<number, number> = { 1: 1, 2: 2, 3: 3, 4: 3 };
-const EQUIP_XP_MAX_ITEMS_BY_STAGE: Record<number, number> = { 1: 2, 2: 3, 3: 3, 4: 3 };
-
-// One-time XP for unlocking a specific accessory. 0 for unknown ids.
-export function getUnlockXp(accessoryId: string): number {
-  const acc = getAccessory(accessoryId);
-  if (!acc) return 0;
-  return UNLOCK_XP_BY_STAGE[acc.stage] ?? 0;
-}
-
-// Stage-level XP lookups, for UI copy (closet, FAQ) — exported so display
-// text always matches the real values above instead of a hardcoded duplicate.
-export function getUnlockXpForStage(stage: number): number {
-  return UNLOCK_XP_BY_STAGE[stage] ?? 0;
-}
-export function getEquipXpPerItemForStage(stage: number): number {
-  return EQUIP_XP_PER_ITEM_BY_STAGE[stage] ?? 0;
-}
-export function getMaxEquipXpItemsForStage(stage: number): number {
-  return EQUIP_XP_MAX_ITEMS_BY_STAGE[stage] ?? 0;
-}
-
-// Recurring (per ~24h window) XP for whatever is currently equipped that
-// matches currentCatStage. Caller decides *when* to call this (the timer +
-// mood gate live in Client.tsx, since this file has no notion of time or
-// mood) — this function only answers "how much, right now, if granted".
-export function getDailyEquipXp(state: AccessoryState, currentCatStage: number): number {
-  const perItem = EQUIP_XP_PER_ITEM_BY_STAGE[currentCatStage] ?? 0;
-  const maxItems = EQUIP_XP_MAX_ITEMS_BY_STAGE[currentCatStage] ?? 0;
-  if (perItem <= 0 || maxItems <= 0) return 0;
-
-  const equippedForStage = getEquippedForStage(state, currentCatStage);
-  const countedItems = Math.min(equippedForStage.length, maxItems);
-  return countedItems * perItem;
-}
-
 export function isUnlocked(state: AccessoryState, accessoryId: string): boolean {
   return state.unlocked.includes(accessoryId);
 }
@@ -86,7 +35,7 @@ export function isEquipped(state: AccessoryState, accessoryId: string): boolean 
 export function unlockAccessory(
   state: AccessoryState,
   accessoryId: string,
-): { ok: true; newState: AccessoryState; xpAwarded: number } | { ok: false; reason: string } {
+): { ok: true; newState: AccessoryState } | { ok: false; reason: string } {
   const acc = getAccessory(accessoryId);
   if (!acc) return { ok: false, reason: "Unknown accessory" };
   if (isUnlocked(state, accessoryId)) return { ok: false, reason: "Already unlocked" };
@@ -94,7 +43,6 @@ export function unlockAccessory(
   return {
     ok: true,
     newState: { ...state, unlocked: [...state.unlocked, accessoryId] },
-    xpAwarded: getUnlockXp(accessoryId),
   };
 }
 

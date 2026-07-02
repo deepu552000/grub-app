@@ -60,53 +60,6 @@ async function verifyUsdcTransfer(
   return { ok: false, error: "Transaction not confirmed within 30s. Try again." };
 }
 
-// ── State sanitization ──────────────────────────────────────────────────────
-// Applied on every save, regardless of path (unlock/checkin/regular). The
-// client is trusted for most fields (hunger, bond, glimmer, etc. were already
-// client-trusted before this) but two things get server-side checks because
-// they're now tied to a reward (equip-XP):
-//
-//   1. accessories.equipped — can only contain ids the server already knows
-//      are unlocked. Otherwise someone could hand-edit localStorage (or just
-//      POST to this route directly, no app required) to "equip" something
-//      they never paid for and start collecting equip-XP for it.
-//   2. xp — capped to a generous but bounded per-save ceiling above whatever
-//      the real game logic could produce in one call (core actions + one
-//      equip-XP tick + a buffer). This is a mitigation, not a full fix — xp
-//      itself is still client-reported, not server-recomputed from scratch.
-const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick (up to 9) + a small buffer
-
-function sanitizeState(existingRaw: any, incomingState: any) {
-  const existingUnlocked: string[] = existingRaw?.accessories?.unlocked ?? [];
-  const incomingUnlocked: string[] = incomingState?.accessories?.unlocked ?? [];
-  const safeUnlocked = incomingUnlocked.filter((id: string) => existingUnlocked.includes(id));
-
-  const incomingEquipped: Record<string, string> = incomingState?.accessories?.equipped ?? {};
-  const safeEquipped = Object.fromEntries(
-    Object.entries(incomingEquipped).filter(([, id]) => safeUnlocked.includes(id as string)),
-  );
-
-  const existingXp: number = typeof existingRaw?.xp === "number" ? existingRaw.xp : 0;
-  const incomingXp: number = typeof incomingState?.xp === "number" ? incomingState.xp : existingXp;
-  let safeXp = incomingXp;
-  if (incomingXp - existingXp > MAX_XP_GAIN_PER_SAVE) {
-    console.warn(
-      `[pet] xp gain clamped — requested +${incomingXp - existingXp}, allowed +${MAX_XP_GAIN_PER_SAVE}`,
-    );
-    safeXp = existingXp + MAX_XP_GAIN_PER_SAVE;
-  }
-
-  return {
-    ...incomingState,
-    xp: safeXp,
-    accessories: {
-      ...incomingState?.accessories,
-      unlocked: safeUnlocked,
-      equipped: safeEquipped,
-    },
-  };
-}
-
 // ── GET — fetch pet state ────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const fid = req.nextUrl.searchParams.get("fid");
@@ -183,18 +136,8 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Save state — sanitize equipped/xp too, same as every other save path.
-      // Note: the accessoryId being unlocked here is already verified by
-      // payment above, so temporarily fold it into existingUnlocked before
-      // sanitizing, or sanitizeState would strip the very accessory we just
-      // confirmed payment for (it isn't in KV's existingUnlocked yet).
-      const existingForUnlock = await kv.get<any>(`grub:pet:${fid}`);
-      const existingUnlockedList: string[] = existingForUnlock?.accessories?.unlocked ?? [];
-      const sanitized = sanitizeState(
-        { ...existingForUnlock, accessories: { ...existingForUnlock?.accessories, unlocked: [...existingUnlockedList, accessoryId] } },
-        state,
-      );
-      await kv.set(`grub:pet:${fid}`, sanitized);
+      // Save state
+      await kv.set(`grub:pet:${fid}`, state);
       console.log(`[pet] ✅ accessory unlocked fid=${fid} accessory=${accessoryId} tx=${txHash}`);
       return NextResponse.json({ ok: true });
     }
@@ -225,18 +168,31 @@ export async function POST(req: NextRequest) {
       await kv.set(usedKey, { fid, purpose: "checkin", ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
 
       // Save state
-      const existingForCheckin = await kv.get<any>(`grub:pet:${fid}`);
-      const sanitizedCheckin = sanitizeState(existingForCheckin, state);
-      await kv.set(`grub:pet:${fid}`, sanitizedCheckin);
+      await kv.set(`grub:pet:${fid}`, state);
       console.log(`[pet] ✅ checkin saved fid=${fid} tx=${txHash}`);
       return NextResponse.json({ ok: true });
     }
 
     // ── All other state saves (feeding, mood, equip, etc.) ───────────────────
-    // These don't involve payment so we just save directly, after sanitizing
-    // accessories.unlocked / accessories.equipped / xp against server-known state.
+    // These don't involve payment so we just save directly.
+    // Accessories.unlocked list is protected: we merge with existing DB state
+    // so a client can't add new unlocks via a regular save.
     const existingRaw = await kv.get<any>(`grub:pet:${fid}`);
-    const safeState = sanitizeState(existingRaw, state);
+    const existingUnlocked: string[] = existingRaw?.accessories?.unlocked ?? [];
+
+    // Strip any new accessories the client tried to sneak in
+    const incomingUnlocked: string[] = state?.accessories?.unlocked ?? [];
+    const safeUnlocked = incomingUnlocked.filter((id: string) =>
+      existingUnlocked.includes(id)
+    );
+
+    const safeState = {
+      ...state,
+      accessories: {
+        ...state.accessories,
+        unlocked: safeUnlocked,
+      },
+    };
 
     await kv.set(`grub:pet:${fid}`, safeState);
     return NextResponse.json({ ok: true });
