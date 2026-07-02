@@ -7,6 +7,7 @@ import { connect, getAccount, sendTransaction, switchChain } from "wagmi/actions
 import { base } from "wagmi/chains";
 import { wagmiConfig } from "@/lib/wagmi";
 import { Attribution } from "ox/erc8021";
+import { useGrubSound } from "@/lib/sound";
 
 // Base Builder Code — appended as a data suffix to every USDC transfer so it
 // attributes both the Farcaster and Base App payment paths to this app.
