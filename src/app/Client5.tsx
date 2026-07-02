@@ -45,28 +45,7 @@ async function requestInjectedWallet(): Promise<string | null> {
   }
 }
 
-// Wraps sdk.wallet.getEthereumProvider() with a hard timeout. In the Base
-// App, this bridge call has been observed to never resolve OR reject — it
-// just hangs forever, since Base App doesn't run the Farcaster miniapp
-// bridge. Without a timeout, fcWalletAvailable stays `null` indefinitely,
-// and sendUsdcPayment's `fcWalletAvailable !== false` check keeps re-awaiting
-// this same hanging call on every single payment click — eating the click
-// gesture each time and never reaching the injected-wallet or Base Account
-// (wagmi/passkey) fallback paths. That silently kills the passkey popup
-// (WebAuthn requires the call to happen inside the original gesture), which
-// is exactly the "no confirm box appears at all" symptom in Base App.
-async function getFcProviderWithTimeout(ms = 1200) {
-  try {
-    return await Promise.race([
-      sdk.wallet.getEthereumProvider(),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
-    ]);
-  } catch {
-    return null;
-  }
-}
-
-
+import { useGrubSound } from "@/lib/sound";
 import { ACCESSORIES, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage, groupEquippedByLayer, type Accessory, type AccessorySlot } from "@/lib/accessories";
 import {
   type AccessoryState,
@@ -652,10 +631,10 @@ export default function ClientPage() {
     // Probe once, in parallel with everything else below, whether a
     // Farcaster wallet provider exists. Feeds fcWalletAvailable so
     // sendUsdcPayment doesn't need to re-check this on every click.
-    // Timeout-wrapped: in the Base App this call can hang forever instead of
-    // resolving/rejecting, which would otherwise leave fcWalletAvailable
-    // stuck at null and break payments (see getFcProviderWithTimeout above).
-    getFcProviderWithTimeout().then((p) => setFcWalletAvailable(!!p));
+    sdk.wallet
+      .getEthereumProvider()
+      .then((p) => setFcWalletAvailable(!!p))
+      .catch(() => setFcWalletAvailable(false));
 
     // Timeout fallback for local dev / plain browser where SDK context never resolves
     const fallbackTimer = setTimeout(() => {
@@ -993,11 +972,8 @@ export default function ClientPage() {
     // know it's false (Base App / browser), skip straight to Path 2 below —
     // otherwise this await runs first and eats the click gesture Base
     // Account's passkey popup needs, silently killing it with no error.
-    // Uses the timeout-wrapped probe (not the raw SDK call) so a still-null
-    // fcWalletAvailable (e.g. mount probe hasn't settled yet) can't hang
-    // this await forever in Base App and eat the gesture anyway.
     if (fcWalletAvailable !== false) {
-      const fcProvider = await getFcProviderWithTimeout();
+      const fcProvider = await sdk.wallet.getEthereumProvider().catch(() => null);
       if (fcProvider) {
         const accounts = await fcProvider.request({ method: "eth_requestAccounts" }) as string[];
         if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
@@ -1113,17 +1089,15 @@ export default function ClientPage() {
   const missedYesterday = !checkedInToday && state.lastCheckInDay !== "" && state.lastCheckInDay !== yesterdayKey() && state.lastCheckInDay !== todayKey();
   const streakRewardEarned = checkinStreak > 0 && checkinStreak % 7 === 0;
 
-  // Applies check-in to local state (and localStorage via the existing
-  // auto-save effect). Returns the resulting state so callers that need to
-  // persist a PAID checkin can await that separately with retries (see
-  // doCheckIn) — persistence used to happen inside here as a fire-and-forget
-  // fetch, which meant a failed/slow server-side payment verification was
-  // only ever logged to the console while the UI already showed success.
-  function applyCheckIn(): PetState {
-    let computed: PetState = state;
+  // Applies check-in to state after payment confirmed (or for free days).
+  // paidWallet: the wallet address that actually signed the payment tx, if
+  // any — see sendUsdcPayment's docstring for why this can't come from the
+  // `walletAddress` state var (it's stale immediately after a first-time
+  // wallet connect).
+  function applyCheckIn(txHash?: string, paidWallet?: string | null) {
     setState((current) => {
       const isNewDay = current.lastCheckInDay !== todayKey();
-      if (!isNewDay) { computed = current; return current; }
+      if (!isNewDay) return current;
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const yKey = yesterday.toISOString().slice(0, 10);
@@ -1131,7 +1105,7 @@ export default function ClientPage() {
       const newCheckinStreak = consecutive ? (current.checkinStreak ?? 0) + 1 : 1;
       const streakBonus = newCheckinStreak % 7 === 0 ? 5 : 0;
       const history = [...(current.checkinHistory ?? []), todayKey()].slice(-7);
-      const newState = {
+      return {
         ...current,
         lastCheckInDay: todayKey(),
         streak: current.streak + 1,
@@ -1141,8 +1115,6 @@ export default function ClientPage() {
         totalCheckIns: (current.totalCheckIns ?? 0) + 1,
         actionsToday: { feed: 0, play: 0, groom: 0, nap: 0 },
       };
-      computed = newState;
-      return newState;
     });
     const isSeventhDay = (state.checkinStreak + 1) % 7 === 0;
     setLastAction(isSeventhDay
@@ -1159,16 +1131,12 @@ export default function ClientPage() {
       }).catch(() => {});
     }
 
-    return computed;
-  }
-
-  // Persists a PAID checkin to the server, awaited with retries — mirrors
-  // the accessory-unlock save fix. Throws (with a message including the
-  // txHash) if it never succeeds, so the caller can surface a real error
-  // instead of a false "checked in!" toast.
-  async function persistPaidCheckin(newState: PetState, txHash: string, paidWallet: string | null) {
-    // Use the wallet that ACTUALLY signed this payment over the possibly-stale
-    // walletAddress state var — same reasoning as handleUnlockAccessory.
+    // For paid checkins — save with action+txHash so server can verify payment.
+    // For free checkins (txHash undefined) — normal auto-save via useEffect is fine.
+    // Use paidWallet (fresh from this payment) over the possibly-stale
+    // walletAddress state var — same fix as handleUnlockAccessory, otherwise a
+    // user's first-ever paid checkin saves under a null identity and reverts
+    // on refresh.
     const saveWallet = paidWallet ?? walletAddress;
     const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
 
@@ -1176,37 +1144,29 @@ export default function ClientPage() {
       setWalletAddress(saveWallet);
     }
 
-    if (!saveIdentity) {
-      throw new Error(`Payment succeeded but no identity was found to save it under. Contact support with tx: ${txHash}`);
-    }
-
-    let saved = false;
-    let lastError = "";
-    for (let attempt = 1; attempt <= 3 && !saved; attempt++) {
-      try {
-        const res = await fetch("/api/pet", {
+    if (saveIdentity && txHash) {
+      setState((current) => {
+        fetch("/api/pet", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...saveIdentity, state: newState, action: "checkin", txHash }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.ok) {
-          saved = true;
-          console.log(`[CHECKIN] DB saved ✅ (attempt ${attempt})`);
-        } else {
-          lastError = data?.error ?? `HTTP ${res.status}`;
-          console.error(`[CHECKIN] DB save rejected (attempt ${attempt}):`, lastError);
-          if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
-        }
-      } catch (e: any) {
-        lastError = e?.message ?? String(e);
-        console.error(`[CHECKIN] DB save network error (attempt ${attempt}):`, lastError);
-        if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
-      }
-    }
-
-    if (!saved) {
-      throw new Error(`Payment confirmed but saving failed (${lastError}). Your streak may not survive a refresh — contact support with tx: ${txHash}`);
+          body: JSON.stringify({
+            ...saveIdentity,
+            state: current,
+            action: "checkin",
+            txHash,
+          }),
+        }).then(async (res) => {
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) {
+            console.error("[CHECKIN] DB save rejected:", data.error);
+          } else {
+            console.log("[CHECKIN] DB saved ✅");
+          }
+        }).catch((e) => console.error("[CHECKIN] DB save failed", e));
+        return current; // no state change, just using setState to get current value
+      });
+    } else if (txHash) {
+      console.warn("[CHECKIN] no identity! DB save skipped");
     }
   }
 
@@ -1230,12 +1190,7 @@ export default function ClientPage() {
     try {
       const { txHash, walletAddress: paidWallet } = await sendUsdcPayment(CHECKIN_USD, "checkin");
 
-      const newState = applyCheckIn();
-      // Await the server save (with retries) before treating this as done —
-      // see persistPaidCheckin's docstring for why this can't be
-      // fire-and-forget.
-      await persistPaidCheckin(newState, txHash, paidWallet);
-
+      applyCheckIn(txHash, paidWallet);
       // Log confirmed check-in transaction — fire and forget
       logTransaction({
         type: "checkin",
@@ -1246,12 +1201,8 @@ export default function ClientPage() {
       const msg: string = err?.message ?? String(err);
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
         setCheckinError("Cancelled. Tap Check In to try again.");
-      } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
+      } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect") || msg.toLowerCase().includes("account")) {
         setCheckinError("No wallet connected. Open in Farcaster to pay.");
-      } else if (msg.toLowerCase().includes("saving failed") || msg.toLowerCase().includes("identity")) {
-        // Payment succeeded on-chain but the server-side save never
-        // confirmed — show in full, it includes the txHash for support.
-        setCheckinError(msg);
       } else {
         setCheckinError(`Payment failed: ${msg.slice(0, 80)}`);
       }
@@ -1541,26 +1492,24 @@ export default function ClientPage() {
       if (!txHash) throw new Error("Payment returned no transaction hash. Unlock aborted.");
 
       // txHash returned by eth_sendTransaction only after user confirms in wallet.
-      // That is sufficient proof of payment for the CLIENT to move forward —
-      // the server still independently re-verifies via Etherscan before it
-      // will actually persist the unlock.
+      // That is sufficient proof of payment — no external verify needed.
       console.log("[UNLOCK] payment confirmed, unlocking ✅");
-
-      // Compute the new state synchronously (functional setState still used
-      // so we write against the freshest state, since the payment await
-      // above can take 10-60s and closure state may be stale by then), but
-      // capture the resulting value via a ref so we can await the DB save
-      // OUTSIDE the updater afterward — updaters must be pure/synchronous,
-      // they can't be awaited directly.
-      let computedState: typeof state | null = null;
-      let alreadyUnlockedRace = false;
+      // Unlock now.
+      // Use functional setState so we always write to the freshest state
+      // (the async wait can be 10-60s; closure state is stale by then).
+      // Also: force-add the id even if somehow already present — payment
+      // succeeded so the user has earned it regardless.
+      // Build the new state directly so we can immediately persist it —
+      // don't rely on the debounced useEffect save which may lose the unlock
+      // if the DB-load useEffect fires again before the 800ms debounce completes.
       setState((prev) => {
-        alreadyUnlockedRace = prev.accessories.unlocked.includes(accessoryId);
+        const alreadyUnlocked = prev.accessories.unlocked.includes(accessoryId);
+        console.log("[UNLOCK] setState — alreadyUnlocked:", alreadyUnlocked, "unlocked list:", prev.accessories.unlocked);
         // One-time XP reward for unlocking — not for equipping (that's the
         // separate recurring equip-XP tick). Skipped on the already-unlocked
         // race path so a double-fire can't double-pay.
-        const unlockXp = alreadyUnlockedRace ? 0 : getUnlockXp(accessoryId);
-        const newState = alreadyUnlockedRace ? prev : {
+        const unlockXp = alreadyUnlocked ? 0 : getUnlockXp(accessoryId);
+        const newState = alreadyUnlocked ? prev : {
           ...prev,
           xp: prev.xp + unlockXp,
           accessories: {
@@ -1568,55 +1517,31 @@ export default function ClientPage() {
             unlocked: [...prev.accessories.unlocked, accessoryId],
           },
         };
-        computedState = newState;
+
         try {
           window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
           console.log("[UNLOCK] localStorage saved");
         } catch (e) { console.error("[UNLOCK] localStorage failed", e); }
-        return newState;
-      });
 
-      const newState = computedState!;
+        // Use the wallet that ACTUALLY signed this payment (paidWallet) as the
+        // primary source of truth, falling back to the walletAddress state var
+        // for cases where it was already known. Do NOT gate on the stale
+        // `identityParam` — if this is the user's very first payment, their
+        // wallet just got connected inside sendUsdcPayment and setWalletAddress()
+        // hasn't re-rendered yet, so identityParam is still null even though we
+        // now have a perfectly good wallet address to save under.
+        const saveWallet = paidWallet ?? walletAddress;
+        const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
 
-      // Use the wallet that ACTUALLY signed this payment (paidWallet) as the
-      // primary source of truth, falling back to the walletAddress state var
-      // for cases where it was already known. Do NOT gate on the stale
-      // `identityParam` — if this is the user's very first payment, their
-      // wallet just got connected inside sendUsdcPayment and setWalletAddress()
-      // hasn't re-rendered yet, so identityParam is still null even though we
-      // now have a perfectly good wallet address to save under.
-      const saveWallet = paidWallet ?? walletAddress;
-      const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
+        // Also sync React state so subsequent renders (debounced autosave,
+        // identityParam-based DB load, etc.) know about this wallet too.
+        if (!fid && saveWallet && saveWallet !== walletAddress) {
+          setWalletAddress(saveWallet);
+        }
 
-      // Also sync React state so subsequent renders (debounced autosave,
-      // identityParam-based DB load, etc.) know about this wallet too.
-      if (!fid && saveWallet && saveWallet !== walletAddress) {
-        setWalletAddress(saveWallet);
-      }
-
-      if (!saveIdentity) {
-        console.warn("[UNLOCK] no identity! DB save skipped");
-        throw new Error(
-          "Payment succeeded but no account identity was found to save it under. " +
-          "Contact support with this transaction hash: " + txHash,
-        );
-      }
-
-      // Save to the server and AWAIT it (up to 3 attempts) instead of firing
-      // and forgetting. The server independently re-verifies the payment via
-      // Etherscan (up to a 30s poll) before persisting — that verification
-      // can fail transiently (indexer lag, rate limits), and previously that
-      // failure was only logged to the console while the UI still showed
-      // "New accessory unlocked!". This is why an unlock could look
-      // successful and then silently revert on the next app load. Now we
-      // wait for real confirmation and only show success once the server
-      // has actually saved it.
-      console.log("[UNLOCK] saving to DB, identity:", saveIdentity);
-      let saved = false;
-      let lastError = "";
-      for (let attempt = 1; attempt <= 3 && !saved; attempt++) {
-        try {
-          const res = await fetch("/api/pet", {
+        if (saveIdentity) {
+          console.log("[UNLOCK] saving to DB, identity:", saveIdentity);
+          fetch("/api/pet", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1626,36 +1551,20 @@ export default function ClientPage() {
               accessoryId,
               txHash: txHash!,
             }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ok) {
-            saved = true;
-            console.log(`[UNLOCK] DB saved ✅ (attempt ${attempt})`);
-          } else {
-            lastError = data?.error ?? `HTTP ${res.status}`;
-            console.error(`[UNLOCK] DB save rejected (attempt ${attempt}):`, lastError);
-            if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
-          }
-        } catch (e: any) {
-          lastError = e?.message ?? String(e);
-          console.error(`[UNLOCK] DB save network error (attempt ${attempt}):`, lastError);
-          if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
+          }).then(async (res) => {
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) {
+              console.error("[UNLOCK] DB save rejected by server:", data.error);
+            } else {
+              console.log("[UNLOCK] DB saved ✅");
+            }
+          }).catch((e) => console.error("[UNLOCK] DB save failed", e));
+        } else {
+          console.warn("[UNLOCK] no identity! DB save skipped");
         }
-      }
 
-      if (!saved) {
-        // Payment went through on-chain but we could not persist the unlock
-        // after 3 tries. Don't lie about success — tell the user plainly and
-        // give them the txHash so nothing is lost even if they have to
-        // contact support. The accessory stays visible locally (localStorage
-        // already has it) so at least THIS session keeps working, but it
-        // will NOT survive a refresh until a save succeeds.
-        throw new Error(
-          `Payment confirmed but saving failed (${lastError}). ` +
-          `Your accessory may disappear on refresh — if so, contact support with tx: ${txHash}`,
-        );
-      }
-
+        return newState;
+      });
       // Log confirmed transaction — fire and forget
       const acc = ACCESSORIES.find((a) => a.id === accessoryId);
       logTransaction({
@@ -1675,15 +1584,10 @@ export default function ClientPage() {
       playSfx("error");
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
         setClosetMessage("Cancelled. Tap Unlock to try again.");
-      } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
+      } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect") || msg.toLowerCase().includes("account")) {
         setClosetMessage("No wallet connected. Open in Farcaster to pay.");
       } else if (msg.toLowerCase().includes("did not complete") || msg.toLowerCase().includes("revert") || msg.toLowerCase().includes("no transaction hash") || msg.toLowerCase().includes("verification failed")) {
         setClosetMessage("Payment verification failed. If funds were deducted, contact support with your tx hash.");
-      } else if (msg.toLowerCase().includes("saving failed") || msg.toLowerCase().includes("identity")) {
-        // Payment succeeded on-chain but the server-side save never
-        // confirmed — surface this in full (don't truncate; it includes the
-        // txHash the user needs for support).
-        setClosetMessage(msg);
       } else {
         setClosetMessage(`Payment failed: ${msg.slice(0, 80)}`);
       }
