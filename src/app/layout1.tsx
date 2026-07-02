@@ -15,9 +15,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Grub",
   description: "A fragile white kitty Farcaster mini app.",
-  other: {
-    "base:app_id": "6a460de62876ee6c1138a5bf",
-  },
 };
 
 export default function RootLayout({
