@@ -991,8 +991,15 @@ function AdminDashboardInner() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 16 }}>
                     {[...filteredRealUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
                       const profile = profiles[String(u.fid)];
+                      const notifFlagged = u.hasAddedApp && !u.hasNotifToken;
                       return (
-                      <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div key={u.fid} style={{
+                        display: "flex", alignItems: "center", gap: 12,
+                        background: notifFlagged ? (dark ? C.redDim + "55" : "#fee2e215") : "transparent",
+                        borderRadius: 8,
+                        padding: notifFlagged ? "4px 6px" : 0,
+                        border: notifFlagged ? `1px solid ${C.red}33` : "1px solid transparent",
+                      }}>
                         <div style={{ width: 72, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
                           <button
                             onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
@@ -1015,6 +1022,17 @@ function AdminDashboardInner() {
                             <span style={{ fontSize: 10, color: T.textMute }}>…</span>
                           ) : (
                             <span style={{ fontSize: 10, color: T.textMute }}>—</span>
+                          )}
+                          {notifFlagged && (
+                            <span
+                              title="Added the app but notifications are off"
+                              style={{
+                                fontSize: 9, fontWeight: 700, color: C.red, whiteSpace: "nowrap",
+                                display: "inline-flex", alignItems: "center", gap: 3,
+                              }}
+                            >
+                              🔕 notif off
+                            </span>
                           )}
                         </div>
                         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
