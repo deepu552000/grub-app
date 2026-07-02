@@ -363,6 +363,7 @@ function AdminDashboardInner() {
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [dismissDrafts, setDismissDrafts] = useState<Record<string, string>>({});
   const [playerSearchQuery, setPlayerSearchQuery] = useState("");
+  const [playerNotifFilter, setPlayerNotifFilter] = useState<"all" | "on" | "off">("all");
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
 
   // Result modal (replaces toast)
@@ -624,8 +625,12 @@ function AdminDashboardInner() {
     return globalMatchesFid(u.fid);
   }, [playerSearchQuery, profiles, globalMatchesFid]);
 
-  const filteredRealUsers = realUsers.filter(playerMatchesSearch);
-  const filteredGhostUsers = ghostUsers.filter(playerMatchesSearch);
+  const isNotifBothOff = (u: DebugUser) => !u.hasAddedApp && !u.hasNotifToken;
+  const matchesNotifFilter = (u: DebugUser) =>
+    playerNotifFilter === "all" ? true : playerNotifFilter === "off" ? isNotifBothOff(u) : !isNotifBothOff(u);
+
+  const filteredRealUsers = realUsers.filter(playerMatchesSearch).filter(matchesNotifFilter);
+  const filteredGhostUsers = ghostUsers.filter(playerMatchesSearch).filter(matchesNotifFilter);
 
   const filteredSortedTxns = sortedTxns.filter((t) => globalMatchesFid(t.fid) || globalMatchesFid(t.toFid ?? ""));
   const filteredWebhookEvents = webhookEvents.filter((e) => globalMatchesFid(e.fid));
@@ -944,9 +949,11 @@ function AdminDashboardInner() {
 
           {/* Player progress */}
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
               <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: 0 }}>Player Progress</p>
-              <div style={{ position: "relative", width: 150, flexShrink: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <FilterToggle label="🔕" value={playerNotifFilter} onChange={setPlayerNotifFilter} dark={dark} />
+                <div style={{ position: "relative", width: 150, flexShrink: 0 }}>
                 <input
                   value={playerSearchQuery}
                   onChange={(e) => setPlayerSearchQuery(e.target.value)}
@@ -976,6 +983,7 @@ function AdminDashboardInner() {
                     ✕
                   </button>
                 )}
+                </div>
               </div>
             </div>
             {users.length === 0 ? (
@@ -983,10 +991,10 @@ function AdminDashboardInner() {
             ) : (
               <>
                 <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.green, margin: "0 0 8px" }}>
-                  Real Players · {(playerSearchQuery || globalSearchQuery) ? `${filteredRealUsers.length}/${realUsers.length}` : realUsers.length}
+                  Real Players · {(playerSearchQuery || globalSearchQuery || playerNotifFilter !== "all") ? `${filteredRealUsers.length}/${realUsers.length}` : realUsers.length}
                 </p>
                 {filteredRealUsers.length === 0 ? (
-                  <p style={{ fontSize: 12, color: T.textMute, margin: "0 0 14px" }}>{(playerSearchQuery || globalSearchQuery) ? "No matches." : "None yet."}</p>
+                  <p style={{ fontSize: 12, color: T.textMute, margin: "0 0 14px" }}>{(playerSearchQuery || globalSearchQuery || playerNotifFilter !== "all") ? "No matches." : "None yet."}</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 16 }}>
                     {[...filteredRealUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
@@ -1047,10 +1055,10 @@ function AdminDashboardInner() {
                 )}
 
                 <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: dark ? "#cbd5e1" : T.textMute, margin: "0 0 8px" }}>
-                  Unconverted Opens · {(playerSearchQuery || globalSearchQuery) ? `${filteredGhostUsers.length}/${ghostUsers.length}` : ghostUsers.length}
+                  Unconverted Opens · {(playerSearchQuery || globalSearchQuery || playerNotifFilter !== "all") ? `${filteredGhostUsers.length}/${ghostUsers.length}` : ghostUsers.length}
                 </p>
                 {filteredGhostUsers.length === 0 ? (
-                  <p style={{ fontSize: 12, color: T.textMute }}>{(playerSearchQuery || globalSearchQuery) ? "No matches." : "None — every opener has progressed."}</p>
+                  <p style={{ fontSize: 12, color: T.textMute }}>{(playerSearchQuery || globalSearchQuery || playerNotifFilter !== "all") ? "No matches." : "None — every opener has progressed."}</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 140, overflowY: "auto", paddingRight: 10 }}>
                     {filteredGhostUsers.map((u) => {
