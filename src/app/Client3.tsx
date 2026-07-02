@@ -1167,7 +1167,7 @@ export default function ClientPage() {
   // the accessory-unlock save fix. Throws (with a message including the
   // txHash) if it never succeeds, so the caller can surface a real error
   // instead of a false "checked in!" toast.
-  async function persistPaidCheckin(newState: PetState, txHash: string, paidWallet: string | null): Promise<{ fid?: string | number | null; wallet?: string | null }> {
+  async function persistPaidCheckin(newState: PetState, txHash: string, paidWallet: string | null) {
     // Use the wallet that ACTUALLY signed this payment over the possibly-stale
     // walletAddress state var — same reasoning as handleUnlockAccessory.
     const saveWallet = paidWallet ?? walletAddress;
@@ -1218,8 +1218,6 @@ export default function ClientPage() {
     if (!saved) {
       throw new Error(`Payment confirmed but saving failed (${lastError}). Your streak may not survive a refresh — contact support with tx: ${txHash}`);
     }
-
-    return saveIdentity;
   }
 
   async function doCheckIn() {
@@ -1246,17 +1244,14 @@ export default function ClientPage() {
       // Await the server save (with retries) before treating this as done —
       // see persistPaidCheckin's docstring for why this can't be
       // fire-and-forget.
-      const checkinIdentity = await persistPaidCheckin(newState, txHash, paidWallet);
+      await persistPaidCheckin(newState, txHash, paidWallet);
 
-      // Log confirmed check-in transaction — fire and forget. Use the same
-      // fid-or-wallet identity persistPaidCheckin just saved under, so
-      // Base App wallet-only checkins get logged too (previously silently
-      // dropped since logTransaction only checked the outer `fid`).
+      // Log confirmed check-in transaction — fire and forget
       logTransaction({
         type: "checkin",
         txHash,
         amountUsd: CHECKIN_USD,
-      }, checkinIdentity);
+      });
     } catch (err: any) {
       const msg: string = err?.message ?? String(err);
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
@@ -1504,11 +1499,6 @@ export default function ClientPage() {
   }
 
   // ── Transaction logger — fire and forget, never blocks the UI ───────────────
-  // Accepts the SAME identity (fid or wallet) that was just used to save the
-  // /api/pet state, rather than only checking the outer `fid` var. Base App
-  // users have no Farcaster fid at all, so gating on `fid` alone silently
-  // dropped every wallet-only purchase from the txn log (unlock/checkin still
-  // succeeded and persisted to KV — only this log write was skipped).
   function logTransaction(entry: {
     type: "accessory_unlock" | "checkin";
     txHash: string;
@@ -1516,13 +1506,12 @@ export default function ClientPage() {
     accessoryId?: string;
     accessoryName?: string;
     walletAddress?: string;
-  }, identity: { fid?: string | number | null; wallet?: string | null }) {
-    const logFid = identity.fid ?? (identity.wallet ? `wallet:${identity.wallet}` : null);
-    if (!logFid) return;
+  }) {
+    if (!fid) return;
     fetch("/api/txn-log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fid: logFid, ts: Date.now(), ...entry }),
+      body: JSON.stringify({ fid, ts: Date.now(), ...entry }),
     }).catch(() => {}); // never block on logging failure
   }
 
@@ -1684,9 +1673,7 @@ export default function ClientPage() {
         );
       }
 
-      // Log confirmed transaction — fire and forget. Use saveIdentity (the
-      // same fid-or-wallet identity the /api/pet save above just used) so
-      // Base App wallet-only purchases get logged too, not just Farcaster fids.
+      // Log confirmed transaction — fire and forget
       const acc = ACCESSORIES.find((a) => a.id === accessoryId);
       logTransaction({
         type: "accessory_unlock",
@@ -1694,8 +1681,7 @@ export default function ClientPage() {
         amountUsd: price,
         accessoryId,
         accessoryName: acc?.name,
-        walletAddress: saveWallet ?? undefined,
-      }, saveIdentity);
+      });
       setClosetMessage(null);
       setLastAction("New accessory unlocked! Tap Equip to dress up Grub.");
       playSfx("unlock");
