@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useAuth, useClerk } from "@clerk/nextjs";
 
 type DebugUser = {
