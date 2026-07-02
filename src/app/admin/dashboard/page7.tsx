@@ -47,7 +47,7 @@ type FailedPayout = {
 };
 
 type TxnEntry = {
-  fid: number | string; // string for Base App wallet-only users, e.g. "wallet:0xabc..."
+  fid: number;
   type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin";
   txHash: string;
   amountUsd: number;
@@ -366,12 +366,6 @@ function AdminDashboardInner() {
   const [playerNotifFilter, setPlayerNotifFilter] = useState<"all" | "on" | "off">("all");
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
 
-  // Missing txn-log backfill — dry-run check, then explicit confirm before writing.
-  // See app/api/admin-backfill-txn-log/route.ts (GET = dry run, POST = commit).
-  const [missingTxns, setMissingTxns] = useState<TxnEntry[] | null>(null); // null = not checked yet
-  const [missingTxnsLoading, setMissingTxnsLoading] = useState(false);
-  const [backfillingTxns, setBackfillingTxns] = useState(false);
-
   // Result modal (replaces toast)
   const [modal, setModal] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   const showModal = useCallback((msg: string, type: "success" | "error" = "success") => {
@@ -514,26 +508,6 @@ function AdminDashboardInner() {
     }
   }, [authedPost, addToast]);
 
-  // Dry-run check — shows what would be backfilled without writing anything.
-  const checkMissingTxns = useCallback(async () => {
-    setMissingTxnsLoading(true);
-    try {
-      const res = await authedGet("/api/admin-backfill-txn-log");
-      if (res?.error) {
-        addToast(`✕ ${res.error}`, "error");
-        setMissingTxns(null);
-      } else {
-        setMissingTxns(res.missing ?? []);
-        if ((res.missing ?? []).length === 0) addToast("✓ No missing transactions found.", "success");
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Check failed"}`, "error");
-      setMissingTxns(null);
-    } finally {
-      setMissingTxnsLoading(false);
-    }
-  }, [authedGet, addToast]);
-
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -569,25 +543,6 @@ function AdminDashboardInner() {
       setLoading(false);
     }
   }, [authedGet]);
-
-  // Actually writes the missing entries after the admin has reviewed the dry run above.
-  const confirmBackfillTxns = useCallback(async () => {
-    setBackfillingTxns(true);
-    try {
-      const res = await authedPost("/api/admin-backfill-txn-log", {});
-      if (res?.error) {
-        addToast(`✕ ${res.error}`, "error");
-      } else {
-        addToast(`✓ Backfilled ${res.backfilled ?? 0} transaction${res.backfilled === 1 ? "" : "s"}.`, "success");
-        setMissingTxns(null);
-        load(); // refresh the main txn log so the new entries show up immediately
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Backfill failed"}`, "error");
-    } finally {
-      setBackfillingTxns(false);
-    }
-  }, [authedPost, addToast, load]);
 
   useEffect(() => {
     load();
@@ -1173,70 +1128,6 @@ function AdminDashboardInner() {
               </div>
             )}
           </div>
-        </div>
-
-        {/* ── Missing txn-log backfill ── */}
-        {/* Reconstructs any txn-log entries missing due to the wallet-only
-            (Base App) logging gap — see grub:used-tx:* records in KV.
-            Two-step by design: Check shows what would be added (no writes),
-            Confirm actually commits it. */}
-        <SectionLabel dark={dark} accent={C.blue}>Missing Transactions</SectionLabel>
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: "1rem" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <p style={{ fontSize: 12, color: T.textSub, margin: 0, flex: 1, minWidth: 200 }}>
-              {missingTxns === null
-                ? "Scans on-chain payment records for purchases that never made it into the log above (e.g. wallet-only Base App users before the logging fix)."
-                : missingTxns.length === 0
-                ? "✓ Nothing missing — the txn log is fully up to date."
-                : `Found ${missingTxns.length} transaction${missingTxns.length === 1 ? "" : "s"} missing from the log. Review below, then confirm to add ${missingTxns.length === 1 ? "it" : "them"}.`}
-            </p>
-            <Btn onClick={checkMissingTxns} disabled={missingTxnsLoading} variant="default">
-              {missingTxnsLoading ? "Checking…" : missingTxns === null ? "Check for Missing Transactions" : "Re-check"}
-            </Btn>
-            {missingTxns !== null && missingTxns.length > 0 && (
-              <Btn onClick={confirmBackfillTxns} disabled={backfillingTxns} variant="green">
-                {backfillingTxns ? "Adding…" : `✓ Confirm & Add ${missingTxns.length}`}
-              </Btn>
-            )}
-          </div>
-
-          {missingTxns !== null && missingTxns.length > 0 && (
-            <div style={{ marginTop: 12, overflowX: "auto", maxHeight: 200, overflowY: "auto", border: `1px solid ${T.borderSub}`, borderRadius: 8 }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
-                    {["Type", "FID", "Detail", "Amount", "Tx"].map((h, i) => (
-                      <th key={h} style={{
-                        textAlign: i >= 3 ? "right" : "left", padding: "8px 12px", color: T.creamMute,
-                        fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", fontSize: 10,
-                        borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt,
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {missingTxns.map((t, i) => {
-                    const meta = TYPE_META[t.type] ?? { color: T.textSub, bg: T.surfaceAlt, label: t.type };
-                    const detail = t.type === "accessory_unlock" ? (t.accessoryName || t.accessoryId || "") : "—";
-                    return (
-                      <tr key={i} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
-                        <td style={{ padding: "8px 12px" }}><Badge color={meta.color} bg={meta.bg}>{meta.label}</Badge></td>
-                        <td style={{ padding: "8px 12px", fontFamily: "monospace", color: dark ? C.amberGlow : "#7c3aed", fontSize: 11 }}>{t.fid}</td>
-                        <td style={{ padding: "8px 12px", color: T.textSub }}>{detail}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.green }}>${(t.amountUsd || 0).toFixed(2)}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "right" }}>
-                          <a href={`https://basescan.org/tx/${t.txHash}`} target="_blank" rel="noopener noreferrer"
-                            style={{ color: dark ? C.blue : "#1d4ed8", fontSize: 11, fontWeight: 600, textDecoration: "none" }}>
-                            ↗ view
-                          </a>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
 
         {/* ── Transaction log ── */}
