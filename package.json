@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@base-org/account": "^2.5.7",
     "@clerk/nextjs": "^7.5.9",
     "@farcaster/miniapp-node": "^0.2.0",
     "@farcaster/miniapp-sdk": "^0.3.0",
@@ -31,7 +32,5 @@
     "tailwindcss": "^4",
     "typescript": "^5"
   },
-  "overrides": {
-    "@base-org/account": "latest"
-  }
+  "overrides": {}
 }
