@@ -993,20 +993,21 @@ function AdminDashboardInner() {
                       const profile = profiles[String(u.fid)];
                       const bothOff = !u.hasAddedApp && !u.hasNotifToken;
                       return (
-                      <div key={u.fid} style={{
-                        display: "flex", alignItems: "center", gap: 12,
-                        background: bothOff ? (dark ? C.redDim + "55" : "#fee2e215") : "transparent",
-                        borderRadius: 8,
-                        padding: bothOff ? "4px 6px" : 0,
-                        border: bothOff ? `1px solid ${C.red}33` : "1px solid transparent",
-                      }}>
+                      <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                         <div style={{ width: 72, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
                           <button
                             onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                            style={{ fontSize: 11, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, textShadow: dark ? `0 0 8px ${C.amberGlow}66` : "none", display: "inline-flex", alignItems: "center", gap: 3 }}
+                            style={{
+                              fontSize: 11,
+                              color: bothOff ? C.red : (dark ? C.amberGlow : "#7c3aed"),
+                              fontWeight: bothOff ? 700 : 400,
+                              background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0,
+                              textShadow: bothOff ? "none" : (dark ? `0 0 8px ${C.amberGlow}66` : "none"),
+                              display: "inline-flex", alignItems: "center", gap: 3,
+                            }}
                             title="Open in user panel"
                           >
-                            {bothOff && <span style={{ color: C.red, fontWeight: 700 }}>🔕</span>}
+                            {bothOff && <span>🔕</span>}
                             #{u.fid}
                           </button>
                           {profile?.username ? (
@@ -1059,10 +1060,16 @@ function AdminDashboardInner() {
                         <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12, opacity: 0.85 }}>
                           <button
                             onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                            style={{ fontSize: 13, color: dark ? C.amberGlow : "#7c3aed", background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 3 }}
+                            style={{
+                              fontSize: 13,
+                              color: bothOff ? C.red : (dark ? C.amberGlow : "#7c3aed"),
+                              fontWeight: bothOff ? 700 : 600,
+                              background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0,
+                              display: "inline-flex", alignItems: "center", gap: 3,
+                            }}
                             title="Open in user panel"
                           >
-                            {bothOff && <span style={{ color: C.red, fontWeight: 700 }}>🔕</span>}
+                            {bothOff && <span>🔕</span>}
                             #{u.fid}
                           </button>
                           {profile?.username ? (
