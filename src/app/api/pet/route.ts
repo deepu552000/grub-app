@@ -21,6 +21,26 @@ const ACCESSORY_PRICES: Record<string, number> = {
   "glasses-black":  100_000,
 };
 
+// ── Identity helper ──────────────────────────────────────────────────────────
+// Grub users are identified by EITHER a Farcaster fid (Warpcast/Farcaster
+// clients) OR a wallet address (Base App, which has no fid at all). Existing
+// fid-keyed data keeps its original key format (`grub:pet:<fid>`) untouched,
+// so no migration is needed for current Farcaster users. Wallet users get a
+// new, clearly-namespaced key (`grub:pet:wallet:<address>`) so the two
+// identity spaces can never collide.
+function petKey(fid?: string | number | null, wallet?: string | null): string | null {
+  if (fid) return `grub:pet:${fid}`;
+  if (wallet) return `grub:pet:wallet:${wallet.toLowerCase()}`;
+  return null;
+}
+
+// Short label used only in server logs, e.g. "fid=1234" or "wallet=0xabc...".
+function identityLabel(fid?: string | number | null, wallet?: string | null): string {
+  if (fid) return `fid=${fid}`;
+  if (wallet) return `wallet=${wallet}`;
+  return "unknown";
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // Verify a USDC transfer on Base via Etherscan — polls up to 30s
@@ -110,10 +130,12 @@ function sanitizeState(existingRaw: any, incomingState: any) {
 // ── GET — fetch pet state ────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const fid = req.nextUrl.searchParams.get("fid");
-  if (!fid) return NextResponse.json({ error: "missing fid" }, { status: 400 });
+  const wallet = req.nextUrl.searchParams.get("wallet");
+  const key = petKey(fid, wallet);
+  if (!key) return NextResponse.json({ error: "missing fid or wallet" }, { status: 400 });
 
   try {
-    const state = await kv.get(`grub:pet:${fid}`);
+    const state = await kv.get(key);
     return NextResponse.json(state ?? null);
   } catch (err: any) {
     return NextResponse.json({ error: err?.message }, { status: 500 });
@@ -124,14 +146,16 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { fid, state, action, txHash } = body;
+    const { fid, wallet, state, action, txHash } = body;
+    const key = petKey(fid, wallet);
+    const who = identityLabel(fid, wallet);
 
-    if (!fid || !state) {
-      return NextResponse.json({ error: "missing fid or state" }, { status: 400 });
+    if (!key || !state) {
+      return NextResponse.json({ error: "missing fid/wallet or state" }, { status: 400 });
     }
 
-    // ── Ban check — blocks ALL writes for this fid, regardless of action ────
-    const currentState = await kv.get<any>(`grub:pet:${fid}`);
+    // ── Ban check — blocks ALL writes for this identity, regardless of action ─
+    const currentState = await kv.get<any>(key);
     if (currentState?.banned) {
       return NextResponse.json(
         { error: "This account has been suspended." },
@@ -172,7 +196,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Mark txHash as used (keep for 1 year)
-      await kv.set(usedKey, { fid, accessoryId, ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
+      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, accessoryId, ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
 
       // Ensure the accessory is actually in state before saving
       const unlocked: string[] = state?.accessories?.unlocked ?? [];
@@ -188,14 +212,14 @@ export async function POST(req: NextRequest) {
       // payment above, so temporarily fold it into existingUnlocked before
       // sanitizing, or sanitizeState would strip the very accessory we just
       // confirmed payment for (it isn't in KV's existingUnlocked yet).
-      const existingForUnlock = await kv.get<any>(`grub:pet:${fid}`);
+      const existingForUnlock = await kv.get<any>(key);
       const existingUnlockedList: string[] = existingForUnlock?.accessories?.unlocked ?? [];
       const sanitized = sanitizeState(
         { ...existingForUnlock, accessories: { ...existingForUnlock?.accessories, unlocked: [...existingUnlockedList, accessoryId] } },
         state,
       );
-      await kv.set(`grub:pet:${fid}`, sanitized);
-      console.log(`[pet] ✅ accessory unlocked fid=${fid} accessory=${accessoryId} tx=${txHash}`);
+      await kv.set(key, sanitized);
+      console.log(`[pet] ✅ accessory unlocked ${who} accessory=${accessoryId} tx=${txHash}`);
       return NextResponse.json({ ok: true });
     }
 
@@ -222,23 +246,23 @@ export async function POST(req: NextRequest) {
       }
 
       // Mark txHash as used
-      await kv.set(usedKey, { fid, purpose: "checkin", ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
+      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "checkin", ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
 
       // Save state
-      const existingForCheckin = await kv.get<any>(`grub:pet:${fid}`);
+      const existingForCheckin = await kv.get<any>(key);
       const sanitizedCheckin = sanitizeState(existingForCheckin, state);
-      await kv.set(`grub:pet:${fid}`, sanitizedCheckin);
-      console.log(`[pet] ✅ checkin saved fid=${fid} tx=${txHash}`);
+      await kv.set(key, sanitizedCheckin);
+      console.log(`[pet] ✅ checkin saved ${who} tx=${txHash}`);
       return NextResponse.json({ ok: true });
     }
 
     // ── All other state saves (feeding, mood, equip, etc.) ───────────────────
     // These don't involve payment so we just save directly, after sanitizing
     // accessories.unlocked / accessories.equipped / xp against server-known state.
-    const existingRaw = await kv.get<any>(`grub:pet:${fid}`);
+    const existingRaw = await kv.get<any>(key);
     const safeState = sanitizeState(existingRaw, state);
 
-    await kv.set(`grub:pet:${fid}`, safeState);
+    await kv.set(key, safeState);
     return NextResponse.json({ ok: true });
 
   } catch (err: any) {

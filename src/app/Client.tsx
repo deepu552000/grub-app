@@ -3,6 +3,40 @@
 import sdk from "@farcaster/miniapp-sdk";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState, useRef } from "react";
+import { connect, getAccount, sendTransaction, switchChain } from "wagmi/actions";
+import { base } from "wagmi/chains";
+import { wagmiConfig } from "@/lib/wagmi";
+
+// ── Base App / injected-wallet identity helper ──────────────────────────────
+// Silently checks for an already-connected injected wallet (no popup) via
+// eth_accounts. Used as the identity fallback when Farcaster context has no
+// fid — i.e. the Base App case. Safe to call in any browser; returns null
+// if there's no injected provider or nothing is connected yet.
+async function detectInjectedWallet(): Promise<string | null> {
+  try {
+    const eth = (typeof window !== "undefined" ? (window as any).ethereum : null);
+    if (!eth) return null;
+    const accounts: string[] = await eth.request({ method: "eth_accounts" });
+    return accounts && accounts.length > 0 ? accounts[0].toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Explicit connect — triggers the wallet's connect prompt (eth_requestAccounts).
+// Used by a manual "Connect Wallet" button for Base App users who haven't
+// already got a wallet connected when the app loads.
+async function requestInjectedWallet(): Promise<string | null> {
+  try {
+    const eth = (typeof window !== "undefined" ? (window as any).ethereum : null);
+    if (!eth) return null;
+    const accounts: string[] = await eth.request({ method: "eth_requestAccounts" });
+    return accounts && accounts.length > 0 ? accounts[0].toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
 import { useGrubSound } from "@/lib/sound";
 import { ACCESSORIES, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage, groupEquippedByLayer, type Accessory, type AccessorySlot } from "@/lib/accessories";
 import {
@@ -530,6 +564,16 @@ export default function ClientPage() {
     return () => window.removeEventListener("pointerdown", close);
   }, [volumePopoverOpen]);
   const [fid, setFid] = useState<number | null>(null);
+  // ── Base App identity ───────────────────────────────────────────────────
+  // Base App does not provide a Farcaster context/FID at all. When the SDK
+  // context resolves without a fid (or fails entirely), we try to pick up
+  // an already-connected injected wallet (window.ethereum) silently — no
+  // popup, just `eth_accounts` — and use that address as the identity
+  // instead. This never runs, and never overrides, the fid path above.
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  // Single string used as the identity query param for /api/pet — "fid"
+  // wins whenever both happen to be present (never should be, in practice).
+  const identityParam = fid ? `fid=${fid}` : walletAddress ? `wallet=${walletAddress}` : null;
   // Live "are notifications currently on" flag, sourced from sdk.context on
   // every app open — not persisted, so it always reflects reality even if
   // the user enables/disables notifications outside of our banner flow.
@@ -546,12 +590,12 @@ export default function ClientPage() {
   const [ripples, setRipples] = useState<Ripple[]>([]);
   const kittyRef = useRef<HTMLDivElement>(null);
 
-  // Load state from DB using FID.
+  // Load state from DB using FID (or wallet address for Base App users).
   // After loading, merge accessories.unlocked from localStorage so any unlock
   // that was saved locally but not yet persisted to DB is never lost.
   useEffect(() => {
-    if (fid === null) return;
-    fetch(`/api/pet?fid=${fid}`)
+    if (!identityParam) return;
+    fetch(`/api/pet?${identityParam}`)
       .then((r) => r.json())
       .then((saved) => {
         const dbState = saved ? loadStateFromSaved(saved) : { ...defaultState, lastVisit: Date.now() };
@@ -564,7 +608,7 @@ export default function ClientPage() {
         // DB failed — fall back to localStorage
         hydrateWith(loadState());
       });
-  }, [fid]);
+  }, [identityParam]);
 
   useEffect(() => {
     // Timeout fallback for local dev / plain browser where SDK context never resolves
@@ -614,15 +658,35 @@ export default function ClientPage() {
               .catch(() => {}); // fire and forget — never block app load on this
           }
         } else {
-          // SDK resolved but no FID — plain browser, load from localStorage
-          hydrateWith(loadState());
+          // SDK resolved but no FID — this is either a plain browser or the
+          // Base App in-app browser. Try picking up an already-connected
+          // injected wallet silently (no popup) before falling back to
+          // localStorage-only. If nothing is connected yet, the "Connect
+          // Wallet" affordance in the UI below still gives Base App users a
+          // way in.
+          detectInjectedWallet().then((addr) => {
+            if (addr) {
+              setWalletAddress(addr);
+              // DB load useEffect (keyed on identityParam) takes over from here.
+            } else {
+              hydrateWith(loadState());
+            }
+          });
         }
       })
       .catch(() => {
-        // SDK failed entirely — call ready() anyway and fall back to localStorage
+        // SDK failed entirely (e.g. Base App, which doesn't run the
+        // Farcaster bridge at all) — call ready() anyway, then try the same
+        // silent wallet check before falling back to localStorage.
         sdk.actions.ready().catch(() => {});
         clearTimeout(fallbackTimer);
-        hydrateWith(loadState());
+        detectInjectedWallet().then((addr) => {
+          if (addr) {
+            setWalletAddress(addr);
+          } else {
+            hydrateWith(loadState());
+          }
+        });
       });
 
     return () => clearTimeout(fallbackTimer);
@@ -634,17 +698,20 @@ export default function ClientPage() {
     // Always keep localStorage as offline fallback
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 
-    // Save to DB if we have a FID — debounced 800ms to avoid hammering on rapid taps
-    if (!fid) return;
+    // Save to DB if we have an identity (fid or wallet) — debounced 800ms
+    // to avoid hammering on rapid taps.
+    if (!identityParam) return;
     const timer = setTimeout(() => {
       fetch("/api/pet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fid, state }),
+        body: JSON.stringify(
+          fid ? { fid, state } : { wallet: walletAddress, state }
+        ),
       }).catch(() => {}); // silent fail — localStorage already has it
     }, 800);
     return () => clearTimeout(timer);
-  }, [state, hydrated, fid]);
+  }, [state, hydrated, identityParam]);
 
   const mood = useMemo(() => moodFor(state), [state]);
   const stage = getStage(state.xp);
@@ -693,7 +760,7 @@ export default function ClientPage() {
 
   const isFestivalTeaser = nowMs >= TEASER_START && nowMs < FESTIVAL_START;
   const isFestivalLive   = nowMs >= FESTIVAL_START && nowMs < FESTIVAL_END;
-  const showFestivalBanner = (isFestivalTeaser || isFestivalLive) && !festivalDismissed;
+  const showFestivalBanner = (isFestivalTeaser || isFestivalLive) && !festivalDismissed && !!fid;
 
   function dismissFestival() {
     setFestivalDismissed(true); // only hides for this session — comes back on next app open
@@ -851,37 +918,74 @@ export default function ClientPage() {
   async function sendUsdcPayment(usdAmount: number, purpose: "checkin" | "accessory", accessoryId?: string): Promise<string> {
     console.log("[PAYMENT] start, amount:", usdAmount, "purpose:", purpose);
 
-    const provider = await sdk.wallet.getEthereumProvider();
-    if (!provider) throw new Error("No wallet connected.");
-
-    const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
-    if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
-    console.log("[PAYMENT] wallet:", accounts[0]);
-
-    // Build ERC-20 transfer(address,uint256) calldata
+    // Build ERC-20 transfer(address,uint256) calldata — shared by both paths.
     const selector = "a9059cbb";
     const microUsdc = Math.round(usdAmount * 1_000_000); // USDC = 6 decimals
     const paddedTo = RECIPIENT.replace(/^0x/, "").toLowerCase().padStart(64, "0");
     const paddedAmount = microUsdc.toString(16).padStart(64, "0");
-    const data = "0x" + selector + paddedTo + paddedAmount;
+    const data = ("0x" + selector + paddedTo + paddedAmount) as `0x${string}`;
 
-    console.log("[PAYMENT] sending tx, microUsdc:", microUsdc);
+    // ── Path 1: Farcaster host (Warpcast etc.) — unchanged, first priority ──
+    const fcProvider = await sdk.wallet.getEthereumProvider().catch(() => null);
+    if (fcProvider) {
+      const accounts = await fcProvider.request({ method: "eth_requestAccounts" }) as string[];
+      if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
+      console.log("[PAYMENT] wallet (Farcaster):", accounts[0]);
 
-    const txHash: string = await provider.request({
-      method: "eth_sendTransaction",
-      params: [{
-        from: accounts[0] as `0x${string}`,
-        to: USDC_CONTRACT,
-        data: data as `0x${string}`,
-      }],
+      console.log("[PAYMENT] sending tx, microUsdc:", microUsdc);
+      const txHash: string = await fcProvider.request({
+        method: "eth_sendTransaction",
+        params: [{
+          from: accounts[0] as `0x${string}`,
+          to: USDC_CONTRACT,
+          data,
+        }],
+      });
+
+      if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+      console.log("[PAYMENT] confirmed ✅ txHash:", txHash);
+      // eth_sendTransaction returns only after user explicitly confirms in wallet —
+      // that confirmation IS the gate. Receipt polling via FC provider is not supported,
+      // so we trust the hash and unlock immediately. Server-side verify-payment route
+      // provides the on-chain double-check for audit purposes.
+      return txHash;
+    }
+
+    // ── Path 2: Base App / plain browser fallback — Base Account via wagmi ──
+    // sdk.wallet.getEthereumProvider() isn't available outside a Farcaster
+    // host, and Base App no longer reliably injects window.ethereum either
+    // (it's no longer treated as a Farcaster mini app as of Apr 9, 2026).
+    // Base's own docs recommend wagmi + the Base Account connector for this
+    // exact case, so that's what triggers the connect/confirm popup here.
+    console.log("[PAYMENT] no Farcaster provider — falling back to Base Account (wagmi)");
+
+    let account = getAccount(wagmiConfig);
+    if (!account.address) {
+      const result = await connect(wagmiConfig, { connector: wagmiConfig.connectors[0] });
+      account = getAccount(wagmiConfig);
+      if (!account.address && result?.accounts?.[0]) {
+        account = { ...account, address: result.accounts[0] } as typeof account;
+      }
+    }
+    if (!account.address) throw new Error("No wallet connected.");
+    console.log("[PAYMENT] wallet (Base Account):", account.address);
+
+    if (!fid && !walletAddress) setWalletAddress(account.address.toLowerCase());
+
+    if (account.chainId !== base.id) {
+      await switchChain(wagmiConfig, { chainId: base.id });
+    }
+
+    console.log("[PAYMENT] sending tx (Base Account), microUsdc:", microUsdc);
+    const txHash = await sendTransaction(wagmiConfig, {
+      to: USDC_CONTRACT,
+      data,
+      account: account.address,
+      chainId: base.id,
     });
 
     if (!txHash) throw new Error("No transaction hash returned. Please try again.");
-    console.log("[PAYMENT] confirmed ✅ txHash:", txHash);
-    // eth_sendTransaction returns only after user explicitly confirms in wallet —
-    // that confirmation IS the gate. Receipt polling via FC provider is not supported,
-    // so we trust the hash and unlock immediately. Server-side verify-payment route
-    // provides the on-chain double-check for audit purposes.
+    console.log("[PAYMENT] confirmed ✅ txHash (Base Account):", txHash);
     return txHash;
   }
 
@@ -936,13 +1040,13 @@ export default function ClientPage() {
 
     // For paid checkins — save with action+txHash so server can verify payment
     // For free checkins (txHash undefined) — normal auto-save via useEffect is fine
-    if (fid && txHash) {
+    if (identityParam && txHash) {
       setState((current) => {
         fetch("/api/pet", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            fid,
+            ...(fid ? { fid } : { wallet: walletAddress }),
             state: current,
             action: "checkin",
             txHash,
@@ -1162,6 +1266,30 @@ export default function ClientPage() {
     });
   }
 
+  // Tries native Farcaster cast composer (works in Warpcast and any host that
+  // supports it). If the host doesn't support composeCast (e.g. Base App,
+  // which no longer treats Grub as a Farcaster mini-app), falls back to
+  // copying the share text + link to the clipboard so the user can paste it
+  // anywhere.
+  async function shareOrCopy(text: string, embedUrl: string, fallbackMsg: string) {
+    try {
+      const capabilities = await sdk.getCapabilities();
+      if (capabilities.includes("actions.composeCast")) {
+        const result = await sdk.actions.composeCast({ text, embeds: [embedUrl] });
+        if (result?.cast) return; // posted successfully
+      }
+    } catch {
+      // fall through to clipboard fallback below
+    }
+
+    try {
+      await navigator.clipboard.writeText(`${text}\n${embedUrl}`);
+      setLastAction(fallbackMsg);
+    } catch {
+      setLastAction("Copy this link to share: " + embedUrl);
+    }
+  }
+
   function shareKitty() {
     // Single embed strategy: we embed the APP URL (not the raw /api/share-card
     // image). The app's own page.tsx reads these same query params server-side
@@ -1189,14 +1317,7 @@ export default function ClientPage() {
       `Raise your own tiny white kitty on Farcaster ↓`,
     ].join("\n");
 
-    sdk.actions
-      .composeCast({
-        text: castText,
-        embeds: [appUrl],
-      })
-      .catch(() => {
-        setLastAction("Sharing works inside Farcaster. Local test mode is fine.");
-      });
+    shareOrCopy(castText, appUrl, "Share text + link copied! Paste it anywhere to share your Grub. 📋");
   }
 
   // ── Transaction logger — fire and forget, never blocks the UI ───────────────
@@ -1280,13 +1401,13 @@ export default function ClientPage() {
           console.log("[UNLOCK] localStorage saved");
         } catch (e) { console.error("[UNLOCK] localStorage failed", e); }
 
-        if (fid) {
-          console.log("[UNLOCK] saving to DB fid:", fid);
+        if (identityParam) {
+          console.log("[UNLOCK] saving to DB, identity:", identityParam);
           fetch("/api/pet", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              fid,
+              ...(fid ? { fid } : { wallet: walletAddress }),
               state: newState,
               action: "unlock_accessory",
               accessoryId,
@@ -1301,7 +1422,7 @@ export default function ClientPage() {
             }
           }).catch((e) => console.error("[UNLOCK] DB save failed", e));
         } else {
-          console.warn("[UNLOCK] no fid! DB save skipped");
+          console.warn("[UNLOCK] no identity! DB save skipped");
         }
 
         return newState;
@@ -2171,7 +2292,15 @@ export default function ClientPage() {
           )}
         </section>
 
-        {/* ── REFERRAL ── */}
+        {/* ── REFERRAL ──
+            Hidden entirely when there's no fid. The referral system is
+            still FID-only under the hood (join bonus, checkin payout, the
+            /?ref= link) — showing this to a Base App / wallet-only user
+            would just be a permanently-stuck "Loading..." box with a dead
+            copy-link button, so we hide it rather than show something
+            broken. Re-enable for wallet users once referral.ts, register,
+            and checkin routes get a wallet-keyed path. */}
+        {fid && (
         <section className="stats-collapsible" style={{ marginTop: 8 }}>
           <button
             type="button"
@@ -2236,15 +2365,7 @@ export default function ClientPage() {
                 onClick={() => {
                   const refLink = `https://grub-app-eight.vercel.app/?ref=${fid}`;
                   const text = `I'm raising Grub 🐱✨ — a tiny white kitty on Farcaster!\nJoin me and help me earn DEGEN 🎁`;
-                  sdk.actions.composeCast({
-                    text,
-                    embeds: [refLink],
-                  }).catch(() => {
-                    // fallback
-                    sdk.actions.openUrl(
-                      `https://warpcast.com/~/compose?text=${encodeURIComponent(text + "\n" + refLink)}`
-                    );
-                  });
+                  shareOrCopy(text, refLink, "Referral link copied! Paste it anywhere to share. 📋");
                 }}
               >
                 🟣 Share on Farcaster
@@ -2320,6 +2441,7 @@ export default function ClientPage() {
             </div>
           )}
         </section>
+        )}
 
       </section>
       {showFaq && <FaqModal onClose={() => setShowFaq(false)} />}
