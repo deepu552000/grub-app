@@ -574,15 +574,6 @@ export default function ClientPage() {
   // Single string used as the identity query param for /api/pet — "fid"
   // wins whenever both happen to be present (never should be, in practice).
   const identityParam = fid ? `fid=${fid}` : walletAddress ? `wallet=${walletAddress}` : null;
-  // Whether a Farcaster wallet provider exists — checked ONCE at mount, not
-  // on every payment click. This lets sendUsdcPayment skip the async
-  // getEthereumProvider() re-check in the Base App / browser case, so
-  // connect() there fires as the very first async call directly from the
-  // click handler. Without this, the earlier await breaks the "real user
-  // click" gesture Base Account's passkey popup needs, and the popup
-  // silently never appears (stuck on "confirming").
-  // null = not checked yet, true = Farcaster host, false = not Farcaster.
-  const [fcWalletAvailable, setFcWalletAvailable] = useState<boolean | null>(null);
   // Live "are notifications currently on" flag, sourced from sdk.context on
   // every app open — not persisted, so it always reflects reality even if
   // the user enables/disables notifications outside of our banner flow.
@@ -620,14 +611,6 @@ export default function ClientPage() {
   }, [identityParam]);
 
   useEffect(() => {
-    // Probe once, in parallel with everything else below, whether a
-    // Farcaster wallet provider exists. Feeds fcWalletAvailable so
-    // sendUsdcPayment doesn't need to re-check this on every click.
-    sdk.wallet
-      .getEthereumProvider()
-      .then((p) => setFcWalletAvailable(!!p))
-      .catch(() => setFcWalletAvailable(false));
-
     // Timeout fallback for local dev / plain browser where SDK context never resolves
     const fallbackTimer = setTimeout(() => {
       sdk.actions.ready().catch(() => {});
@@ -943,36 +926,29 @@ export default function ClientPage() {
     const data = ("0x" + selector + paddedTo + paddedAmount) as `0x${string}`;
 
     // ── Path 1: Farcaster host (Warpcast etc.) — unchanged, first priority ──
-    // Only re-probe getEthereumProvider() here if we DON'T already know the
-    // answer from the mount-time check (fcWalletAvailable). When we already
-    // know it's false (Base App / browser), skip straight to Path 2 below —
-    // otherwise this await runs first and eats the click gesture Base
-    // Account's passkey popup needs, silently killing it with no error.
-    if (fcWalletAvailable !== false) {
-      const fcProvider = await sdk.wallet.getEthereumProvider().catch(() => null);
-      if (fcProvider) {
-        const accounts = await fcProvider.request({ method: "eth_requestAccounts" }) as string[];
-        if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
-        console.log("[PAYMENT] wallet (Farcaster):", accounts[0]);
+    const fcProvider = await sdk.wallet.getEthereumProvider().catch(() => null);
+    if (fcProvider) {
+      const accounts = await fcProvider.request({ method: "eth_requestAccounts" }) as string[];
+      if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
+      console.log("[PAYMENT] wallet (Farcaster):", accounts[0]);
 
-        console.log("[PAYMENT] sending tx, microUsdc:", microUsdc);
-        const txHash: string = await fcProvider.request({
-          method: "eth_sendTransaction",
-          params: [{
-            from: accounts[0] as `0x${string}`,
-            to: USDC_CONTRACT,
-            data,
-          }],
-        });
+      console.log("[PAYMENT] sending tx, microUsdc:", microUsdc);
+      const txHash: string = await fcProvider.request({
+        method: "eth_sendTransaction",
+        params: [{
+          from: accounts[0] as `0x${string}`,
+          to: USDC_CONTRACT,
+          data,
+        }],
+      });
 
-        if (!txHash) throw new Error("No transaction hash returned. Please try again.");
-        console.log("[PAYMENT] confirmed ✅ txHash:", txHash);
-        // eth_sendTransaction returns only after user explicitly confirms in wallet —
-        // that confirmation IS the gate. Receipt polling via FC provider is not supported,
-        // so we trust the hash and unlock immediately. Server-side verify-payment route
-        // provides the on-chain double-check for audit purposes.
-        return txHash;
-      }
+      if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+      console.log("[PAYMENT] confirmed ✅ txHash:", txHash);
+      // eth_sendTransaction returns only after user explicitly confirms in wallet —
+      // that confirmation IS the gate. Receipt polling via FC provider is not supported,
+      // so we trust the hash and unlock immediately. Server-side verify-payment route
+      // provides the on-chain double-check for audit purposes.
+      return txHash;
     }
 
     // ── Path 2: Base App / plain browser fallback — Base Account via wagmi ──
@@ -981,8 +957,6 @@ export default function ClientPage() {
     // (it's no longer treated as a Farcaster mini app as of Apr 9, 2026).
     // Base's own docs recommend wagmi + the Base Account connector for this
     // exact case, so that's what triggers the connect/confirm popup here.
-    // connect() is the FIRST async call in this branch when fcWalletAvailable
-    // is already known false — this keeps it tied to the original click.
     console.log("[PAYMENT] no Farcaster provider — falling back to Base Account (wagmi)");
 
     let account = getAccount(wagmiConfig);
@@ -1305,20 +1279,7 @@ export default function ClientPage() {
         if (result?.cast) return; // posted successfully
       }
     } catch {
-      // fall through below — not a Farcaster host (e.g. Base App)
-    }
-
-    // Base App / plain browser — try the native OS share sheet first, so the
-    // user gets an actual tappable share flow (Messages, Twitter, etc.)
-    // instead of a silent clipboard copy they have to paste manually.
-    if (typeof navigator !== "undefined" && navigator.share) {
-      try {
-        await navigator.share({ text, url: embedUrl });
-        return; // user completed or dismissed the native share sheet
-      } catch {
-        // user cancelled, or share() unsupported for this payload — fall
-        // through to clipboard as a last resort
-      }
+      // fall through to clipboard fallback below
     }
 
     try {
