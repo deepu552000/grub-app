@@ -5,11 +5,20 @@
 
 import { ethers } from "ethers";
 import { kv } from "@vercel/kv";
+import { Attribution } from "ox/erc8021";
 
 const DEGEN_CONTRACT = "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed";
 const DEGEN_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
+const DEGEN_IFACE = new ethers.Interface(DEGEN_ABI);
+
+// Same Base Builder Code used on the client (see Client.tsx) — appended as a
+// data suffix so DEGEN referral payouts attribute to this app too, same as
+// checkin/accessory USDC payments. From base.dev > Settings > Builder Codes.
+const BUILDER_CODE_SUFFIX = Attribution.toDataSuffix({
+  codes: ["bc_sj35j3xa"],
+});
 
 const FAILED_PAYOUTS_KEY = "failed-payouts";
 
@@ -93,14 +102,25 @@ export async function sendDegen(
     process.env.TREASURY_PRIVATE_KEY!,
     provider
   );
-  const contract = new ethers.Contract(DEGEN_CONTRACT, DEGEN_ABI, treasury);
+  // Build the transfer(address,uint256) calldata by hand (instead of
+  // contract.transfer(), which encodes-and-sends internally and gives us no
+  // way to touch `data`) so we can append the Builder Code attribution
+  // suffix — same trick as sendUsdcPayment on the client. The contract only
+  // reads the first 68 bytes for transfer(address,uint256), so the trailing
+  // suffix bytes are ignored on execution but stay readable on-chain for
+  // attribution.
+  const baseData = DEGEN_IFACE.encodeFunctionData("transfer", [
+    toAddress,
+    ethers.parseUnits(amount.toString(), 18),
+  ]);
+  const data = (baseData + BUILDER_CODE_SUFFIX.slice(2)) as `0x${string}`;
 
   // This step is the actual money movement. If it throws, nothing was sent —
   // safe to treat as a normal failure.
-  const tx = await contract.transfer(
-    toAddress,
-    ethers.parseUnits(amount.toString(), 18)
-  );
+  const tx = await treasury.sendTransaction({
+    to: DEGEN_CONTRACT,
+    data,
+  });
 
   // From here on, the transfer has been broadcast. Any error past this point
   // does NOT mean the money didn't move — it means we're not SURE whether it

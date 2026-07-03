@@ -20,7 +20,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { ACCESSORIES } from "@/lib/accessories";
 import { getAuth } from "@clerk/nextjs/server";
-import { registerReferral } from "@/lib/referral";
 
 const VALID_ACCESSORY_IDS = new Set(ACCESSORIES.map((a) => a.id));
 
@@ -195,7 +194,7 @@ export async function POST(req: NextRequest) {
 
     // ── Edit / remove referral relationship ─────────────────────────────
     if (action === "edit_referral") {
-      const { newReferrerFid, removeReferral, triggerPayout } = body;
+      const { newReferrerFid, removeReferral } = body;
 
       if (removeReferral) {
         await kv.del(`ref:${fid}`);
@@ -205,22 +204,6 @@ export async function POST(req: NextRequest) {
       }
 
       if (newReferrerFid) {
-        // triggerPayout=true runs the SAME registerReferral() flow a real
-        // ?ref=<fid> link click triggers — KV writes, wallet lookup via
-        // Neynar, and an actual sendDegen payout with attribution. This
-        // exists so a manually-added test fid can be verified end-to-end
-        // (real DEGEN, real tx hash) without needing a second device/wallet
-        // to click a real referral link. It will reject the same way a real
-        // join would (self-referral, already registered, existing activity)
-        // — use "Remove Sponsor" first if you need to re-test a fid.
-        if (triggerPayout) {
-          const result = await registerReferral(Number(fid), Number(newReferrerFid));
-          return NextResponse.json({ ...result, fid, action });
-        }
-
-        // Plain data edit — just repoints the sponsor relationship, no
-        // payout. Use this to fix a wrong sponsor on a real user without
-        // re-paying them.
         await kv.set(`ref:${fid}`, String(newReferrerFid));
         const referred = (await kv.get<number[]>(`referrer:${newReferrerFid}:referred`)) ?? [];
         if (!referred.includes(Number(fid))) {

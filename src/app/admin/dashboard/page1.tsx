@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useAuth, useClerk } from "@clerk/nextjs";
 
 type DebugUser = {
@@ -642,6 +642,27 @@ function AdminDashboardInner() {
   const realUsers = users.filter((u) => (u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0);
   const ghostUsers = users.filter((u) => !((u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0));
 
+  // Base App wallet-only users have fid values like "wallet:0xabc..." which are
+  // full addresses and blow out the fixed-width layout in Player Progress.
+  // Give each one a short stable label ("base1", "base2", ...) for display only —
+  // lookups/manage-user actions still use the untouched full u.fid value.
+  const walletLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    let counter = 1;
+    for (const u of users) {
+      const fidStr = String(u.fid);
+      if (fidStr.startsWith("wallet:") && !map.has(fidStr)) {
+        map.set(fidStr, `base${counter++}`);
+      }
+    }
+    return map;
+  }, [users]);
+
+  const displayFid = useCallback((fid: number | string): string => {
+    const fidStr = String(fid);
+    return walletLabelMap.get(fidStr) ?? fidStr;
+  }, [walletLabelMap]);
+
   // Global dashboard-wide search (fid or username) — combines with each panel's own search below
   const globalMatchesFid = useCallback((fid: number | string) => {
     const q = globalSearchQuery.trim().toLowerCase();
@@ -1061,7 +1082,7 @@ function AdminDashboardInner() {
                             title="Open in user panel"
                           >
                             {bothOff && <span>🔕</span>}
-                            #{u.fid}
+                            #{displayFid(u.fid)}
                           </button>
                           {profile?.username ? (
                             <a
@@ -1123,7 +1144,7 @@ function AdminDashboardInner() {
                             title="Open in user panel"
                           >
                             {bothOff && <span>🔕</span>}
-                            #{u.fid}
+                            #{displayFid(u.fid)}
                           </button>
                           {profile?.username ? (
                             <a

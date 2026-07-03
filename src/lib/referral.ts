@@ -173,6 +173,149 @@ export async function getWalletFromNeynar(
   }
 }
 
+// Logs a completed DEGEN payout to the shared txn log. Used by both the
+// real referral join flow and the checkin bonus flow.
+export async function logDegenTxn(entry: {
+  fid: number;
+  toFid: number;
+  type: "referral_join" | "referral_checkin";
+  txHash: string;
+  amountDegen: number;
+  toWallet: string;
+}): Promise<void> {
+  try {
+    await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? "https://grub-app-eight.vercel.app"}/api/txn-log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fid: entry.fid,
+        type: entry.type,
+        txHash: entry.txHash,
+        amountUsd: 0, // DEGEN not USD
+        amountDegen: entry.amountDegen,
+        toFid: entry.toFid,
+        toWallet: entry.toWallet,
+        ts: Date.now(),
+      }),
+    });
+  } catch { /* non-blocking */ }
+}
+
+// Whole-DEGEN amount for a fresh referral join right now — 10 during the
+// Referral Festival window, 1 otherwise. Shared so the real join route and
+// the admin test-payout path never drift out of sync on the amount.
+//
+// Festival: 30 Jun–2 Jul 2026 (IST = UTC+5:30). Using UTC dates: festival
+// runs 29 Jun 18:30 UTC → 2 Jul 18:29 UTC, which maps to 30 Jun 00:00 IST →
+// 2 Jul 23:59 IST.
+export function getReferralJoinAmount(): number {
+  const nowUtc = Date.now();
+  const FESTIVAL_START = Date.UTC(2026, 5, 29, 18, 30);
+  const FESTIVAL_END   = Date.UTC(2026, 6, 2,  18, 30);
+  const isFestival = nowUtc >= FESTIVAL_START && nowUtc < FESTIVAL_END;
+  return isFestival ? 10 : 1;
+}
+
+export type RegisterReferralResult =
+  | { ok: false; reason: string }
+  | { ok: true; rewarded: false; reason: string; isNewJoiner: true }
+  | { ok: true; rewarded: true; txHash: string; isNewJoiner: true };
+
+// The full real "someone joined via a referral link" flow: validates the
+// pair, writes the referral relationship to KV, looks up the referrer's
+// wallet, and pays out the join bonus (festival-aware) with attribution.
+//
+// This is the SAME logic /api/referral/register runs for a genuine referral
+// click — factored out here so the admin dashboard's "Set Sponsor" action
+// can optionally trigger a real, fully-paid test join without needing a
+// second device/wallet to click an actual ?ref= link.
+export async function registerReferral(
+  newUserFID: number,
+  referrerFID: number
+): Promise<RegisterReferralResult> {
+  if (newUserFID === referrerFID) {
+    return { ok: false, reason: "self-referral" };
+  }
+
+  const existing = await kv.get(`ref:${newUserFID}`);
+  if (existing) {
+    return { ok: false, reason: "already registered" };
+  }
+
+  const existingPetState = await kv.get<any>(`grub:pet:${newUserFID}`);
+  if (existingPetState && (existingPetState.totalCheckIns ?? 0) > 0) {
+    return {
+      ok: false,
+      reason: "fid already has existing game activity — not eligible as a new referral",
+    };
+  }
+
+  await kv.set(`ref:${newUserFID}`, String(referrerFID));
+  await kv.set(`ref:${newUserFID}:checkins`, 0);
+  await kv.set(`ref:${newUserFID}:status`, "joined");
+
+  const REFERRAL_DEGEN = getReferralJoinAmount();
+
+  const referred = (await kv.get<number[]>(`referrer:${referrerFID}:referred`)) ?? [];
+  await kv.set(`referrer:${referrerFID}:referred`, [...referred, newUserFID]);
+
+  const wallet = await getWalletFromNeynar(referrerFID);
+  if (!wallet) {
+    return { ok: true, rewarded: false, reason: "no wallet", isNewJoiner: true };
+  }
+
+  await kv.set(`ref:${referrerFID}:wallet`, wallet);
+
+  const lockKey = `ref:${newUserFID}:joinlock`;
+  const gotLock = await acquireLock(lockKey, 30);
+  if (!gotLock) {
+    return {
+      ok: true,
+      rewarded: false,
+      reason: "payout already in progress elsewhere — try again shortly",
+      isNewJoiner: true,
+    };
+  }
+
+  try {
+    let txHash: string;
+    try {
+      txHash = await sendDegen(wallet, REFERRAL_DEGEN);
+    } catch (err: any) {
+      console.error("[referral] registerReferral sendDegen failed:", err);
+      await recordFailedPayout({
+        fid: referrerFID,
+        toFid: newUserFID,
+        toWallet: wallet,
+        amountDegen: REFERRAL_DEGEN,
+        type: "referral_join",
+        reason: err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error",
+        broadcastTxHash: err?.broadcastTxHash ?? null,
+        sideEffect: null,
+      });
+      return {
+        ok: true,
+        rewarded: false,
+        reason: "DEGEN payout failed — logged for retry in dashboard",
+        isNewJoiner: true,
+      };
+    }
+
+    await logDegenTxn({
+      fid: referrerFID,
+      toFid: newUserFID,
+      type: "referral_join",
+      txHash,
+      amountDegen: REFERRAL_DEGEN,
+      toWallet: wallet,
+    });
+
+    return { ok: true, rewarded: true, txHash, isNewJoiner: true };
+  } finally {
+    await releaseLock(lockKey);
+  }
+}
+
 // Bulk lookup usernames for multiple FIDs in one Neynar call.
 // Returns a map of fid → { username, pfp }
 export async function getUsernamesFromNeynar(

@@ -412,6 +412,7 @@ function AdminDashboardInner() {
   const [accessoryToRevoke, setAccessoryToRevoke] = useState("");
   const [accessoryToUnlock, setAccessoryToUnlock] = useState("");
   const [newReferrerFid, setNewReferrerFid] = useState("");
+  const [triggerRealPayout, setTriggerRealPayout] = useState(false);
 
   const authedGet = useCallback(async (path: string) => {
     const token = await getToken();
@@ -1666,10 +1667,28 @@ function AdminDashboardInner() {
                     {/* Set referrer */}
                     <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px", border: `1px solid ${T.border}` }}>
                       <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: dark ? C.amberGlow2 : "#7c3aed", margin: "0 0 4px" }}>Set Sponsor</p>
-                      <p style={{ fontSize: 11, color: T.textSub, margin: "0 0 10px" }}>Replaces their current sponsor — no need to remove first.</p>
+                      <p style={{ fontSize: 11, color: T.textSub, margin: "0 0 10px" }}>
+                        {triggerRealPayout
+                          ? "Runs the real referral-join flow — real DEGEN, real tx. Fails like a real join would if already registered or has activity."
+                          : "Replaces their current sponsor — no need to remove first. No payout."}
+                      </p>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: T.textSub, margin: "0 0 10px", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={triggerRealPayout}
+                          onChange={(e) => setTriggerRealPayout(e.target.checked)}
+                        />
+                        Also trigger real DEGEN payout (test mode)
+                      </label>
                       <div style={{ display: "flex", gap: 8 }}>
                         <Input value={newReferrerFid} onChange={setNewReferrerFid} placeholder="Sponsor FID" />
-                        <Btn onClick={() => runAction("edit_referral", { newReferrerFid })} disabled={!newReferrerFid} variant="amber">Set</Btn>
+                        <Btn
+                          onClick={() => runAction("edit_referral", { newReferrerFid, triggerPayout: triggerRealPayout })}
+                          disabled={!newReferrerFid}
+                          variant="amber"
+                        >
+                          Set
+                        </Btn>
                       </div>
                     </div>
 

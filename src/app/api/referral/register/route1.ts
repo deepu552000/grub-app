@@ -1,7 +1,7 @@
 // app/api/referral/register/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
-import { sendDegen, getWalletFromNeynar, recordFailedPayout } from "@/lib/referral";
+import { sendDegen, getWalletFromNeynar, recordFailedPayout, acquireLock, releaseLock } from "@/lib/referral";
 
 async function logDegenTxn(entry: {
   fid: number;
@@ -78,39 +78,57 @@ export async function POST(req: NextRequest) {
 
     await kv.set(`ref:${referrerFID}:wallet`, wallet);
 
-    let txHash: string;
-    try {
-      txHash = await sendDegen(wallet, REFERRAL_DEGEN);
-    } catch (err: any) {
-      console.error("[referral/register] sendDegen failed:", err);
-      await recordFailedPayout({
-        fid: Number(referrerFID),
-        toFid: Number(newUserFID),
-        toWallet: wallet,
-        amountDegen: REFERRAL_DEGEN,
-        type: "referral_join",
-        reason: err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error",
-        sideEffect: null,
-      });
+    // Lock so a manual dashboard retry can't race a concurrent duplicate
+    // register call for this fid.
+    const lockKey = `ref:${newUserFID}:joinlock`;
+    const gotLock = await acquireLock(lockKey, 30);
+    if (!gotLock) {
       return NextResponse.json({
         ok: true,
         rewarded: false,
-        reason: "DEGEN payout failed — logged for retry in dashboard",
+        reason: "payout already in progress elsewhere — try again shortly",
         isNewJoiner: true,
       });
     }
 
-    // Log the DEGEN payout
-    await logDegenTxn({
-      fid: Number(referrerFID),
-      toFid: Number(newUserFID),
-      type: "referral_join",
-      txHash,
-      amountDegen: REFERRAL_DEGEN,
-      toWallet: wallet,
-    });
+    try {
+      let txHash: string;
+      try {
+        txHash = await sendDegen(wallet, REFERRAL_DEGEN);
+      } catch (err: any) {
+        console.error("[referral/register] sendDegen failed:", err);
+        await recordFailedPayout({
+          fid: Number(referrerFID),
+          toFid: Number(newUserFID),
+          toWallet: wallet,
+          amountDegen: REFERRAL_DEGEN,
+          type: "referral_join",
+          reason: err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error",
+          broadcastTxHash: err?.broadcastTxHash ?? null,
+          sideEffect: null,
+        });
+        return NextResponse.json({
+          ok: true,
+          rewarded: false,
+          reason: "DEGEN payout failed — logged for retry in dashboard",
+          isNewJoiner: true,
+        });
+      }
 
-    return NextResponse.json({ ok: true, rewarded: true, txHash, isNewJoiner: true });
+      // Log the DEGEN payout
+      await logDegenTxn({
+        fid: Number(referrerFID),
+        toFid: Number(newUserFID),
+        type: "referral_join",
+        txHash,
+        amountDegen: REFERRAL_DEGEN,
+        toWallet: wallet,
+      });
+
+      return NextResponse.json({ ok: true, rewarded: true, txHash, isNewJoiner: true });
+    } finally {
+      await releaseLock(lockKey);
+    }
   } catch (err: any) {
     console.error("[referral/register] error:", err);
     return NextResponse.json({ ok: false, reason: err?.message ?? "unknown error" }, { status: 500 });
