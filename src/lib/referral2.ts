@@ -28,6 +28,13 @@ export type FailedPayout = {
   // Optional KV write to apply once the retry succeeds (e.g. marking a
   // referral checkin as "paid" — skipped on the original failed attempt).
   sideEffect?: { kvKey: string; kvValue: any } | null;
+  // Set ONLY when the transfer was actually broadcast on-chain but confirming
+  // it (tx.wait()) then threw — e.g. ethers' "could not coalesce error", an
+  // RPC hiccup during confirmation polling. In this case the DEGEN may
+  // already have been sent despite the error. NEVER auto-retry when this is
+  // present — always verify the hash on Basescan first (dismiss if it landed,
+  // retry only if it genuinely didn't).
+  broadcastTxHash?: string | null;
 };
 
 export async function recordFailedPayout(
@@ -45,8 +52,36 @@ export async function recordFailedPayout(
   return record;
 }
 
+// ── Distributed lock ──────────────────────────────────────────────────────
+// Prevents two concurrent attempts to pay the SAME bonus from both succeeding
+// (e.g. a manual dashboard retry racing the user's next natural checkin).
+// Uses Vercel KV's NX+EX (only-set-if-absent, auto-expire) — same primitive
+// as a Redis lock. TTL is a safety net in case releaseLock never runs
+// (crashed request, etc.) so a stuck lock can't block forever.
+export async function acquireLock(key: string, ttlSeconds = 30): Promise<boolean> {
+  const result = await kv.set(key, "1", { nx: true, ex: ttlSeconds } as any);
+  return result !== null;
+}
+
+export async function releaseLock(key: string): Promise<void> {
+  try {
+    await kv.del(key);
+  } catch {
+    /* lock will still expire via TTL */
+  }
+}
+
 // Send DEGEN from treasury wallet to a recipient address.
 // amount = whole DEGEN units (e.g. 1 or 2)
+//
+// IMPORTANT: this can throw even after the transfer was already broadcast
+// and mined — ethers v6 can throw errors like "could not coalesce error"
+// purely from an RPC hiccup during confirmation polling, with the actual
+// on-chain transfer having already succeeded. To avoid silently losing track
+// of money that already moved, we capture tx.hash the moment contract.transfer()
+// returns (before calling .wait()) and attach it to any error thrown after
+// that point, via err.broadcastTxHash. Callers MUST check for this field —
+// its presence means "verify on Basescan before deciding to retry."
 export async function sendDegen(
   toAddress: string,
   amount: number
@@ -59,11 +94,29 @@ export async function sendDegen(
     provider
   );
   const contract = new ethers.Contract(DEGEN_CONTRACT, DEGEN_ABI, treasury);
+
+  // This step is the actual money movement. If it throws, nothing was sent —
+  // safe to treat as a normal failure.
   const tx = await contract.transfer(
     toAddress,
     ethers.parseUnits(amount.toString(), 18)
   );
-  await tx.wait();
+
+  // From here on, the transfer has been broadcast. Any error past this point
+  // does NOT mean the money didn't move — it means we're not SURE whether it
+  // did. Tag the error with the hash so callers can check before retrying.
+  try {
+    await tx.wait();
+  } catch (waitErr: any) {
+    const err = new Error(
+      `Transfer broadcast (tx ${tx.hash}) but confirmation failed: ${waitErr?.reason ?? waitErr?.shortMessage ?? waitErr?.message ?? waitErr}. ` +
+      `The DEGEN may already have been sent — verify tx ${tx.hash} on Basescan before retrying.`
+    );
+    (err as any).broadcastTxHash = tx.hash;
+    (err as any).originalError = waitErr;
+    throw err;
+  }
+
   console.log(`[referral] sent ${amount} DEGEN to ${toAddress} tx=${tx.hash}`);
   return tx.hash;
 }
