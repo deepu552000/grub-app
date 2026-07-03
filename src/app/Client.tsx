@@ -825,6 +825,17 @@ export default function ClientPage() {
     setTimeout(() => setFestivalBubbles([]), 2200);
   }
 
+  // ── Closet / Accessory XP Banner ──────────────────────────────────────────
+  // Announces the accessory XP feature. Session-only dismiss, same pattern
+  // as the referral festival banner — reappears every time the app is
+  // reopened until the person closes it with the ✕ for that session.
+  const [accessoryBannerDismissed, setAccessoryBannerDismissed] = useState(false);
+  const showAccessoryBanner = !accessoryBannerDismissed;
+
+  function dismissAccessoryBanner() {
+    setAccessoryBannerDismissed(true);
+  }
+
   // ── Notification Nudge Banner ─────────────────────────────────────────────
   // Shows on every app open once a user has done at least 1 check-in, as
   // long as notifications aren't currently enabled (per live sdk.context
@@ -1222,6 +1233,24 @@ export default function ClientPage() {
   const checkinStreak = state.checkinStreak ?? 0;
   const missedYesterday = !checkedInToday && state.lastCheckInDay !== "" && state.lastCheckInDay !== yesterdayKey() && state.lastCheckInDay !== todayKey();
   const streakRewardEarned = checkinStreak > 0 && checkinStreak % 7 === 0;
+  // Position within the current 7-day cycle — this (not checkinHistory,
+  // which just records raw calendar days) is what the progress dots should
+  // reflect. 0 means "no days done yet in this cycle" — true both for a
+  // brand new streak AND right after a reward was earned (streak is an
+  // exact multiple of 7) and the new cycle hasn't started yet.
+  const cyclePos = checkinStreak % 7;
+
+  // `state.checkinStreak` only actually gets reset to 1 *inside* doCheckIn,
+  // once the person taps the button. So on the gate screen — the day after
+  // a miss, before they've checked in yet — checkinStreak is still holding
+  // the STALE pre-miss number. Left uncorrected, the gate would briefly show
+  // leftover progress dots/text from a week that's already been discarded.
+  // gateStreak/gateCyclePos treat a pending miss as an already-fresh cycle,
+  // matching what today's check-in is actually about to do.
+  const gateStreak = missedYesterday ? 0 : checkinStreak;
+  const gateCyclePos = gateStreak % 7;
+  const gateStreakRewardEarned = gateStreak > 0 && gateStreak % 7 === 0;
+
 
   // Applies check-in to local state (and localStorage via the existing
   // auto-save effect). Returns the resulting state so callers that need to
@@ -1254,7 +1283,12 @@ export default function ClientPage() {
       computed = newState;
       return newState;
     });
-    const isSeventhDay = (state.checkinStreak + 1) % 7 === 0;
+    // Was `(state.checkinStreak + 1) % 7 === 0`, which assumed today was
+    // always consecutive with the prior streak. That's wrong right after a
+    // miss (streak actually resets to 1, not old+1) and could wrongly show
+    // the "7-day streak!" message. `computed` above already has the real,
+    // correctly-reset value, so use that instead.
+    const isSeventhDay = computed.checkinStreak > 0 && computed.checkinStreak % 7 === 0;
     setLastAction(isSeventhDay
       ? "7-day streak! +5 XP bonus dropped. Keep it going!"
       : "Day started! Care for Grub to earn XP and keep your streak.");
@@ -2042,6 +2076,46 @@ export default function ClientPage() {
           </div>
         )}
 
+        {/* ── CLOSET / ACCESSORY XP BANNER ── */}
+        {showAccessoryBanner && (
+          <div
+            onClick={() => setClosetOpen(true)}
+            style={{
+              margin: "8px 8px 0",
+              padding: "10px 14px",
+              background: "linear-gradient(135deg, rgba(110,210,190,0.28), rgba(70,180,190,0.20))",
+              border: "1.5px solid rgba(30,140,140,0.35)",
+              borderRadius: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              cursor: "pointer",
+              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
+            }}
+          >
+            <span style={{ fontSize: "1.3rem", lineHeight: 1, flexShrink: 0 }}>👗</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#49332d", marginBottom: 1 }}>
+                Dress up Grub & earn XP
+              </div>
+              <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
+                Buy an accessory in the Closet for one-time XP, plus daily XP for every day it's equipped!
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); dismissAccessoryBanner(); }}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
+                flexShrink: 0,
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* ── NOTIFICATION NUDGE BANNER ── */}
         {showNotifBanner && (
           <div
@@ -2281,12 +2355,21 @@ export default function ClientPage() {
               <p>Check in to unlock today's care actions</p>
               <div style={{ display: "flex", gap: 7, justifyContent: "center", alignItems: "center" }}>
                 {Array.from({ length: 7 }).map((_, i) => {
-                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); })();
+                  // These dots are a real calendar record of the last 7
+                  // days — green = checked in that day, red = that day
+                  // passed with no check-in, grey = today/future (not
+                  // reached yet). This is separate from the "X/7 days"
+                  // text below and the reward math, which track your
+                  // current no-miss run length (gateCyclePos) — a miss
+                  // resets that counter but still shows up here as red.
+                  // Rendered oldest → newest, left to right, so today is
+                  // always the rightmost dot (i=0 daysAgo=6 is 6 days ago,
+                  // i=6 daysAgo=0 is today).
+                  const daysAgo = 6 - i;
+                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
                   const history = state.checkinHistory ?? [];
-                  const firstDay = history[0] ?? todayKey();
                   const hit = history.includes(dayKey);
-                  const isPast = dayKey < todayKey() && dayKey >= firstDay;
-                  const missed = isPast && !hit;
+                  const missed = dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 13, height: 13, borderRadius: "50%",
@@ -2297,16 +2380,16 @@ export default function ClientPage() {
                   );
                 })}
               </div>
-              <small>{checkinStreak % 7 === 0 && checkinStreak > 0
+              <small>{gateStreakRewardEarned
                 ? "🎉 7-day streak — +5 XP bonus on check-in!"
-                : checkinStreak === 0
+                : gateStreak === 0
                 ? "Start your streak → +5 XP bonus on day 7"
-                : `${checkinStreak % 7}/7 days — keep going for +5 XP bonus`}
+                : `${gateCyclePos}/7 days — keep going for +5 XP bonus`}
               </small>
               <button type="button" className="checkin-btn" onClick={doCheckIn} disabled={checkinPending}>
                 {checkinPending
                   ? "⏳ Confirming..."
-                  : streakRewardEarned
+                  : gateStreakRewardEarned
                   ? "✦ Check In · +5 XP bonus!"
                   : isFreeCheckin
                   ? freeCheckInsLeft === 1
@@ -2341,12 +2424,14 @@ export default function ClientPage() {
               </small>
               <div style={{ display: "flex", gap: 7 }}>
                 {Array.from({ length: 7 }).map((_, i) => {
-                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); })();
+                  // Same real-calendar record as the gate view — green =
+                  // checked in, red = missed, grey = today/future.
+                  // Oldest → newest, left to right (today is rightmost).
+                  const daysAgo = 6 - i;
+                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
                   const history = state.checkinHistory ?? [];
-                  const firstDay = history[0] ?? todayKey();
                   const hit = history.includes(dayKey);
-                  const isPast = dayKey < todayKey() && dayKey >= firstDay;
-                  const missed = isPast && !hit;
+                  const missed = dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 14, height: 14, borderRadius: "50%",

@@ -1039,7 +1039,116 @@ export default function ClientPage() {
           console.log("[PAYMENT] wallet (injected):", accounts[0]);
           if (!fid && !walletAddress) setWalletAddress(accounts[0].toLowerCase());
 
-          console.log("[PAYMENT] sending tx (injected), microUsdc:", microUsdc);
+          // ── Try EIP-5792 wallet_sendCalls FIRST ─────────────────────────
+          // Base App's wallet is a Smart Wallet (ERC-4337). Plain
+          // eth_sendTransaction gets intercepted and re-encoded into a
+          // UserOperation (EntryPoint.handleOps, selector 0x1fad948c)
+          // before broadcast — that re-encode rebuilds calldata from the
+          // decoded transfer(address,uint256) params, which silently drops
+          // any suffix bytes we appended by hand to `data` below. Base's
+          // "automatic" attribution doesn't reliably cover that rebuilt
+          // path either (confirmed via base-dev's own attribution checker
+          // — a Base App purchase came back "Not 8021 Attributed" with an
+          // all-zero tail, while the identical Farcaster-path purchase,
+          // sent through a plain EOA provider that forwards data verbatim,
+          // attributed fine). wallet_sendCalls + the `dataSuffix`
+          // capability is the documented mechanism for exactly this case:
+          // it lets the wallet attach the suffix to the UserOp itself
+          // instead of us fighting its calldata rebuild.
+          // https://docs.base.org/base-chain/builder-codes/app-developers
+          // Tracks whether wallet_sendCalls actually got a callsId back from
+          // the wallet — i.e. the batch was accepted and is (or may be)
+          // broadcasting. Once true we are committed: falling through to
+          // eth_sendTransaction below would send a SECOND real USDC
+          // transfer on top of a payment that may just be slow to confirm,
+          // not failed. Only a pre-submission error (rejected, unsupported
+          // method, etc.) is allowed to fall through to the legacy path.
+          let callsSubmitted = false;
+          try {
+            const sendCallsResult: any = await injected.request({
+              method: "wallet_sendCalls",
+              params: [{
+                version: "2.0.0",
+                chainId: `0x${base.id.toString(16)}`,
+                from: accounts[0],
+                calls: [{ to: USDC_CONTRACT, data: baseData }],
+                capabilities: {
+                  dataSuffix: { value: BUILDER_CODE_SUFFIX, optional: true },
+                },
+              }],
+            });
+            const callsId: string | undefined =
+              typeof sendCallsResult === "string" ? sendCallsResult : sendCallsResult?.id;
+            if (!callsId) throw new Error("wallet_sendCalls returned no call id.");
+
+            // From this point on the wallet has accepted the batch — it is
+            // in flight. A slow confirmation from here is NOT the same as a
+            // failure, so we must never fall through to a second send below.
+            callsSubmitted = true;
+
+            // sendCalls confirms the batch is submitted, not mined — poll
+            // wallet_getCallsStatus for the actual on-chain tx hash (same
+            // hash our server's Base RPC verify step needs).
+            console.log("[PAYMENT] sendCalls submitted, id:", callsId, "— polling for receipt");
+            const deadline = Date.now() + 30_000;
+            let txHash: string | null = null;
+            let batchFailed = false;
+            while (Date.now() < deadline && !txHash && !batchFailed) {
+              await new Promise((r) => setTimeout(r, 1500));
+              const status: any = await injected.request({
+                method: "wallet_getCallsStatus",
+                params: [callsId],
+              });
+              // Per EIP-5792, status is numeric: 200 = confirmed, >=400 =
+              // failed/reverted. Anything else (e.g. 100-range) is still
+              // pending — keep polling rather than treating it as a timeout.
+              if (typeof status?.status === "number" && status.status >= 400) {
+                batchFailed = true;
+                break;
+              }
+              const receipt = status?.receipts?.[0];
+              if (receipt?.transactionHash) txHash = receipt.transactionHash;
+            }
+
+            if (batchFailed) {
+              // Genuinely failed on-chain (e.g. reverted) — safe to retry
+              // via the legacy path below, no funds moved.
+              throw new Error("wallet_sendCalls batch failed on-chain.");
+            }
+            if (!txHash) {
+              // Submitted and still pending after 30s — do NOT fall through
+              // to eth_sendTransaction, that would double-charge. Surface
+              // this as its own error so the caller can tell the user to
+              // check their wallet/Basescan instead of retrying blindly.
+              throw new Error(
+                "PAYMENT_PENDING_CONFIRM: your payment was submitted and is still confirming on Base — please check your wallet or Basescan before retrying, do not submit again."
+              );
+            }
+
+            console.log("[PAYMENT] confirmed ✅ txHash (sendCalls):", txHash);
+            return { txHash, walletAddress: accounts[0].toLowerCase() };
+          } catch (sendCallsErr) {
+            // Once the batch was actually submitted, this is terminal for
+            // the injected-wallet path — never fall through to a second
+            // send, whether the reason was a slow confirmation or an
+            // on-chain failure. Surface the error as-is.
+            if (callsSubmitted) throw sendCallsErr;
+
+            const scMsg = (sendCallsErr as any)?.message?.toLowerCase?.() ?? "";
+            if (scMsg.includes("reject") || scMsg.includes("denied")) throw sendCallsErr;
+            // Wallet doesn't support wallet_sendCalls (e.g. a plain EOA
+            // injected wallet like MetaMask) or the call otherwise failed
+            // BEFORE submission — safe to fall through to the legacy path.
+            console.log("[PAYMENT] wallet_sendCalls unavailable/failed, falling back to eth_sendTransaction:", sendCallsErr);
+          }
+
+          // ── Legacy fallback: plain eth_sendTransaction ──────────────────
+          // Suffix is appended manually to `data`. Correct and sufficient
+          // for EOA wallets that forward calldata verbatim. For a Smart
+          // Wallet that still ends up here (sendCalls unsupported for some
+          // other reason) attribution isn't guaranteed, but the payment
+          // itself still succeeds and remains fully verifiable server-side.
+          console.log("[PAYMENT] sending tx (injected, legacy), microUsdc:", microUsdc);
           const txHash: string = await injected.request({
             method: "eth_sendTransaction",
             params: [{
@@ -1167,7 +1276,7 @@ export default function ClientPage() {
   // the accessory-unlock save fix. Throws (with a message including the
   // txHash) if it never succeeds, so the caller can surface a real error
   // instead of a false "checked in!" toast.
-  async function persistPaidCheckin(newState: PetState, txHash: string, paidWallet: string | null) {
+  async function persistPaidCheckin(newState: PetState, txHash: string, paidWallet: string | null): Promise<{ fid?: string | number | null; wallet?: string | null }> {
     // Use the wallet that ACTUALLY signed this payment over the possibly-stale
     // walletAddress state var — same reasoning as handleUnlockAccessory.
     const saveWallet = paidWallet ?? walletAddress;
@@ -1218,6 +1327,8 @@ export default function ClientPage() {
     if (!saved) {
       throw new Error(`Payment confirmed but saving failed (${lastError}). Your streak may not survive a refresh — contact support with tx: ${txHash}`);
     }
+
+    return saveIdentity;
   }
 
   async function doCheckIn() {
@@ -1244,14 +1355,17 @@ export default function ClientPage() {
       // Await the server save (with retries) before treating this as done —
       // see persistPaidCheckin's docstring for why this can't be
       // fire-and-forget.
-      await persistPaidCheckin(newState, txHash, paidWallet);
+      const checkinIdentity = await persistPaidCheckin(newState, txHash, paidWallet);
 
-      // Log confirmed check-in transaction — fire and forget
+      // Log confirmed check-in transaction — fire and forget. Use the same
+      // fid-or-wallet identity persistPaidCheckin just saved under, so
+      // Base App wallet-only checkins get logged too (previously silently
+      // dropped since logTransaction only checked the outer `fid`).
       logTransaction({
         type: "checkin",
         txHash,
         amountUsd: CHECKIN_USD,
-      });
+      }, checkinIdentity);
     } catch (err: any) {
       const msg: string = err?.message ?? String(err);
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
@@ -1499,6 +1613,11 @@ export default function ClientPage() {
   }
 
   // ── Transaction logger — fire and forget, never blocks the UI ───────────────
+  // Accepts the SAME identity (fid or wallet) that was just used to save the
+  // /api/pet state, rather than only checking the outer `fid` var. Base App
+  // users have no Farcaster fid at all, so gating on `fid` alone silently
+  // dropped every wallet-only purchase from the txn log (unlock/checkin still
+  // succeeded and persisted to KV — only this log write was skipped).
   function logTransaction(entry: {
     type: "accessory_unlock" | "checkin";
     txHash: string;
@@ -1506,12 +1625,13 @@ export default function ClientPage() {
     accessoryId?: string;
     accessoryName?: string;
     walletAddress?: string;
-  }) {
-    if (!fid) return;
+  }, identity: { fid?: string | number | null; wallet?: string | null }) {
+    const logFid = identity.fid ?? (identity.wallet ? `wallet:${identity.wallet}` : null);
+    if (!logFid) return;
     fetch("/api/txn-log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fid, ts: Date.now(), ...entry }),
+      body: JSON.stringify({ fid: logFid, ts: Date.now(), ...entry }),
     }).catch(() => {}); // never block on logging failure
   }
 
@@ -1673,7 +1793,9 @@ export default function ClientPage() {
         );
       }
 
-      // Log confirmed transaction — fire and forget
+      // Log confirmed transaction — fire and forget. Use saveIdentity (the
+      // same fid-or-wallet identity the /api/pet save above just used) so
+      // Base App wallet-only purchases get logged too, not just Farcaster fids.
       const acc = ACCESSORIES.find((a) => a.id === accessoryId);
       logTransaction({
         type: "accessory_unlock",
@@ -1681,7 +1803,8 @@ export default function ClientPage() {
         amountUsd: price,
         accessoryId,
         accessoryName: acc?.name,
-      });
+        walletAddress: saveWallet ?? undefined,
+      }, saveIdentity);
       setClosetMessage(null);
       setLastAction("New accessory unlocked! Tap Equip to dress up Grub.");
       playSfx("unlock");
