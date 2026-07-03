@@ -2383,8 +2383,8 @@ export default function ClientPage() {
               <small>{gateStreakRewardEarned
                 ? "🎉 7-day streak — +5 XP bonus on check-in!"
                 : gateStreak === 0
-                ? "Check in today to start your 7-day XP run"
-                : `Day ${gateCyclePos} of 7 → keep it going for ${7 - gateCyclePos} more day${7 - gateCyclePos === 1 ? "" : "s"} to get +5 XP`}
+                ? "Start your streak → +5 XP bonus on day 7"
+                : `${gateCyclePos}/7 days — keep going for +5 XP bonus`}
               </small>
               <button type="button" className="checkin-btn" onClick={doCheckIn} disabled={checkinPending}>
                 {checkinPending
@@ -2417,10 +2417,10 @@ export default function ClientPage() {
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, marginTop: 8, marginBottom: 16 }}>
               <small style={{ color: "#49332d", fontSize: "0.75rem", fontWeight: 800 }}>
                 {checkinStreak === 0
-                  ? "Check in today to start your 7-day XP run"
+                  ? "Start your streak → +5 XP bonus on day 7"
                   : checkinStreak % 7 === 0
                   ? "🎉 7-day streak — +5 XP bonus earned!"
-                  : `Day ${cyclePos} of 7 → keep it going for ${7 - cyclePos} more day${7 - cyclePos === 1 ? "" : "s"} to get +5 XP`}
+                  : `${checkinStreak % 7}/7 days — keep going for +5 XP bonus`}
               </small>
               <div style={{ display: "flex", gap: 7 }}>
                 {Array.from({ length: 7 }).map((_, i) => {
