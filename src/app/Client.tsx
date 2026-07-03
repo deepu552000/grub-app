@@ -650,6 +650,15 @@ export default function ClientPage() {
   }, [identityParam]);
 
   useEffect(() => {
+    // Call ready() immediately, before anything else. The host's splash-screen
+    // watchdog flags the app ("Ready not called") if this doesn't fire within
+    // a short window of the UI becoming visible — it does NOT wait for our
+    // data/identity/context to load. Our UI is already rendering at this point
+    // (loading state included), so it's safe to dismiss the splash right away.
+    // Calling this here — synchronously at effect start — instead of after
+    // sdk.context resolves is what was causing the intermittent warning.
+    sdk.actions.ready().catch(() => {});
+
     // Probe once, in parallel with everything else below, whether a
     // Farcaster wallet provider exists. Feeds fcWalletAvailable so
     // sendUsdcPayment doesn't need to re-check this on every click.
@@ -660,15 +669,11 @@ export default function ClientPage() {
 
     // Timeout fallback for local dev / plain browser where SDK context never resolves
     const fallbackTimer = setTimeout(() => {
-      sdk.actions.ready().catch(() => {});
       hydrateWith(loadState());
     }, 3000);
 
     sdk.context
       .then((ctx) => {
-        // Always call ready() after context resolves — mobile FC requires this
-        // order to dismiss the splash screen correctly.
-        sdk.actions.ready().catch(() => {});
         clearTimeout(fallbackTimer);
 
         // Live signal from Farcaster client — non-null only when the user
@@ -723,9 +728,9 @@ export default function ClientPage() {
       })
       .catch(() => {
         // SDK failed entirely (e.g. Base App, which doesn't run the
-        // Farcaster bridge at all) — call ready() anyway, then try the same
-        // silent wallet check before falling back to localStorage.
-        sdk.actions.ready().catch(() => {});
+        // Farcaster bridge at all) — ready() already fired at the top of
+        // this effect. Just try the same silent wallet check before
+        // falling back to localStorage.
         clearTimeout(fallbackTimer);
         detectInjectedWallet().then((addr) => {
           if (addr) {
