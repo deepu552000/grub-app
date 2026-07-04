@@ -1441,66 +1441,14 @@ export default function ClientPage() {
     // BEFORE Base Account/wagmi because it's simpler and far more reliable
     // inside a WebView, where WebAuthn/passkeys are known to hang silently.
     if (typeof window !== "undefined" && (window as any).ethereum) {
-      const injected = (window as any).ethereum;
-      let accounts: string[] = [];
       try {
-        accounts = await injected.request({ method: "eth_requestAccounts" });
-      } catch (err) {
-        // Getting accounts itself failed — no real wallet connection was
-        // ever established, so this is the one case still safe to fall
-        // through to Path 2 below.
-        const msg = (err as any)?.message?.toLowerCase?.() ?? "";
-        if (msg.includes("reject") || msg.includes("denied")) throw err;
-        console.log("[PAYMENT] injected eth_requestAccounts failed, falling back:", err);
-      }
+        const injected = (window as any).ethereum;
+        const accounts: string[] = await injected.request({ method: "eth_requestAccounts" });
+        if (accounts && accounts.length > 0) {
+          console.log("[PAYMENT] wallet (injected):", accounts[0]);
+          if (!fid && !walletAddress) setWalletAddress(accounts[0].toLowerCase());
 
-      if (accounts && accounts.length > 0) {
-        console.log("[PAYMENT] wallet (injected):", accounts[0]);
-        if (!fid && !walletAddress) setWalletAddress(accounts[0].toLowerCase());
-
-        // From here on we have a REAL connected wallet. Everything below
-        // either returns a txHash or throws — it deliberately does NOT
-        // fall through to Path 2 (Base Account/wagmi) anymore. Launching a
-        // second, unrelated wallet stack (Base Account's own passkey/popup
-        // flow) while a different extension (Rabby, MetaMask, etc.) is the
-        // page's active provider is exactly the kind of cross-provider
-        // interference that produces obscure failures like "Cannot read
-        // properties of undefined (reading 'error')" — silently retrying
-        // through a second wallet after a real attempt also risks a
-        // genuine double-charge if the first attempt actually went through.
-        // Any error here now surfaces directly to the caller instead.
-
-        // ── Try EIP-5792 wallet_sendCalls, but only if the wallet actually
-        // advertises support for it via wallet_getCapabilities first. Base
-        // App's Smart Wallet supports this; plain EOA wallets like Rabby or
-        // MetaMask do not. Calling wallet_sendCalls unconditionally relied
-        // on every wallet failing *cleanly* for an unsupported method — in
-        // practice some wallets throw a malformed error instead of a clean
-        // "not supported" one, which there's no reliable way to parse
-        // around. Checking capabilities first means we simply never call
-        // wallet_sendCalls on a wallet that can't handle it.
-        let supportsSendCalls = false;
-        try {
-          const caps: any = await injected.request({
-            method: "wallet_getCapabilities",
-            params: [accounts[0]],
-          });
-          const chainHex = `0x${base.id.toString(16)}`;
-          const chainCaps = caps?.[chainHex] ?? caps?.[base.id];
-          supportsSendCalls = !!(
-            chainCaps?.atomic?.status === "supported" ||
-            chainCaps?.atomic?.status === "ready" ||
-            chainCaps?.atomicBatch?.supported
-          );
-        } catch {
-          // Capability check itself unsupported/failed — treat as no
-          // support and go straight to the legacy path below, rather than
-          // finding out the hard way via wallet_sendCalls.
-          supportsSendCalls = false;
-        }
-
-        if (supportsSendCalls) {
-          // ── wallet_sendCalls ─────────────────────────────────────────────
+          // ── Try EIP-5792 wallet_sendCalls FIRST ─────────────────────────
           // Base App's wallet is a Smart Wallet (ERC-4337). Plain
           // eth_sendTransaction gets intercepted and re-encoded into a
           // UserOperation (EntryPoint.handleOps, selector 0x1fad948c)
@@ -1589,39 +1537,48 @@ export default function ClientPage() {
             console.log("[PAYMENT] confirmed ✅ txHash (sendCalls):", txHash);
             return { txHash, walletAddress: accounts[0].toLowerCase() };
           } catch (sendCallsErr) {
-            // Once the batch was actually submitted, this is terminal —
-            // never fall through to a second send, whether the reason was
-            // a slow confirmation or an on-chain failure. Surface as-is.
+            // Once the batch was actually submitted, this is terminal for
+            // the injected-wallet path — never fall through to a second
+            // send, whether the reason was a slow confirmation or an
+            // on-chain failure. Surface the error as-is.
             if (callsSubmitted) throw sendCallsErr;
 
             const scMsg = (sendCallsErr as any)?.message?.toLowerCase?.() ?? "";
             if (scMsg.includes("reject") || scMsg.includes("denied")) throw sendCallsErr;
-            // Failed BEFORE submission — safe to fall through to the
-            // legacy path below.
-            console.log("[PAYMENT] wallet_sendCalls failed pre-submission, falling back to eth_sendTransaction:", sendCallsErr);
+            // Wallet doesn't support wallet_sendCalls (e.g. a plain EOA
+            // injected wallet like MetaMask) or the call otherwise failed
+            // BEFORE submission — safe to fall through to the legacy path.
+            console.log("[PAYMENT] wallet_sendCalls unavailable/failed, falling back to eth_sendTransaction:", sendCallsErr);
           }
+
+          // ── Legacy fallback: plain eth_sendTransaction ──────────────────
+          // Suffix is appended manually to `data`. Correct and sufficient
+          // for EOA wallets that forward calldata verbatim. For a Smart
+          // Wallet that still ends up here (sendCalls unsupported for some
+          // other reason) attribution isn't guaranteed, but the payment
+          // itself still succeeds and remains fully verifiable server-side.
+          console.log("[PAYMENT] sending tx (injected, legacy), microUsdc:", microUsdc);
+          const txHash: string = await injected.request({
+            method: "eth_sendTransaction",
+            params: [{
+              from: accounts[0] as `0x${string}`,
+              to: USDC_CONTRACT,
+              data,
+            }],
+          });
+
+          if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+          console.log("[PAYMENT] confirmed ✅ txHash (injected):", txHash);
+          return { txHash, walletAddress: accounts[0].toLowerCase() };
         }
-
-        // ── Legacy fallback: plain eth_sendTransaction ──────────────────
-        // Suffix is appended manually to `data`. Correct and sufficient
-        // for EOA wallets that forward calldata verbatim (Rabby, MetaMask,
-        // etc.) For a Smart Wallet that still ends up here (sendCalls
-        // unsupported for some other reason) attribution isn't guaranteed,
-        // but the payment itself still succeeds and remains fully
-        // verifiable server-side.
-        console.log("[PAYMENT] sending tx (injected, legacy), microUsdc:", microUsdc);
-        const txHash: string = await injected.request({
-          method: "eth_sendTransaction",
-          params: [{
-            from: accounts[0] as `0x${string}`,
-            to: USDC_CONTRACT,
-            data,
-          }],
-        });
-
-        if (!txHash) throw new Error("No transaction hash returned. Please try again.");
-        console.log("[PAYMENT] confirmed ✅ txHash (injected):", txHash);
-        return { txHash, walletAddress: accounts[0].toLowerCase() };
+      } catch (err) {
+        // If the user explicitly rejected, don't silently fall through to a
+        // second wallet flow — surface it immediately.
+        const msg = (err as any)?.message?.toLowerCase?.() ?? "";
+        if (msg.includes("reject") || msg.includes("denied")) throw err;
+        // Otherwise (no accounts, method not supported, etc.) fall through
+        // to Path 2 below.
+        console.log("[PAYMENT] injected wallet attempt failed, falling back:", err);
       }
     }
 
@@ -3384,13 +3341,7 @@ export default function ClientPage() {
                   const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
-                  // A day only counts as "missed" if the account had
-                  // already checked in at least once before — otherwise
-                  // every day before a brand-new wallet's first-ever visit
-                  // (totalCheckIns === 0) would show up red, as if it had
-                  // been neglected, when the account simply didn't exist
-                  // yet on those days.
-                  const missed = (state.totalCheckIns ?? 0) > 0 && dayKey < todayKey() && !hit;
+                  const missed = dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 13, height: 13, borderRadius: "50%",
@@ -3456,9 +3407,7 @@ export default function ClientPage() {
                   const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
-                  // See the gate view above — don't mark days before the
-                  // account's first-ever check-in as "missed".
-                  const missed = (state.totalCheckIns ?? 0) > 0 && dayKey < todayKey() && !hit;
+                  const missed = dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 14, height: 14, borderRadius: "50%",
