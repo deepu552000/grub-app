@@ -822,19 +822,6 @@ export default function ClientPage() {
   // silently never appears (stuck on "confirming").
   // null = not checked yet, true = Farcaster host, false = not Farcaster.
   const [fcWalletAvailable, setFcWalletAvailable] = useState<boolean | null>(null);
-  // Holds the SINGLE, un-timed sdk.wallet.getEthereumProvider() call kicked
-  // off at mount. If a payment click lands before that mount-time probe has
-  // settled (fcWalletAvailable still null), sendUsdcPayment awaits THIS same
-  // in-flight promise instead of firing a second independent bridge call
-  // with its own fresh 1200ms clock. Previously, a click that landed early
-  // (e.g. right after opening the app, before the FC bridge had finished a
-  // cold-start handshake) raced its OWN new 1200ms timer starting from the
-  // click — and lost that race even though the mount's probe (already
-  // further along) would have resolved successfully a moment later. That is
-  // what caused a payment to spuriously fall through to the injected/Base
-  // Account (Coinbase) path on the very first attempt, then work normally
-  // on the next click once fcWalletAvailable had settled to true.
-  const fcProviderPromiseRef = useRef<Promise<any> | null>(null);
   // Live "are notifications currently on" flag, sourced from sdk.context on
   // every app open — not persisted, so it always reflects reality even if
   // the user enables/disables notifications outside of our banner flow.
@@ -926,20 +913,10 @@ export default function ClientPage() {
     // Probe once, in parallel with everything else below, whether a
     // Farcaster wallet provider exists. Feeds fcWalletAvailable so
     // sendUsdcPayment doesn't need to re-check this on every click.
-    //
-    // The raw (un-timed) call is stored in fcProviderPromiseRef so a payment
-    // click that lands before this settles can await the SAME in-flight
-    // promise (see sendUsdcPayment) rather than starting a second bridge
-    // call with its own fresh clock. The 1200ms race below is ONLY used to
-    // set the fcWalletAvailable UI/state flag promptly — it does not affect
-    // which promise a payment click ultimately awaits, so a slow-but-real
-    // cold-start bridge response is never discarded.
-    const rawFcProviderPromise = sdk.wallet.getEthereumProvider().catch(() => null);
-    fcProviderPromiseRef.current = rawFcProviderPromise;
-    Promise.race([
-      rawFcProviderPromise,
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200)),
-    ]).then((p) => setFcWalletAvailable(!!p));
+    // Timeout-wrapped: in the Base App this call can hang forever instead of
+    // resolving/rejecting, which would otherwise leave fcWalletAvailable
+    // stuck at null and break payments (see getFcProviderWithTimeout above).
+    getFcProviderWithTimeout().then((p) => setFcWalletAvailable(!!p));
 
     // Timeout fallback for local dev / plain browser where SDK context never resolves
     const fallbackTimer = setTimeout(() => {
@@ -1427,17 +1404,7 @@ export default function ClientPage() {
     if (fcWalletAvailable !== false) {
       const fcProvider = fcWalletAvailable === true
         ? await sdk.wallet.getEthereumProvider().catch(() => null)
-        // fcWalletAvailable is still null here — the mount-time probe hasn't
-        // settled yet. Await the SAME promise that probe kicked off (already
-        // in flight, possibly already close to resolving) rather than firing
-        // a brand-new sdk.wallet.getEthereumProvider() call with its own
-        // fresh 1200ms clock starting from right now. A generous 4000ms
-        // safety-net timeout still guards against a genuinely hung bridge
-        // (e.g. real Base App, which never resolves this call at all).
-        : await Promise.race([
-            fcProviderPromiseRef.current ?? getFcProviderWithTimeout(),
-            new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
-          ]);
+        : await getFcProviderWithTimeout();
       if (fcProvider) {
         // Everything below is now wrapped in its own try/catch. In a plain
         // desktop/mobile browser tab (no real Farcaster/Base App host),
