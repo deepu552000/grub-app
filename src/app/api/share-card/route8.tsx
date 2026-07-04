@@ -130,17 +130,10 @@ function moodAccent(mood: string): [string, string] {
   return                        ["rgba(160,140,255,0.16)", "rgba(180,160,255,0.32)"];
 }
 
-async function catImageDataUri(stage: number, mood: string, origin: string): Promise<string | null> {
-  const url = catImageSrc(stage, mood, origin);
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const buf = await res.arrayBuffer();
-    const base64 = Buffer.from(buf).toString("base64");
-    return `data:image/png;base64,${base64}`;
-  } catch {
-    return null;
-  }
+function catImageDataUri(stage: number, mood: string, origin: string): string {
+  // Return the image URL directly instead of embedding as a base64 data URI.
+  // Satori/next-og generally preserves PNG transparency better this way.
+  return catImageSrc(stage, mood, origin);
 }
 
 export async function GET(req: NextRequest) {
@@ -167,7 +160,7 @@ export async function GET(req: NextRequest) {
   const winIntensity = isRareWin ? 3 : winStyle.tier === "highlight" ? 2 : winStyle.scale >= 3 ? 1.5 : 1;
 
   const stageData  = stages[stageParam - 1];
-  const catSrc     = await catImageDataUri(stageParam, mood, origin);
+  const catSrc     = catImageDataUri(stageParam, mood, origin);
 
   const thisMinXp  = stageMinXp[stageParam - 1];
   const nextMinXp  = stageMinXp[stageParam] ?? null;
