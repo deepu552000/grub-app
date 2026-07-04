@@ -1406,53 +1406,30 @@ export default function ClientPage() {
         ? await sdk.wallet.getEthereumProvider().catch(() => null)
         : await getFcProviderWithTimeout();
       if (fcProvider) {
-        // Everything below is now wrapped in its own try/catch. In a plain
-        // desktop/mobile browser tab (no real Farcaster/Base App host),
-        // sdk.wallet.getEthereumProvider() can still resolve to a truthy
-        // but non-functional bridge object — there's no host on the other
-        // end to actually answer eth_requestAccounts/eth_sendTransaction.
-        // When that happens the bridge's own internal RPC-response parsing
-        // blows up with something like "RpcResponse.InternalError: Cannot
-        // read properties of undefined (reading 'error')" — previously
-        // uncaught here, which killed the whole payment (including a real
-        // injected wallet like Rabby/MetaMask sitting right there on
-        // window.ethereum, Path 1.5 below) instead of ever reaching it.
-        // Now: a genuine user rejection/cancel still surfaces immediately
-        // (so we don't mask "you said no" as some other error), but any
-        // other failure here just falls through to the injected-wallet /
-        // Base Account paths below instead of throwing.
-        try {
-          const accounts = await fcProvider.request({ method: "eth_requestAccounts" }) as string[];
-          if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
-          console.log("[PAYMENT] wallet (Farcaster):", accounts[0]);
+        const accounts = await fcProvider.request({ method: "eth_requestAccounts" }) as string[];
+        if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
+        console.log("[PAYMENT] wallet (Farcaster):", accounts[0]);
 
-          console.log("[PAYMENT] sending tx, microUsdc:", microUsdc);
-          const txHash: string = await fcProvider.request({
-            method: "eth_sendTransaction",
-            params: [{
-              from: accounts[0] as `0x${string}`,
-              to: USDC_CONTRACT,
-              data,
-            }],
-          });
+        console.log("[PAYMENT] sending tx, microUsdc:", microUsdc);
+        const txHash: string = await fcProvider.request({
+          method: "eth_sendTransaction",
+          params: [{
+            from: accounts[0] as `0x${string}`,
+            to: USDC_CONTRACT,
+            data,
+          }],
+        });
 
-          if (!txHash) throw new Error("No transaction hash returned. Please try again.");
-          console.log("[PAYMENT] confirmed ✅ txHash:", txHash);
-          // eth_sendTransaction returns only after user explicitly confirms in wallet —
-          // that confirmation IS the gate. Receipt polling via FC provider is not supported,
-          // so we trust the hash and unlock immediately. Server-side verify-payment route
-          // provides the on-chain double-check for audit purposes.
-          // .toLowerCase() to match every other return path below — the server
-          // already normalizes case in petKey(), but there's no reason for the
-          // client to be the one inconsistent source.
-          return { txHash, walletAddress: accounts[0].toLowerCase() };
-        } catch (fcErr) {
-          const fcMsg = (fcErr as any)?.message?.toLowerCase?.() ?? "";
-          if (fcMsg.includes("reject") || fcMsg.includes("denied") || fcMsg.includes("cancel")) {
-            throw fcErr;
-          }
-          console.log("[PAYMENT] Farcaster bridge failed, falling back to injected/Base Account:", fcErr);
-        }
+        if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+        console.log("[PAYMENT] confirmed ✅ txHash:", txHash);
+        // eth_sendTransaction returns only after user explicitly confirms in wallet —
+        // that confirmation IS the gate. Receipt polling via FC provider is not supported,
+        // so we trust the hash and unlock immediately. Server-side verify-payment route
+        // provides the on-chain double-check for audit purposes.
+        // .toLowerCase() to match every other return path below — the server
+        // already normalizes case in petKey(), but there's no reason for the
+        // client to be the one inconsistent source.
+        return { txHash, walletAddress: accounts[0].toLowerCase() };
       }
     }
 
