@@ -2110,7 +2110,6 @@ export default function ClientPage() {
           setLastAction(`🎡 Spin Wheel: already unlocked every Stage ${stageIndex} item — +${consolationXp} XP instead!`);
           playSfx("checkin");
           setWheelSpinning(false);
-          shareWheelWin(`Rare Accessory (+${consolationXp} XP consolation)`, false);
 
           const saveWallet = normalizeWallet(paidWallet, walletAddress);
           const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
@@ -2188,7 +2187,6 @@ export default function ClientPage() {
       setLastAction(`🎡 Spin Wheel: ${segment.label}!`);
       playSfx(segment.type === "xp" ? "checkin" : "unlock");
       setWheelSpinning(false);
-      shareWheelWin(segment.label, false);
 
       // Persist to the server. Reuses the same fid-or-wallet identity
       // resolution as check-in/accessory unlock. Non-blocking beyond this —
@@ -2375,7 +2373,6 @@ export default function ClientPage() {
     setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}!`);
     setLastAction(`🎡 Spin Wheel: unlocked ${accessory?.name ?? accessoryId}!`);
     playSfx("unlock");
-    shareWheelWin(`Rare Accessory: ${accessory?.name ?? accessoryId}`, true);
   }
 
   const line = useMemo(() => {
@@ -2605,42 +2602,6 @@ export default function ClientPage() {
     ].join("\n");
 
     shareOrCopy(castText, appUrl, "Share text + link copied! Paste it anywhere to share your Grub. 📋");
-  }
-
-  // Auto-share for Spin Wheel wins — same embed strategy as shareKitty (the
-  // app URL is embedded, not the raw image, so page.tsx's generateMetadata
-  // can point fc:frame's imageUrl at /api/share-card with matching params
-  // and the whole card stays tappable straight into the app). `isRareWin`
-  // toggles the bigger/flashier gold banner on the card itself for Rare
-  // Accessory wins specifically — every other win still gets a share, just
-  // with the smaller pill treatment. Fires automatically right when a win
-  // is confirmed (no separate "Share" tap), per how this was scoped.
-  function shareWheelWin(rewardLabel: string, isRareWin: boolean) {
-    const shareParams = new URLSearchParams({
-      stage:  String(stageIndex),
-      mood:   mood,
-      xp:     String(Math.round(state.xp)),
-      streak: String(state.streak),
-      bond:   String(clamp(state.bond)),
-      win:    rewardLabel,
-    });
-    if (isRareWin) shareParams.set("rare", "1");
-    if (fid) shareParams.set("ref", String(fid));
-
-    const appUrl = `https://grub-app-eight.vercel.app/?${shareParams.toString()}`;
-
-    const castText = isRareWin
-      ? [
-          `🎉 Just won ${rewardLabel} spinning Grub's Spin Wheel!`,
-          `My Grub is ${stage.name} (${stage.title}) — ${Math.round(state.xp)} XP, ${state.streak}-day streak.`,
-          `Spin your own wheel and raise a tiny white kitty on Farcaster ↓`,
-        ].join("\n")
-      : [
-          `Won ${rewardLabel} on Grub's Spin Wheel! 🎡`,
-          `Raise your own tiny white kitty on Farcaster ↓`,
-        ].join("\n");
-
-    shareOrCopy(castText, appUrl, "Share text + link copied! Paste it anywhere to show off your win. 📋");
   }
 
   // ── Transaction logger — fire and forget, never blocks the UI ───────────────

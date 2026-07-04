@@ -1,9 +1,6 @@
 // Save as: src/app/api/share-card/route.tsx
 // Generates a dynamic OG image card for sharing Grub on Farcaster.
 // Usage: /api/share-card?stage=1&mood=content&xp=240&streak=5&bond=42
-// Spin Wheel win card: add &win=<label> (e.g. "Rare Accessory: Gold Glasses"
-// or "+10 XP") and, for Rare Accessory wins specifically, &rare=1 for the
-// bigger/flashier gold banner treatment.
 
 import { ImageResponse } from "next/og";
 import { NextRequest } from "next/server";
@@ -66,12 +63,6 @@ export async function GET(req: NextRequest) {
   const xp         = parseInt(searchParams.get("xp")     ?? "0", 10);
   const streak     = parseInt(searchParams.get("streak") ?? "0", 10);
   const bond       = parseInt(searchParams.get("bond")   ?? "0", 10);
-  // Spin Wheel win banner — optional. `win` is the human-readable reward
-  // label (e.g. "Rare Accessory: Gold Glasses", "+10 XP", "Free Check-in").
-  // `rare` flips on the bigger/flashier gold treatment for Rare Accessory
-  // wins specifically, per the "every win, but bigger for rare wins" design.
-  const win        = searchParams.get("win");
-  const isRareWin  = searchParams.get("rare") === "1";
 
   const stageData  = stages[stageParam - 1];
   const catSrc     = await catImageDataUri(stageParam, mood, origin);
@@ -145,41 +136,6 @@ export async function GET(req: NextRequest) {
             </span>
           </div>
         </div>
-
-        {/* ── Spin Wheel win banner (optional) ── */}
-        {win && (
-          isRareWin ? (
-            <div
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                width: "100%",
-                background: "linear-gradient(90deg, rgba(255,60,172,0.28) 0%, rgba(255,200,80,0.28) 50%, rgba(255,60,172,0.28) 100%)",
-                border: "1.5px solid rgba(255,210,120,0.65)",
-                borderRadius: 16,
-                padding: "8px 12px",
-                boxShadow: "0 0 24px rgba(255,180,90,0.35)",
-              }}
-            >
-              <span style={{ fontSize: 20, display: "flex" }}>🎉</span>
-              <span style={{ fontSize: 17, fontWeight: 800, color: "#fff3da", letterSpacing: 0.3 }}>
-                WON: {win}
-              </span>
-              <span style={{ fontSize: 20, display: "flex" }}>🎉</span>
-            </div>
-          ) : (
-            <div
-              style={{
-                display: "flex", alignItems: "center", gap: 6,
-                background: "rgba(46,196,241,0.16)",
-                border: "1px solid rgba(46,196,241,0.35)",
-                borderRadius: 14, padding: "5px 14px",
-              }}
-            >
-              <span style={{ fontSize: 13, display: "flex" }}>🎡</span>
-              <span style={{ fontSize: 13, color: "#bdeaff", fontWeight: 600 }}>Won: {win}</span>
-            </div>
-          )
-        )}
 
         {/* ── Cat image ── */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>

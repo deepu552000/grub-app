@@ -24,11 +24,6 @@ type Props = {
     xp?: string;
     streak?: string;
     bond?: string;
-    // Spin Wheel win banner — optional, only present when shareWheelWin()
-    // built this URL. See Client.tsx's shareWheelWin() and the share-card
-    // route for what these render as.
-    win?: string;
-    rare?: string;
   }>;
 };
 
@@ -41,7 +36,7 @@ type Props = {
 //   the app when tapped, instead of a separate non-clickable image embed.
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const params = await searchParams;
-  const { ref, stage, mood, xp, streak, bond, win, rare } = params ?? {};
+  const { ref, stage, mood, xp, streak, bond } = params ?? {};
 
   const hasShareStats = Boolean(stage && mood);
 
@@ -60,11 +55,6 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
     if (xp)     cardParams.set("xp", xp);
     if (streak) cardParams.set("streak", streak);
     if (bond)   cardParams.set("bond", bond);
-    // Spin Wheel win banner — purely additive, doesn't change hasShareStats
-    // (a win is always accompanied by stage/mood anyway, since shareWheelWin()
-    // builds its URL the same way shareKitty() does).
-    if (win)    cardParams.set("win", win);
-    if (rare)   cardParams.set("rare", rare);
     imageUrl = `${BASE_URL}/api/share-card?${cardParams.toString()}`;
   }
 
