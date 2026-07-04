@@ -822,6 +822,19 @@ export default function ClientPage() {
   // silently never appears (stuck on "confirming").
   // null = not checked yet, true = Farcaster host, false = not Farcaster.
   const [fcWalletAvailable, setFcWalletAvailable] = useState<boolean | null>(null);
+  // Holds the SINGLE, un-timed sdk.wallet.getEthereumProvider() call kicked
+  // off at mount. If a payment click lands before that mount-time probe has
+  // settled (fcWalletAvailable still null), sendUsdcPayment awaits THIS same
+  // in-flight promise instead of firing a second independent bridge call
+  // with its own fresh 1200ms clock. Previously, a click that landed early
+  // (e.g. right after opening the app, before the FC bridge had finished a
+  // cold-start handshake) raced its OWN new 1200ms timer starting from the
+  // click — and lost that race even though the mount's probe (already
+  // further along) would have resolved successfully a moment later. That is
+  // what caused a payment to spuriously fall through to the injected/Base
+  // Account (Coinbase) path on the very first attempt, then work normally
+  // on the next click once fcWalletAvailable had settled to true.
+  const fcProviderPromiseRef = useRef<Promise<any> | null>(null);
   // Live "are notifications currently on" flag, sourced from sdk.context on
   // every app open — not persisted, so it always reflects reality even if
   // the user enables/disables notifications outside of our banner flow.
@@ -913,10 +926,20 @@ export default function ClientPage() {
     // Probe once, in parallel with everything else below, whether a
     // Farcaster wallet provider exists. Feeds fcWalletAvailable so
     // sendUsdcPayment doesn't need to re-check this on every click.
-    // Timeout-wrapped: in the Base App this call can hang forever instead of
-    // resolving/rejecting, which would otherwise leave fcWalletAvailable
-    // stuck at null and break payments (see getFcProviderWithTimeout above).
-    getFcProviderWithTimeout().then((p) => setFcWalletAvailable(!!p));
+    //
+    // The raw (un-timed) call is stored in fcProviderPromiseRef so a payment
+    // click that lands before this settles can await the SAME in-flight
+    // promise (see sendUsdcPayment) rather than starting a second bridge
+    // call with its own fresh clock. The 1200ms race below is ONLY used to
+    // set the fcWalletAvailable UI/state flag promptly — it does not affect
+    // which promise a payment click ultimately awaits, so a slow-but-real
+    // cold-start bridge response is never discarded.
+    const rawFcProviderPromise = sdk.wallet.getEthereumProvider().catch(() => null);
+    fcProviderPromiseRef.current = rawFcProviderPromise;
+    Promise.race([
+      rawFcProviderPromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200)),
+    ]).then((p) => setFcWalletAvailable(!!p));
 
     // Timeout fallback for local dev / plain browser where SDK context never resolves
     const fallbackTimer = setTimeout(() => {
@@ -1404,7 +1427,17 @@ export default function ClientPage() {
     if (fcWalletAvailable !== false) {
       const fcProvider = fcWalletAvailable === true
         ? await sdk.wallet.getEthereumProvider().catch(() => null)
-        : await getFcProviderWithTimeout();
+        // fcWalletAvailable is still null here — the mount-time probe hasn't
+        // settled yet. Await the SAME promise that probe kicked off (already
+        // in flight, possibly already close to resolving) rather than firing
+        // a brand-new sdk.wallet.getEthereumProvider() call with its own
+        // fresh 1200ms clock starting from right now. A generous 4000ms
+        // safety-net timeout still guards against a genuinely hung bridge
+        // (e.g. real Base App, which never resolves this call at all).
+        : await Promise.race([
+            fcProviderPromiseRef.current ?? getFcProviderWithTimeout(),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+          ]);
       if (fcProvider) {
         // Everything below is now wrapped in its own try/catch. In a plain
         // desktop/mobile browser tab (no real Farcaster/Base App host),
@@ -1480,6 +1513,46 @@ export default function ClientPage() {
       if (accounts && accounts.length > 0) {
         console.log("[PAYMENT] wallet (injected):", accounts[0]);
         if (!fid && !walletAddress) setWalletAddress(accounts[0].toLowerCase());
+
+        // ── Ensure the wallet is actually on Base before doing anything else.
+        // Unlike Path 1 (Farcaster bridge, always Base-scoped) and Path 2
+        // (Base Account/wagmi, which calls switchChain explicitly), this
+        // path previously never told the wallet which chain to use at all —
+        // eth_sendTransaction below had no chainId, so a wallet sitting on
+        // a different active network (BNB Chain, Mantle, etc.) would try to
+        // resolve USDC_CONTRACT's address on the WRONG chain. That mismatch
+        // is the likely cause of transactions getting stuck mid-sign in
+        // Rabby/MetaMask/Ambire — confirmed by the wallet's own background
+        // network log showing it querying bnbchain.org / mantle.xyz RPCs
+        // rather than Base, right before the stuck sign window.
+        const baseChainHex = `0x${base.id.toString(16)}`;
+        try {
+          await injected.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: baseChainHex }],
+          });
+        } catch (switchErr: any) {
+          // 4902 = chain not added to the wallet yet — add it, then the
+          // wallet switches to it as part of the same add flow.
+          if (switchErr?.code === 4902) {
+            try {
+              await injected.request({
+                method: "wallet_addEthereumChain",
+                params: [{
+                  chainId: baseChainHex,
+                  chainName: "Base",
+                  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+                  rpcUrls: ["https://mainnet.base.org"],
+                  blockExplorerUrls: ["https://basescan.org"],
+                }],
+              });
+            } catch (addErr) {
+              console.log("[PAYMENT] wallet_addEthereumChain failed:", addErr);
+            }
+          } else {
+            console.log("[PAYMENT] wallet_switchEthereumChain failed:", switchErr);
+          }
+        }
 
         // From here on we have a REAL connected wallet. Everything below
         // either returns a txHash or throws — it deliberately does NOT
@@ -1632,6 +1705,17 @@ export default function ClientPage() {
         // unsupported for some other reason) attribution isn't guaranteed,
         // but the payment itself still succeeds and remains fully
         // verifiable server-side.
+        //
+        // Note: an earlier version of this fix stripped the suffix here,
+        // suspecting wallet-side calldata simulation was choking on the
+        // trailing attribution bytes. That was a reasonable guess at the
+        // time but turned out to be wrong — the actual root cause was the
+        // missing wallet_switchEthereumChain call above (wallet stuck
+        // resolving USDC_CONTRACT on the wrong chain, e.g. BSC/Mantle,
+        // confirmed via the wallet's own network log + manual repro).
+        // With the chain switch now in place, there's no evidence the
+        // suffix itself was ever a problem, so it stays — no reason to give
+        // up attribution tracking on this path for an unconfirmed theory.
         console.log("[PAYMENT] sending tx (injected, legacy), microUsdc:", microUsdc);
         const txHash: string = await injected.request({
           method: "eth_sendTransaction",
@@ -1639,6 +1723,7 @@ export default function ClientPage() {
             from: accounts[0] as `0x${string}`,
             to: USDC_CONTRACT,
             data,
+            chainId: baseChainHex,
           }],
         });
 

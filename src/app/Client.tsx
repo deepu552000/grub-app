@@ -813,6 +813,10 @@ export default function ClientPage() {
   // Single string used as the identity query param for /api/pet — "fid"
   // wins whenever both happen to be present (never should be, in practice).
   const identityParam = fid ? `fid=${fid}` : walletAddress ? `wallet=${walletAddress}` : null;
+  // True for Base App / plain-browser wallet users — no Farcaster fid at
+  // all. Used to route notification-status checks and the nudge banner's
+  // "Enable" action to the Base-specific path instead of the FC one below.
+  const isBaseAppIdentity = !fid && !!walletAddress;
   // Whether a Farcaster wallet provider exists — checked ONCE at mount, not
   // on every payment click. This lets sendUsdcPayment skip the async
   // getEthereumProvider() re-check in the Base App / browser case, so
@@ -912,6 +916,32 @@ export default function ClientPage() {
     loadWithRetries();
     return () => { cancelled = true; };
   }, [identityParam]);
+
+  // Base App users have no Farcaster sdk.context to read notification state
+  // from — ctx?.client?.notificationDetails (set below) is a Farcaster-only
+  // signal and stays permanently falsy for them, which was making the nudge
+  // banner show even for users who'd already enabled notifications in Base
+  // App. This checks Base's own per-wallet status instead, whenever we have
+  // a wallet identity and no fid. Re-runs whenever walletAddress changes
+  // (e.g. resolves after mount, or a different wallet connects).
+  useEffect(() => {
+    if (!isBaseAppIdentity || !walletAddress) return;
+    let cancelled = false;
+
+    fetch(`/api/base-notification-status?wallet=${walletAddress}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setNotificationsEnabled(!!data.notificationsEnabled);
+        setAppAlreadyAdded(!!data.appPinned);
+      })
+      .catch(() => {
+        // Leave existing state as-is on failure — better to risk one extra
+        // banner showing than to flip a real "enabled" status to false.
+      });
+
+    return () => { cancelled = true; };
+  }, [isBaseAppIdentity, walletAddress]);
 
   useEffect(() => {
     // Call ready() immediately, before anything else. The host's splash-screen
@@ -1259,6 +1289,27 @@ export default function ClientPage() {
 
   async function handleEnableNotifications() {
     setNotifEnabling(true);
+
+    // Base App has no JS-triggerable "enable notifications" prompt — that
+    // only happens through Base App's own UI (its save/pin app flow). All
+    // we can do from in-app is re-check Base's status after the user says
+    // they've done it, and let the banner clear itself once it's true.
+    if (isBaseAppIdentity && walletAddress) {
+      try {
+        const r = await fetch(`/api/base-notification-status?wallet=${walletAddress}`);
+        const data = r.ok ? await r.json() : null;
+        if (data) {
+          setNotificationsEnabled(!!data.notificationsEnabled);
+          setAppAlreadyAdded(!!data.appPinned);
+        }
+      } catch {
+        // leave state as-is — banner just keeps showing, which is correct
+      } finally {
+        setNotifEnabling(false);
+      }
+      return;
+    }
+
     try {
       // addMiniApp() only shows UI / re-prompts the FIRST time. If the app
       // is already added, this resolves immediately with no dialog and no
@@ -3334,12 +3385,35 @@ export default function ClientPage() {
                 Don't let Grub starve!
               </div>
               <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
-                {appAlreadyAdded
+                {isBaseAppIdentity
+                  ? "Notifications are off. Save this app and enable notifications from Base App's menu so she can reach you."
+                  : appAlreadyAdded
                   ? "Notifications are off. Turn them on from your app settings so she can reach you."
                   : "Turn on notifications so she can reach you when she's hungry."}
               </div>
             </div>
-            {appAlreadyAdded ? (
+            {isBaseAppIdentity ? (
+              <button
+                type="button"
+                onClick={handleEnableNotifications}
+                disabled={notifEnabling}
+                style={{
+                  background: "#49332d",
+                  color: "#fff8ef",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "6px 10px",
+                  fontSize: "0.72rem",
+                  fontWeight: 700,
+                  cursor: notifEnabling ? "default" : "pointer",
+                  opacity: notifEnabling ? 0.7 : 1,
+                  flexShrink: 0,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {notifEnabling ? "..." : "I did it"}
+              </button>
+            ) : appAlreadyAdded ? (
               <button
                 type="button"
                 onClick={dismissNotifBanner}
