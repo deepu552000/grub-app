@@ -714,16 +714,6 @@ export default function ClientPage() {
   // NEW wallet's identity, leaking stats across accounts (see the save
   // effect's guard for the full explanation).
   const loadedIdentityRef = useRef<string | null>(null);
-  // True whenever `state` did NOT come from a confirmed, well-formed DB read
-  // for the CURRENT identity — i.e. the DB fetch failed, timed out, or came
-  // back with an unexpected/error shape, and we fell back to localStorage
-  // instead. This is a safety net for the "empty-state got saved over real
-  // data" bug: the debounced autosave effect below must never POST `state`
-  // to the server while this is true, because that state is not known-good
-  // — persisting it would silently overwrite a real DB record (accessories,
-  // stats, everything) with a stale or empty snapshot the moment the server
-  // hiccups. Cleared the instant a genuine DB read succeeds.
-  const untrustedLoadRef = useRef(false);
 
   function hydrateWith(s: PetState) {
     if (hydratedRef.current) return;
@@ -745,10 +735,9 @@ export default function ClientPage() {
   // actually applied it to the UI, leaving the FIRST account's pet state
   // displayed indefinitely. That's the "Base App shows the same
   // session/data for every wallet" bug. Re-identity loads must always win.
-  function applyIdentityLoad(s: PetState, identity: string | null, trusted: boolean) {
+  function applyIdentityLoad(s: PetState, identity: string | null) {
     hydratedRef.current = true;
     loadedIdentityRef.current = identity;
-    untrustedLoadRef.current = !trusted;
     setState(s);
     setHydrated(true);
   }
@@ -797,65 +786,30 @@ export default function ClientPage() {
   const kittyRef = useRef<HTMLDivElement>(null);
 
   // Load state from DB using FID (or wallet address for Base App users).
+  // After loading, merge accessories.unlocked from localStorage so any unlock
+  // that was saved locally but not yet persisted to DB is never lost.
   useEffect(() => {
     if (!identityParam) return;
     const forIdentity = identityParam; // pin the identity this fetch is FOR — see applyIdentityLoad
-    let cancelled = false;
+    fetch(`/api/pet?${identityParam}`)
+      .then((r) => r.json())
+      .then((saved) => {
+        const dbState = saved ? loadStateFromSaved(saved) : { ...defaultState, lastVisit: Date.now() };
 
-    async function loadWithRetries() {
-      let lastErr: unknown = null;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const r = await fetch(`/api/pet?${forIdentity}`);
-          // A non-2xx response (rate limit, cold-start timeout, KV lookup
-          // miss, etc.) can still carry a valid JSON body such as
-          // { error: "..." }. Without checking r.ok, that error object was
-          // previously accepted as if it were real saved state:
-          // loadStateFromSaved() would then find no `.accessories` field on
-          // it and quietly substitute an EMPTY accessory state — which the
-          // debounced autosave effect turned around and POSTed straight
-          // back to the DB, permanently erasing a real unlock (or streak,
-          // XP, etc.) the moment the server had one transient hiccup. This
-          // is the root cause of "accessory paid for and shows unlocked
-          // elsewhere, but Closet UI still shows it locked even after a
-          // full reload" — the live DB record itself was getting wiped.
-          if (!r.ok) throw new Error(`/api/pet returned HTTP ${r.status}`);
-          const saved = await r.json();
-          // Guard against a 200 response whose body isn't actually a pet
-          // record (e.g. `{}` or an error-shaped object with no numeric xp)
-          // — treat anything that doesn't look like real saved state the
-          // same as "no record yet" rather than silently emptying accessories.
-          if (saved && typeof saved === "object" && typeof (saved as any).xp !== "number" && Object.keys(saved).length > 0) {
-            throw new Error("/api/pet returned an unexpected response shape");
-          }
-          if (cancelled) return;
-          const dbState = saved ? loadStateFromSaved(saved) : { ...defaultState, lastVisit: Date.now() };
-          // DB is source of truth for unlocked accessories — never merge
-          // from localStorage as that would allow anyone to add accessories
-          // by editing localStorage. This is a genuinely confirmed DB read
-          // (trusted=true), so it's safe for the autosave effect to persist
-          // future local changes on top of it.
-          applyIdentityLoad(dbState, forIdentity, true);
-          return;
-        } catch (e) {
-          lastErr = e;
-          if (attempt < 3) await new Promise((res) => setTimeout(res, 800 * attempt));
-        }
-      }
-      console.error("[LOAD] /api/pet failed after 3 attempts, falling back to localStorage:", lastErr);
-      if (cancelled) return;
-      // DB fetch never succeeded — fall back to localStorage, scoped to
-      // THIS identity so a network blip can never surface a different
-      // account's cached snapshot. Marked untrusted (trusted=false) so the
-      // autosave effect below will NOT persist this to the server — we
-      // don't actually know whether this local snapshot is fresher or
-      // staler than whatever the DB has, so the only safe move is to show
-      // it locally without touching the DB until a real read succeeds.
-      applyIdentityLoad(loadState(scopedStorageKey(forIdentity)), forIdentity, false);
-    }
-
-    loadWithRetries();
-    return () => { cancelled = true; };
+        // DB is source of truth for unlocked accessories — never merge from localStorage
+        // as that would allow anyone to add accessories by editing localStorage.
+        // Always applies (see applyIdentityLoad) — this effect can fire again
+        // later if identityParam changes (e.g. wallet switch in Base App),
+        // and that later load must actually reach the UI, not be swallowed.
+        applyIdentityLoad(dbState, forIdentity);
+      })
+      .catch(() => {
+        // DB failed — fall back to localStorage, scoped to THIS identity so
+        // a network blip can never surface a different account's cached
+        // snapshot (identity is already known here, unlike the anonymous
+        // fallback paths in the mount effect below).
+        applyIdentityLoad(loadState(scopedStorageKey(identityParam)), forIdentity);
+      });
   }, [identityParam]);
 
   useEffect(() => {
@@ -1000,17 +954,6 @@ export default function ClientPage() {
     // Save to DB if we have an identity (fid or wallet) — debounced 800ms
     // to avoid hammering on rapid taps.
     if (!identityParam) return;
-
-    // Never let a state that came from an untrusted fallback (DB read
-    // failed/returned a bad shape, see the load effect above) get POSTed
-    // back to the server — that would silently overwrite real DB data
-    // (accessories, streak, XP, everything) with a stale or empty local
-    // snapshot. The background retry effect below will clear this flag and
-    // pull the real DB state as soon as a genuine read succeeds; local
-    // changes made in the meantime still land in localStorage just above,
-    // so nothing is lost on this device even though the server save waits.
-    if (untrustedLoadRef.current) return;
-
     const timer = setTimeout(() => {
       fetch("/api/pet", {
         method: "POST",
@@ -1022,36 +965,6 @@ export default function ClientPage() {
     }, 800);
     return () => clearTimeout(timer);
   }, [state, hydrated, identityParam]);
-
-  // Background self-heal: while the current state is an untrusted fallback
-  // (see untrustedLoadRef), periodically retry the real DB load instead of
-  // staying stuck in "can't save" mode until the user manually reloads the
-  // app. As soon as a genuine read succeeds, it replaces `state` with the
-  // confirmed DB record and clears the flag, so normal autosave resumes.
-  useEffect(() => {
-    if (!hydrated || !identityParam) return;
-    if (!untrustedLoadRef.current) return;
-    const forIdentity = identityParam;
-    let cancelled = false;
-    const interval = setInterval(async () => {
-      if (cancelled || !untrustedLoadRef.current || identityParam !== forIdentity) return;
-      try {
-        const r = await fetch(`/api/pet?${forIdentity}`);
-        if (!r.ok) return;
-        const saved = await r.json();
-        if (saved && typeof saved === "object" && typeof (saved as any).xp !== "number" && Object.keys(saved).length > 0) {
-          return; // still a bad shape — try again next tick
-        }
-        if (cancelled) return;
-        const dbState = saved ? loadStateFromSaved(saved) : { ...defaultState, lastVisit: Date.now() };
-        console.log("[LOAD] background retry succeeded — replacing untrusted fallback with confirmed DB state");
-        applyIdentityLoad(dbState, forIdentity, true);
-      } catch {
-        // still failing — leave untrustedLoadRef set and try again next tick
-      }
-    }, 15000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [hydrated, identityParam, state]);
 
   const mood = useMemo(() => moodFor(state), [state]);
   const stage = getStage(state.xp);
@@ -4122,7 +4035,7 @@ export default function ClientPage() {
         )}
 
       </section>
-      {showFaq && <FaqModal onClose={() => setShowFaq(false)} debugInfo={fid ? `fid:${fid}` : walletAddress ? `wallet:${walletAddress}` : "no identity yet"} />}
+      {showFaq && <FaqModal onClose={() => setShowFaq(false)} />}
     </main>
   );
 }
@@ -4470,7 +4383,7 @@ const faqSections = [
   },
 ];
 
-function FaqModal({ onClose, debugInfo }: { onClose: () => void; debugInfo?: string }) {
+function FaqModal({ onClose }: { onClose: () => void }) {
   const [open, setOpen] = useState<number | null>(0);
   return (
     <div className="faq-backdrop" onClick={onClose}>
@@ -4496,17 +4409,6 @@ function FaqModal({ onClose, debugInfo }: { onClose: () => void; debugInfo?: str
             </div>
           ))}
         </div>
-        {/* Tiny, low-visibility identity readout — purely diagnostic, not
-            meant as a real UI feature. Lets you confirm from inside Base App
-            (no devtools needed) whether switching wallets + reloading is
-            actually changing the identity the app is using, without which
-            it's impossible to tell a client-side detection bug apart from
-            a server-side one returning the same data regardless of wallet. */}
-        {debugInfo && (
-          <div style={{ padding: "6px 16px", fontSize: 11, opacity: 0.45, textAlign: "center" }}>
-            {debugInfo}
-          </div>
-        )}
       </div>
     </div>
   );
