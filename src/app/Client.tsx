@@ -17,19 +17,45 @@ const BUILDER_CODE_SUFFIX = Attribution.toDataSuffix({
 });
 
 // ── Base App / injected-wallet identity helper ──────────────────────────────
-// Silently checks for an already-connected injected wallet (no popup) via
-// eth_accounts. Used as the identity fallback when Farcaster context has no
-// fid — i.e. the Base App case. Safe to call in any browser; returns null
-// if there's no injected provider or nothing is connected yet.
+// Base App's in-app browser IS the wallet — there's no separate "connect"
+// gesture for the user to take, unlike a plain browser + extension. That
+// means the silent, permission-gated `eth_accounts` (which only ever
+// returns something if the site was PREVIOUSLY authorized via
+// eth_requestAccounts) is the wrong call here: on a fresh Base App session
+// it just comes back empty and the app falls through to localStorage-only
+// mode, silently losing whatever gets paid for in that state.
+// `eth_requestAccounts` is safe to call unconditionally instead — inside
+// Base App it resolves immediately with the active account (the host
+// already trusts itself, no visible prompt), and in a genuine external
+// browser with a real extension it shows at most one native approve
+// dialog (or rejects cleanly, same fallback as before).
 async function detectInjectedWallet(): Promise<string | null> {
   try {
     const eth = (typeof window !== "undefined" ? (window as any).ethereum : null);
     if (!eth) return null;
-    const accounts: string[] = await eth.request({ method: "eth_accounts" });
+    const accounts: string[] = await eth.request({ method: "eth_requestAccounts" });
     return accounts && accounts.length > 0 ? accounts[0].toLowerCase() : null;
   } catch {
     return null;
   }
+}
+
+// Normalizes a list of candidate wallet addresses down to the first
+// non-empty one, treating "" the same as null/undefined. Needed because a
+// bare `a ?? b` chain does NOT fall through on an empty string (only on
+// null/undefined) — while every caller's *next* check is a truthy `? :`,
+// which DOES treat "" as missing. That mismatch was letting a payment
+// succeed locally (accessory added to state/localStorage) while the
+// identity used to save it collapsed to `null` a moment later, so the
+// server-side save silently never happened — see the "no account found"
+// bug. Centralizing the check here means every save site treats "" the
+// same way, once.
+function normalizeWallet(...candidates: (string | null | undefined)[]): string | null {
+  for (const candidate of candidates) {
+    const trimmed = (candidate ?? "").trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
 }
 
 // Explicit connect — triggers the wallet's connect prompt (eth_requestAccounts).
@@ -132,6 +158,17 @@ type Ripple = {
 };
 
 const STORAGE_KEY = "grub-white-kitty-v1";
+
+// Scopes the localStorage key to the current identity (fid or wallet) once
+// known, so switching accounts in the SAME browser can never read/write a
+// previous account's cached snapshot. Falls back to the plain, unscoped
+// STORAGE_KEY when no identity is known yet — i.e. genuine anonymous/local-
+// only play, where there's no wallet to mix across in the first place.
+// `identity` is expected to be identityParam ("fid=123" / "wallet=0xabc") or
+// null — already unique per account, no extra hashing needed.
+function scopedStorageKey(identity: string | null): string {
+  return identity ? `${STORAGE_KEY}:${identity}` : STORAGE_KEY;
+}
 
 const stages = [
   {
@@ -479,9 +516,9 @@ function moodFor(state: PetState): Mood {
   return "content";
 }
 
-function loadState(): PetState {
+function loadState(storageKey: string = STORAGE_KEY): PetState {
   try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
+    const saved = window.localStorage.getItem(storageKey);
     if (!saved) return { ...defaultState, lastVisit: Date.now() };
 
     const parsed = JSON.parse(saved) as PetState;
@@ -674,6 +711,24 @@ export default function ClientPage() {
     setState(s);
     setHydrated(true);
   }
+
+  // Same as hydrateWith, but WITHOUT the once-only guard. hydrateWith exists
+  // to resolve the mount-time race between the fallback timer / sdk.context /
+  // wallet-detect all trying to set initial state at once — that guard must
+  // stay for the FIRST load. But it must not also block every subsequent
+  // load: the DB-load effect below re-fetches whenever `identityParam`
+  // changes (e.g. a Base App user switches wallet accounts mid-session via
+  // accountsChanged), and previously reused hydrateWith for that too — so
+  // once hydratedRef flipped true on the first account, switching to a
+  // second wallet still fetched the new account's data correctly but never
+  // actually applied it to the UI, leaving the FIRST account's pet state
+  // displayed indefinitely. That's the "Base App shows the same
+  // session/data for every wallet" bug. Re-identity loads must always win.
+  function applyIdentityLoad(s: PetState) {
+    hydratedRef.current = true;
+    setState(s);
+    setHydrated(true);
+  }
   const { playSfx, sfxOn, toggleSfx, musicOn, toggleMusic, volume, setVolume, musicTrack, setMusicTrack, musicTracks } = useGrubSound();
   const [volumePopoverOpen, setVolumePopoverOpen] = useState(false);
   useEffect(() => {
@@ -730,11 +785,17 @@ export default function ClientPage() {
 
         // DB is source of truth for unlocked accessories — never merge from localStorage
         // as that would allow anyone to add accessories by editing localStorage.
-        hydrateWith(dbState);
+        // Always applies (see applyIdentityLoad) — this effect can fire again
+        // later if identityParam changes (e.g. wallet switch in Base App),
+        // and that later load must actually reach the UI, not be swallowed.
+        applyIdentityLoad(dbState);
       })
       .catch(() => {
-        // DB failed — fall back to localStorage
-        hydrateWith(loadState());
+        // DB failed — fall back to localStorage, scoped to THIS identity so
+        // a network blip can never surface a different account's cached
+        // snapshot (identity is already known here, unlike the anonymous
+        // fallback paths in the mount effect below).
+        applyIdentityLoad(loadState(scopedStorageKey(identityParam)));
       });
   }, [identityParam]);
 
@@ -833,11 +894,30 @@ export default function ClientPage() {
     return () => clearTimeout(fallbackTimer);
   }, []);
 
+  // Safety net for switching accounts WITHOUT a page reload (e.g. a wallet
+  // extension's account switcher). Only matters when there's no fid — once
+  // fid is set, this is a no-op since identityParam always prefers fid.
+  // Without this, walletAddress stays pinned to whatever detectInjectedWallet()
+  // found once at mount, so a switch mid-session would silently keep
+  // reading/writing the OLD wallet's grub:pet:wallet:<addr> record.
+  useEffect(() => {
+    const eth = (typeof window !== "undefined" ? (window as any).ethereum : null);
+    if (!eth?.on) return;
+    const onAccountsChanged = (accounts: string[]) => {
+      if (fid) return; // fid always wins — never let this override a Farcaster identity
+      setWalletAddress(accounts && accounts.length > 0 ? accounts[0].toLowerCase() : null);
+    };
+    eth.on("accountsChanged", onAccountsChanged);
+    return () => eth.removeListener?.("accountsChanged", onAccountsChanged);
+  }, [fid]);
+
   useEffect(() => {
     if (!hydrated) return;
 
-    // Always keep localStorage as offline fallback
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    // Always keep localStorage as offline fallback — scoped per identity so
+    // this can never leak into a different account's cache (see
+    // scopedStorageKey doc comment above).
+    window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(state));
 
     // Save to DB if we have an identity (fid or wallet) — debounced 800ms
     // to avoid hammering on rapid taps.
@@ -1129,11 +1209,23 @@ export default function ClientPage() {
     // know it's false (Base App / browser), skip straight to Path 2 below —
     // otherwise this await runs first and eats the click gesture Base
     // Account's passkey popup needs, silently killing it with no error.
-    // Uses the timeout-wrapped probe (not the raw SDK call) so a still-null
-    // fcWalletAvailable (e.g. mount probe hasn't settled yet) can't hang
-    // this await forever in Base App and eat the gesture anyway.
+    //
+    // When fcWalletAvailable is still null (mount probe hasn't settled yet),
+    // use the timeout-wrapped probe so a genuine non-Farcaster host (Base
+    // App) can't hang this await forever and eat the click gesture.
+    //
+    // When fcWalletAvailable is already TRUE, though, we know from the
+    // mount-time probe that this really is a working Farcaster host — call
+    // the real SDK method directly, with no artificial timeout. Re-racing
+    // a fresh 1200ms clock on every single click was causing real Farcaster
+    // payments to spuriously fall through to Path 2 (Base Account/wagmi,
+    // which prompts "Continue in Base App") whenever the bridge call took
+    // slightly longer than 1.2s to resolve on a given device/network —
+    // breaking FC payments even though nothing about the host had changed.
     if (fcWalletAvailable !== false) {
-      const fcProvider = await getFcProviderWithTimeout();
+      const fcProvider = fcWalletAvailable === true
+        ? await sdk.wallet.getEthereumProvider().catch(() => null)
+        : await getFcProviderWithTimeout();
       if (fcProvider) {
         const accounts = await fcProvider.request({ method: "eth_requestAccounts" }) as string[];
         if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
@@ -1155,7 +1247,10 @@ export default function ClientPage() {
         // that confirmation IS the gate. Receipt polling via FC provider is not supported,
         // so we trust the hash and unlock immediately. Server-side verify-payment route
         // provides the on-chain double-check for audit purposes.
-        return { txHash, walletAddress: accounts[0] };
+        // .toLowerCase() to match every other return path below — the server
+        // already normalizes case in petKey(), but there's no reason for the
+        // client to be the one inconsistent source.
+        return { txHash, walletAddress: accounts[0].toLowerCase() };
       }
     }
 
@@ -1402,7 +1497,8 @@ export default function ClientPage() {
 
     if (!hasGap || (state.streakSaveCredits ?? 0) <= 0) return { used: false };
 
-    const saveIdentity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
+    const streakSaveWallet = normalizeWallet(walletAddress);
+    const saveIdentity = fid ? { fid } : streakSaveWallet ? { wallet: streakSaveWallet } : null;
     if (!saveIdentity) return { used: false };
 
     try {
@@ -1498,7 +1594,11 @@ export default function ClientPage() {
   async function persistPaidCheckin(newState: PetState, txHash: string, paidWallet: string | null): Promise<{ fid?: string | number | null; wallet?: string | null }> {
     // Use the wallet that ACTUALLY signed this payment over the possibly-stale
     // walletAddress state var — same reasoning as handleUnlockAccessory.
-    const saveWallet = paidWallet ?? walletAddress;
+    // normalizeWallet() treats "" the same as null/undefined, closing the gap
+    // where a bare ?? would keep an empty string and the identity check
+    // below would then (correctly) treat it as missing — see normalizeWallet
+    // doc comment for the full "no account found" bug this fixes.
+    const saveWallet = normalizeWallet(paidWallet, walletAddress);
     const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
 
     if (!fid && saveWallet && saveWallet !== walletAddress) {
@@ -1572,7 +1672,8 @@ export default function ClientPage() {
     // from another device a moment ago), fall through to the paid flow
     // below instead of trusting the stale local count.
     if ((state.freeCheckinCredits ?? 0) > 0) {
-      const saveIdentity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
+      const freeCheckinWallet = normalizeWallet(walletAddress);
+      const saveIdentity = fid ? { fid } : freeCheckinWallet ? { wallet: freeCheckinWallet } : null;
       let spent = false;
       if (saveIdentity) {
         try {
@@ -1709,7 +1810,7 @@ export default function ClientPage() {
             const newState: PetState = { ...prev, xp: prev.xp + consolationXp };
             computedState = newState;
             try {
-              window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+              window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
             } catch (e) {
               console.error("[WHEEL] localStorage failed", e);
             }
@@ -1721,7 +1822,7 @@ export default function ClientPage() {
           playSfx("checkin");
           setWheelSpinning(false);
 
-          const saveWallet = paidWallet ?? walletAddress;
+          const saveWallet = normalizeWallet(paidWallet, walletAddress);
           const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
           if (!fid && saveWallet && saveWallet !== walletAddress) {
             setWalletAddress(saveWallet);
@@ -1763,7 +1864,7 @@ export default function ClientPage() {
         // confirmWheelAccessoryChoice() does the actual state update + save.
         setWheelChoiceError(null);
         setWheelAccessoryChoices(lockedForStage);
-        setWheelChoiceTx({ txHash: txHash!, wallet: paidWallet ?? walletAddress ?? null });
+        setWheelChoiceTx({ txHash: txHash!, wallet: normalizeWallet(paidWallet, walletAddress) });
         setWheelResultLabel(`🌟 Rare Accessory! Pick your Stage ${stageIndex} item below.`);
         setLastAction("🎡 Spin Wheel: Rare Accessory! Choose your item.");
         playSfx("unlock");
@@ -1782,7 +1883,7 @@ export default function ClientPage() {
             : { ...prev, streakSaveCredits: (prev.streakSaveCredits ?? 0) + 1 };
         computedState = newState;
         try {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+          window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
         } catch (e) {
           console.error("[WHEEL] localStorage failed", e);
         }
@@ -1800,7 +1901,7 @@ export default function ClientPage() {
       // NOTE: this expects a corresponding update to the /api/pet route to
       // accept action: "wheel_spin" (mirroring "checkin"/"unlock_accessory")
       // and independently verify the $0.01 payment server-side.
-      const saveWallet = paidWallet ?? walletAddress;
+      const saveWallet = normalizeWallet(paidWallet, walletAddress);
       const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
       if (!fid && saveWallet && saveWallet !== walletAddress) {
         setWalletAddress(saveWallet);
@@ -1854,6 +1955,33 @@ export default function ClientPage() {
       return;
     }
 
+    // Resolve identity FIRST, before touching state or localStorage at all.
+    // Previously the reward was applied locally unconditionally, and only
+    // AFTER that did this function check whether there was anywhere to save
+    // it — so a missing identity meant the player saw the accessory
+    // "unlock" live while the DB never received it and a scary error also
+    // appeared. Bailing here means a missing identity now shows the error
+    // WITHOUT ever touching local state, so there's nothing to silently
+    // lose or roll back.
+    const { txHash, wallet } = wheelChoiceTx;
+    const saveWallet = normalizeWallet(wallet, walletAddress);
+    const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
+
+    const accessory = getAccessory(accessoryId);
+
+    if (!saveIdentity) {
+      setWheelChoiceError(
+        `Payment confirmed but no account was found to save it under. Contact support with tx: ${txHash}`
+      );
+      setWheelAccessoryChoices(null);
+      setWheelChoiceTx(null);
+      return;
+    }
+
+    if (!fid && saveWallet && saveWallet !== walletAddress) {
+      setWalletAddress(saveWallet);
+    }
+
     setWheelChoicePending(true);
     setWheelChoiceError(null);
 
@@ -1870,35 +1998,12 @@ export default function ClientPage() {
       };
       computedState = newState;
       try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+        window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
       } catch (e) {
         console.error("[WHEEL] localStorage failed", e);
       }
       return newState;
     });
-
-    const { txHash, wallet } = wheelChoiceTx;
-    const saveWallet = wallet ?? walletAddress;
-    const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-    if (!fid && saveWallet && saveWallet !== walletAddress) {
-      setWalletAddress(saveWallet);
-    }
-
-    const accessory = getAccessory(accessoryId);
-
-    if (!saveIdentity || !computedState) {
-      // No identity to save under — same edge case doUnlockAccessory guards
-      // against. The pick is applied locally (localStorage) for this
-      // session; surface this plainly rather than silently losing it.
-      setWheelChoicePending(false);
-      setWheelChoiceError(
-        `Payment confirmed but no account was found to save it under. Contact support with tx: ${txHash}`
-      );
-      setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}!`);
-      setWheelAccessoryChoices(null);
-      setWheelChoiceTx(null);
-      return;
-    }
 
     // Retry the save up to 3 times (same pattern as handleUnlockAccessory) —
     // the pick is already applied to local state above, so re-tapping the
@@ -2288,7 +2393,7 @@ export default function ClientPage() {
         };
         computedState = newState;
         try {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+          window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
           console.log("[UNLOCK] localStorage saved");
         } catch (e) { console.error("[UNLOCK] localStorage failed", e); }
         return newState;
@@ -2303,7 +2408,7 @@ export default function ClientPage() {
       // wallet just got connected inside sendUsdcPayment and setWalletAddress()
       // hasn't re-rendered yet, so identityParam is still null even though we
       // now have a perfectly good wallet address to save under.
-      const saveWallet = paidWallet ?? walletAddress;
+      const saveWallet = normalizeWallet(paidWallet, walletAddress);
       const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
 
       // Also sync React state so subsequent renders (debounced autosave,
