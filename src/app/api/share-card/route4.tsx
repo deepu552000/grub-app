@@ -9,13 +9,6 @@
 // "rareaccessory" — must match a key in WIN_STYLES below, drives the emoji/
 // color for that specific reward type) and, for Rare Accessory wins
 // specifically, &rare=1 for the bigger/flashier gold banner treatment.
-// Banner copy is playful per-type (see WIN_COPY) instead of a flat "Won: X".
-//
-// A/B/C VISUAL TEST — add &flair=a, &flair=b, or &flair=c to compare:
-//   a = full-card color tint radiating from the win color
-//   b = confetti/sparkle particles scattered behind the cat
-//   c = glowing colored ring around the cat itself
-// Omit &flair entirely for the plain banner-only look (current default).
 
 import { ImageResponse } from "next/og";
 import { NextRequest } from "next/server";
@@ -51,35 +44,6 @@ const DEFAULT_WIN_STYLE = {
   tier: "xp" as const, scale: 0,
 };
 
-// Playful/cute copy per reward type, swapped in for the flat "Won: X" line.
-// For the "xp" tier we still append the raw win label in parens (e.g. "(+10 XP)")
-// since the exact number matters; "highlight" copy already says everything.
-const WIN_COPY: Record<string, string> = {
-  xp1:         "Grub found a crumb!",
-  xp2:         "Grub snagged a snack!",
-  xp3:         "Grub pounced!",
-  xp5:         "Grub's feeling lucky!",
-  xp10:        "Grub hit the jackpot bowl!",
-  freecheckin: "Grub says thanks for stopping by!",
-  streaksave:  "Grub's got your back — streak saved!",
-};
-
-// Bare RGB triples (no alpha) for the three flair effects below, which each
-// need to build their own alpha/blur values rather than reuse the fixed
-// alphas baked into WIN_STYLES.bg/border. Mirrors the same WHEEL_SEGMENTS
-// colors as WIN_STYLES.
-const WIN_RGB: Record<string, string> = {
-  xp1: "245,185,66",
-  xp2: "242,153,74",
-  xp3: "235,87,87",
-  xp5: "187,107,217",
-  xp10: "238,66,102",
-  freecheckin: "46,196,241",
-  streaksave: "39,174,96",
-};
-const RARE_RGB = "255,120,170";
-const DEFAULT_RGB = "170,130,255";
-
 // xp tier: 5 size steps (scale 0→4) so a +10 XP win visibly outsizes a +1 XP win
 // without touching the highlight/rare tiers.
 const XP_SCALE_STEPS = [
@@ -88,14 +52,6 @@ const XP_SCALE_STEPS = [
   { fontSize: 13, emojiSize: 14, padding: "5px 14px" },
   { fontSize: 14, emojiSize: 16, padding: "6px 15px" },
   { fontSize: 15, emojiSize: 18, padding: "7px 17px" },
-];
-
-// Confetti particle layout for flair=b — fixed positions (percent of card) so
-// results are deterministic; `count` slices into this list.
-const CONFETTI_POSITIONS = [
-  { top: "8%",  left: "8%"  }, { top: "15%", left: "34%" }, { top: "6%",  left: "60%" },
-  { top: "22%", left: "82%" }, { top: "70%", left: "10%" }, { top: "78%", left: "38%" },
-  { top: "68%", left: "88%" }, { top: "40%", left: "3%"  },
 ];
 
 // IMPORTANT: next/og (Satori) has unreliable WebP decoding in the edge runtime.
@@ -162,15 +118,6 @@ export async function GET(req: NextRequest) {
   const winId      = searchParams.get("winId");
   const isRareWin  = searchParams.get("rare") === "1";
   const winStyle   = winId ? (WIN_STYLES[winId] ?? DEFAULT_WIN_STYLE) : DEFAULT_WIN_STYLE;
-  // flair: "a" full-card tint, "b" confetti scatter, "c" glowing ring around
-  // the cat. Purely visual A/B/C testing param — omit for the plain banner.
-  const flair      = searchParams.get("flair");
-  const winRgb     = isRareWin ? RARE_RGB : (winId && WIN_RGB[winId]) || DEFAULT_RGB;
-  const winText    = winId && WIN_COPY[winId]
-    ? (winStyle.tier === "xp" ? `${WIN_COPY[winId]} (${win})` : WIN_COPY[winId])
-    : (win ? `Won: ${win}` : "");
-  // Tint/particle intensity scales with how good the win is.
-  const winIntensity = isRareWin ? 3 : winStyle.tier === "highlight" ? 2 : winStyle.scale >= 3 ? 1.5 : 1;
 
   const stageData  = stages[stageParam - 1];
   const catSrc     = await catImageDataUri(stageParam, mood, origin);
@@ -223,38 +170,6 @@ export async function GET(req: NextRequest) {
           }}
         />
 
-        {/* flair=a: full-card tint in the win's color, stronger for bigger wins */}
-        {flair === "a" && win && (
-          <div
-            style={{
-              position:   "absolute",
-              top: "50%", left: "56%",
-              transform:  "translate(-50%, -50%)",
-              width: 380 + winIntensity * 220,
-              height: 380 + winIntensity * 220,
-              borderRadius: "50%",
-              background: `radial-gradient(circle, rgba(${winRgb},${0.07 * winIntensity}) 0%, transparent 70%)`,
-              display:    "flex",
-            }}
-          />
-        )}
-
-        {/* flair=b: confetti scatter, more particles for bigger wins */}
-        {flair === "b" && win && CONFETTI_POSITIONS.slice(0, Math.round(2 + winIntensity * 2)).map((pos, i) => (
-          <span
-            key={i}
-            style={{
-              position: "absolute",
-              top: pos.top, left: pos.left,
-              fontSize: 20 + winIntensity * 4,
-              display: "flex",
-              opacity: 0.85,
-            }}
-          >
-            {i % 2 === 0 ? winStyle.emoji : "✨"}
-          </span>
-        ))}
-
         {/* ── Left: cat + stage name + mood ── */}
         <div
           style={{
@@ -263,35 +178,14 @@ export async function GET(req: NextRequest) {
           }}
         >
           {catSrc ? (
-            flair === "c" && win ? (
-              <div
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 300 + winIntensity * 16, height: 300 + winIntensity * 16,
-                  borderRadius: "50%",
-                  border: `${2 + Math.round(winIntensity)}px solid rgba(${winRgb},0.55)`,
-                  boxShadow: `0 0 ${20 + winIntensity * 14}px rgba(${winRgb},0.45)`,
-                }}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={catSrc}
-                  alt="Grub"
-                  width={300}
-                  height={300}
-                  style={{ objectFit: "contain", filter: "drop-shadow(0 0 32px rgba(200,160,255,0.32))" }}
-                />
-              </div>
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={catSrc}
-                alt="Grub"
-                width={300}
-                height={300}
-                style={{ objectFit: "contain", filter: "drop-shadow(0 0 32px rgba(200,160,255,0.32))" }}
-              />
-            )
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={catSrc}
+              alt="Grub"
+              width={300}
+              height={300}
+              style={{ objectFit: "contain", filter: "drop-shadow(0 0 32px rgba(200,160,255,0.32))" }}
+            />
           ) : (
             <span style={{ fontSize: 140, display: "flex" }}>🐾</span>
           )}
@@ -366,7 +260,7 @@ export async function GET(req: NextRequest) {
               >
                 <span style={{ fontSize: 24, display: "flex" }}>{winStyle.emoji}</span>
                 <span style={{ fontSize: 22, fontWeight: 800, color: winStyle.text, letterSpacing: 0.3 }}>
-                  {winText}
+                  Won: {win}
                 </span>
               </div>
             ) : (
@@ -390,7 +284,7 @@ export async function GET(req: NextRequest) {
                     fontWeight: 600,
                   }}
                 >
-                  {winText}
+                  Won: {win}
                 </span>
               </div>
             )
