@@ -21,6 +21,12 @@ const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a
 // Checkin price in micro-USDC
 const CHECKIN_MICRO_USDC = 10_000; // $0.01
 
+// Spin Wheel price in micro-USDC — mirrors WHEEL_USD ($0.01) in Client.tsx.
+// Kept as its own constant (even though it's numerically identical to
+// CHECKIN_MICRO_USDC today) so the two prices can diverge later without
+// silently affecting each other.
+const SPIN_MICRO_USDC = 10_000; // $0.01
+
 // Accessory prices in micro-USDC (6 decimals), derived from lib/accessories.ts
 // (the single source of truth for the catalog) instead of a hand-maintained
 // duplicate list. A hardcoded copy here previously only covered the 6 Stage 1
@@ -333,6 +339,89 @@ export async function POST(req: NextRequest) {
       await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "checkin", ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
 
       console.log(`[pet] ✅ checkin saved ${who} tx=${txHash}`);
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── Spin Wheel — requires verified on-chain payment ──────────────────────
+    // Previously "wheel_spin" wasn't handled here at all — Client.tsx sends it
+    // (see the comment there: "this expects a corresponding update to the
+    // /api/pet route to accept action: 'wheel_spin'"), but with no matching
+    // branch it fell straight through to the generic save at the bottom. That
+    // meant two problems at once: (1) the $0.01 spin payment was never
+    // actually verified server-side — a fabricated txHash would still "win",
+    // and (2) freeCheckinCredits/streakSaveCredits were saved as whatever
+    // absolute number was in the client's `state` snapshot at that moment. If
+    // a slightly-stale save (e.g. the debounced 800ms autosave elsewhere in
+    // Client.tsx, or an in-flight request from an earlier action) landed
+    // AFTER a spin win, its older, lower credit count would silently overwrite
+    // the win — nothing here blocked a decrease, only an inflated increase.
+    // That's what happened to fid 3325017: two wins landed, then a stale save
+    // wiped both back to 0.
+    //
+    // Fix: verify payment like every other paid action, then compute the
+    // credited amount from a FRESH kv.get taken right before the write —
+    // never from the client's own (possibly stale) copy of these two fields.
+    // This can't fully eliminate every possible interleaving without true
+    // atomic counters, but it removes the two biggest windows: no more
+    // trusting an unverified payment, and no more trusting a stale client
+    // number for the one thing (+1 credit) the server can compute itself.
+    if (action === "wheel_spin") {
+      const { wheelReward, accessoryId } = body;
+
+      if (!txHash) {
+        return NextResponse.json({ error: "wheel_spin requires txHash" }, { status: 400 });
+      }
+
+      // Replay attack prevention — same pattern as checkin/unlock_accessory
+      const usedKey = `grub:used-tx:${txHash}`;
+      const alreadyUsed = await kv.get(usedKey);
+      if (alreadyUsed) {
+        return NextResponse.json(
+          { error: "This transaction has already been used." },
+          { status: 400 }
+        );
+      }
+
+      // Verify the $0.01 spin payment on-chain
+      const verify = await verifyUsdcTransfer(txHash, SPIN_MICRO_USDC);
+      if (!verify.ok) {
+        return NextResponse.json({ error: verify.error }, { status: 402 });
+      }
+
+      // Fresh read, taken as close to the write as possible — this is the
+      // server's own source of truth for the +1, not the client's `state`.
+      const existingForSpin = await kv.get<any>(key);
+
+      const serverComputed: Record<string, any> = {};
+      if (wheelReward === "freecheckin") {
+        serverComputed.freeCheckinCredits = (existingForSpin?.freeCheckinCredits ?? 0) + 1;
+      } else if (wheelReward === "streaksave") {
+        serverComputed.streakSaveCredits = (existingForSpin?.streakSaveCredits ?? 0) + 1;
+      } else if (wheelReward === "rareaccessory") {
+        if (!accessoryId) {
+          return NextResponse.json({ error: "rareaccessory reward requires accessoryId" }, { status: 400 });
+        }
+        const existingUnlocked: string[] = existingForSpin?.accessories?.unlocked ?? [];
+        if (!existingUnlocked.includes(accessoryId)) {
+          serverComputed.accessories = {
+            ...existingForSpin?.accessories,
+            unlocked: [...existingUnlocked, accessoryId],
+          };
+        }
+      }
+      // Other reward types (xp, etc.) have no dedicated server-computed field
+      // — they fall through to sanitizeState's existing xp cap below, same as
+      // any other save.
+
+      // serverComputed spreads LAST so it always wins over both the client's
+      // `state` and the pre-write existingForSpin snapshot for these fields.
+      const merged = { ...existingForSpin, ...state, ...serverComputed };
+      const sanitized = sanitizeState(existingForSpin, merged);
+      await kv.set(key, sanitized);
+
+      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "wheel_spin", wheelReward: wheelReward ?? null, ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
+
+      console.log(`[pet] ✅ wheel spin saved ${who} reward=${wheelReward ?? "unknown"} tx=${txHash}`);
       return NextResponse.json({ ok: true });
     }
 

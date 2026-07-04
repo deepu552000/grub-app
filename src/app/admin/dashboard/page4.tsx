@@ -1789,28 +1789,6 @@ function AdminDashboardInner() {
                     })} variant="default">Save Stats</Btn>
                   </div>
 
-                  {/* Spin Wheel credits — manual correction for wins that never
-                      made it into KV (e.g. a save race). See pet-route.ts's
-                      wheel_spin fix for the underlying prevention; this is
-                      just for patching an already-affected account. */}
-                  <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px" }}>
-                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamDim, margin: "0 0 12px" }}>Spin Wheel Credits</p>
-                    <div style={{ display: "flex", gap: 16, marginBottom: 12 }}>
-                      <div>
-                        <div style={{ fontSize: 10, color: T.creamMute, marginBottom: 1 }}>🎟️ Free Check-in</div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: T.cream }}>{controlState.state.freeCheckinCredits ?? 0} banked</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 10, color: T.creamMute, marginBottom: 1 }}>🛡️ Streak Save</div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: T.cream }}>{controlState.state.streakSaveCredits ?? 0} banked</div>
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <Btn onClick={() => runAction("grant_credit", { creditType: "freeCheckin", amount: 1 })} variant="default">+1 Free Check-in</Btn>
-                      <Btn onClick={() => runAction("grant_credit", { creditType: "streakSave", amount: 1 })} variant="default">+1 Streak Save</Btn>
-                    </div>
-                  </div>
-
                   {/* Referral — split into two clearly separate actions */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {/* Set referrer */}

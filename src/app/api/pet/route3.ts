@@ -133,6 +133,14 @@ async function verifyUsdcTransfer(
 //      itself is still client-reported, not server-recomputed from scratch.
 const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick (up to 9) + a small buffer
 
+// A single Spin Wheel win awards +1 to at most ONE of these two fields (never
+// both, never more than 1). Capping the per-save increase the same way as xp
+// above closes the same hole: without this, a direct POST to this route could
+// set either field to any number and mint unlimited free check-ins / streak
+// saves. Consumption (the field going down) is untouched — that's the client
+// spending a credit it already had, which is safe to trust either way.
+const MAX_CREDIT_GAIN_PER_SAVE = 1;
+
 function sanitizeState(existingRaw: any, incomingState: any) {
   const existingUnlocked: string[] = existingRaw?.accessories?.unlocked ?? [];
   const incomingUnlocked: string[] = incomingState?.accessories?.unlocked ?? [];
@@ -153,9 +161,31 @@ function sanitizeState(existingRaw: any, incomingState: any) {
     safeXp = existingXp + MAX_XP_GAIN_PER_SAVE;
   }
 
+  const existingFreeCheckin: number = typeof existingRaw?.freeCheckinCredits === "number" ? existingRaw.freeCheckinCredits : 0;
+  const incomingFreeCheckin: number = typeof incomingState?.freeCheckinCredits === "number" ? Math.max(0, incomingState.freeCheckinCredits) : existingFreeCheckin;
+  let safeFreeCheckin = incomingFreeCheckin;
+  if (incomingFreeCheckin - existingFreeCheckin > MAX_CREDIT_GAIN_PER_SAVE) {
+    console.warn(
+      `[pet] freeCheckinCredits gain clamped — requested +${incomingFreeCheckin - existingFreeCheckin}, allowed +${MAX_CREDIT_GAIN_PER_SAVE}`,
+    );
+    safeFreeCheckin = existingFreeCheckin + MAX_CREDIT_GAIN_PER_SAVE;
+  }
+
+  const existingStreakSave: number = typeof existingRaw?.streakSaveCredits === "number" ? existingRaw.streakSaveCredits : 0;
+  const incomingStreakSave: number = typeof incomingState?.streakSaveCredits === "number" ? Math.max(0, incomingState.streakSaveCredits) : existingStreakSave;
+  let safeStreakSave = incomingStreakSave;
+  if (incomingStreakSave - existingStreakSave > MAX_CREDIT_GAIN_PER_SAVE) {
+    console.warn(
+      `[pet] streakSaveCredits gain clamped — requested +${incomingStreakSave - existingStreakSave}, allowed +${MAX_CREDIT_GAIN_PER_SAVE}`,
+    );
+    safeStreakSave = existingStreakSave + MAX_CREDIT_GAIN_PER_SAVE;
+  }
+
   return {
     ...incomingState,
     xp: safeXp,
+    freeCheckinCredits: safeFreeCheckin,
+    streakSaveCredits: safeStreakSave,
     accessories: {
       ...incomingState?.accessories,
       unlocked: safeUnlocked,
