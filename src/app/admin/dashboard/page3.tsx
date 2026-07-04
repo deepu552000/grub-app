@@ -12,8 +12,6 @@ type DebugUser = {
   totalCheckIns: number;
   accessoriesUnlockedCount: number;
   accessoriesUnlocked: string[];
-  freeCheckinCredits?: number;
-  streakSaveCredits?: number;
   hasNotifToken?: boolean;
   hasAddedApp?: boolean;
   noPetState?: boolean;
@@ -1539,9 +1537,9 @@ function AdminDashboardInner() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
-                  {["FID", "Check-ins", "Credits", "Last Check-in", "Last Seen", "Notif", "Added"].map((h, i) => (
+                  {["FID", "Check-ins", "Last Check-in", "Last Seen", "Notif", "Added"].map((h, i) => (
                     <th key={h} style={{
-                      textAlign: i >= 1 && i <= 4 ? "right" : "left",
+                      textAlign: i >= 1 && i <= 3 ? "right" : "left",
                       padding: "9px 14px",
                       color: T.creamMute,
                       fontWeight: 700,
@@ -1566,7 +1564,7 @@ function AdminDashboardInner() {
                     : "No users found.";
                   return filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>
+                      <td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>
                         {noneReason}
                       </td>
                     </tr>
@@ -1602,24 +1600,6 @@ function AdminDashboardInner() {
                         )}
                       </td>
                       <td style={{ padding: "9px 14px", textAlign: "right", color: T.cream, fontVariantNumeric: "tabular-nums" }}>{u.totalCheckIns ?? 0}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right" }}>
-                        {((u.freeCheckinCredits ?? 0) === 0 && (u.streakSaveCredits ?? 0) === 0) ? (
-                          <span style={{ color: T.textMute }}>—</span>
-                        ) : (
-                          <span style={{ display: "inline-flex", gap: 6, justifyContent: "flex-end" }}>
-                            {(u.freeCheckinCredits ?? 0) > 0 && (
-                              <Badge color={C.blue} bg={C.blueDim}>
-                                🎟️ {u.freeCheckinCredits} banked
-                              </Badge>
-                            )}
-                            {(u.streakSaveCredits ?? 0) > 0 && (
-                              <Badge color={C.green} bg={C.greenDim}>
-                                🛡️ {u.streakSaveCredits} banked
-                              </Badge>
-                            )}
-                          </span>
-                        )}
-                      </td>
                       <td style={{ padding: "9px 14px", textAlign: "right", color: T.cream }}>{u.lastCheckInDay ?? "never"}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right", color: T.cream }}>{u.lastVisit && u.lastVisit !== "unknown" ? timeAgo(new Date(u.lastVisit).getTime()) : "unknown"}</td>
                       <td style={{ padding: "9px 14px" }}><NotifPill on={u.hasNotifToken} dark={dark} /></td>
