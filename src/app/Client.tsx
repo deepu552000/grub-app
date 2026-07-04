@@ -1671,23 +1671,40 @@ export default function ClientPage() {
     return d.toISOString().slice(0, 10);
   }
 
-  // How many dots the streak row should show today. New accounts start at
-  // 1 (just today's slot) and grow by one dot per real day, so day 1 of a
-  // brand-new wallet lights up the LEFTMOST (and only) dot instead of the
-  // rightmost slot of a padded 7-dot row. Once 7 real calendar days have
-  // elapsed since the account's earliest known check-in, this caps at 7 and
-  // behaves exactly like the old fixed trailing-7-day window (oldest day
-  // drops off the left as today advances). No history yet at all (never
-  // checked in) still shows a single pending dot for today.
-  function checkinWindowSize(): number {
+  // Add/subtract whole days from a "YYYY-MM-DD" key, staying in UTC to match
+  // todayKey()/dayKey's own toISOString()-based construction.
+  function addDaysToKey(dayKey: string, n: number): string {
+    const d = new Date(dayKey + "T00:00:00.000Z");
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }
+
+  // Always returns exactly 7 date-keys for the streak dot row, oldest to
+  // newest (left to right) — but WHICH 7 dates depends on account age:
+  //
+  // - First 7 days of an account's life: LEFT-ANCHORED. Dot 0 is always the
+  //   account's actual day 1 (its earliest known check-in, or today if it
+  //   hasn't checked in even once yet), and the row fills left → right as
+  //   real days happen. Dates past today haven't been reached yet, so they
+  //   render as grey placeholders on the right — this is what gives a
+  //   brand-new wallet a green dot on the LEFT instead of the right.
+  // - From day 7 onward: RIGHT-ANCHORED / sliding, same as the original
+  //   fixed trailing-7-day view — dot 6 (rightmost) is always today, and
+  //   the oldest day drops off the left as time passes. At the exact moment
+  //   an account turns 7 days old, both formulas produce the identical set
+  //   of 7 dates, so the switch is seamless — no visible jump for anyone.
+  function checkinDotDates(): string[] {
     const history = state.checkinHistory ?? [];
-    if (history.length === 0) return 1;
-    const earliestHistoryDay = history.slice().sort()[0];
+    const earliestHistoryDay = history.length > 0 ? history.slice().sort()[0] : null;
+    const anchorDay = earliestHistoryDay ?? todayKey();
     const msPerDay = 24 * 60 * 60 * 1000;
     const daysElapsed = Math.floor(
-      (new Date(todayKey()).getTime() - new Date(earliestHistoryDay).getTime()) / msPerDay
+      (new Date(todayKey()).getTime() - new Date(anchorDay).getTime()) / msPerDay
     ) + 1;
-    return Math.max(1, Math.min(7, daysElapsed));
+    if (daysElapsed < 7) {
+      return Array.from({ length: 7 }, (_, i) => addDaysToKey(anchorDay, i));
+    }
+    return Array.from({ length: 7 }, (_, i) => addDaysToKey(todayKey(), -(6 - i)));
   }
 
   const checkinStreak = state.checkinStreak ?? 0;
@@ -3390,24 +3407,22 @@ export default function ClientPage() {
               )}
               <p>Check in to unlock today's care actions</p>
               <div style={{ display: "flex", gap: 7, justifyContent: "center", alignItems: "center" }}>
-                {Array.from({ length: checkinWindowSize() }).map((_, i, arr) => {
-                  // These dots are a real calendar record — green = checked
-                  // in that day, red = that day passed with no check-in,
-                  // grey = today (not reached yet). This is separate from
-                  // the "X/7 days" text below, which tracks your current
-                  // no-miss run length (gateCyclePos) and resets to 1 the
-                  // moment a miss breaks the chain — the dots themselves
-                  // keep the real day-by-day record and do NOT reset, so a
+                {checkinDotDates().map((dayKey, i) => {
+                  // Always 7 dots — green = checked in that day, red = that
+                  // day passed with no check-in, grey = today/not-reached-
+                  // yet. This is separate from the "X/7 days" text below,
+                  // which tracks your current no-miss run length
+                  // (gateCyclePos) and resets to 1 the moment a miss breaks
+                  // the chain — the dots themselves keep the real
+                  // day-by-day record and do NOT reset, so a
                   // green/red/green pattern can sit side by side while the
                   // text above independently goes back to "Day 1 of 7".
-                  // The row GROWS from 1 dot on account day 1 up to 7 dots
-                  // (see checkinWindowSize) — so a brand-new wallet's first
-                  // check-in lights up dot 1, the only (and leftmost) dot,
-                  // rather than sitting in a padded 7-slot row. Once the
-                  // window reaches 7, it behaves exactly like the old fixed
-                  // trailing-7-day view (today always rightmost).
-                  const daysAgo = arr.length - 1 - i;
-                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
+                  // checkinDotDates() left-anchors day 1 of a brand-new
+                  // wallet to the LEFTMOST dot (with the not-yet-reached
+                  // days 2-7 as grey placeholders to the right), then
+                  // switches to the classic right-anchored sliding window
+                  // (today always rightmost) once the account passes 7
+                  // days old.
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
                   const missed = dayKey < todayKey() && !hit;
@@ -3468,15 +3483,14 @@ export default function ClientPage() {
                   : `Day ${cyclePos} of 7 → keep it going for ${7 - cyclePos} more day${7 - cyclePos === 1 ? "" : "s"} to get +5 XP`}
               </small>
               <div style={{ display: "flex", gap: 7 }}>
-                {Array.from({ length: checkinWindowSize() }).map((_, i, arr) => {
-                  // Same growing-window model as the gate view above —
-                  // dots grow from 1 on account day 1 up to 7, then behave
-                  // like the old fixed trailing-7-day view. This row does
-                  // NOT reset on a miss — only the "Day X of 7" text above
-                  // (driven by cyclePos) resets to 1; the dots keep the
-                  // real history.
-                  const daysAgo = arr.length - 1 - i;
-                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
+                {checkinDotDates().map((dayKey, i) => {
+                  // Same fixed-7-slot model as the gate view above —
+                  // left-anchored to account day 1 during the first week,
+                  // then the classic right-anchored sliding window (today
+                  // always rightmost) once the account passes 7 days old.
+                  // This row does NOT reset on a miss — only the "Day X of
+                  // 7" text above (driven by cyclePos) resets to 1; the
+                  // dots keep the real history.
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
                   const missed = dayKey < todayKey() && !hit;
