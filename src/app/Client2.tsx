@@ -704,21 +704,10 @@ export default function ClientPage() {
   const [state, setState] = useState<PetState>(defaultState);
   const [hydrated, setHydrated] = useState(false);
   const hydratedRef = useRef(false);
-  // Tracks which identity (identityParam value) the CURRENT `state` actually
-  // belongs to — distinct from `hydrated`, which only tracks "has anything
-  // ever been loaded." When a wallet switch changes identityParam, there is
-  // a real gap (a network round-trip) between the new identityParam existing
-  // and the new account's data actually landing in `state` via
-  // applyIdentityLoad. The debounced autosave effect below must not write
-  // during that gap — otherwise it saves the OLD wallet's `state` under the
-  // NEW wallet's identity, leaking stats across accounts (see the save
-  // effect's guard for the full explanation).
-  const loadedIdentityRef = useRef<string | null>(null);
 
   function hydrateWith(s: PetState) {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
-    loadedIdentityRef.current = identityParam;
     setState(s);
     setHydrated(true);
   }
@@ -735,9 +724,8 @@ export default function ClientPage() {
   // actually applied it to the UI, leaving the FIRST account's pet state
   // displayed indefinitely. That's the "Base App shows the same
   // session/data for every wallet" bug. Re-identity loads must always win.
-  function applyIdentityLoad(s: PetState, identity: string | null) {
+  function applyIdentityLoad(s: PetState) {
     hydratedRef.current = true;
-    loadedIdentityRef.current = identity;
     setState(s);
     setHydrated(true);
   }
@@ -790,7 +778,6 @@ export default function ClientPage() {
   // that was saved locally but not yet persisted to DB is never lost.
   useEffect(() => {
     if (!identityParam) return;
-    const forIdentity = identityParam; // pin the identity this fetch is FOR — see applyIdentityLoad
     fetch(`/api/pet?${identityParam}`)
       .then((r) => r.json())
       .then((saved) => {
@@ -801,14 +788,14 @@ export default function ClientPage() {
         // Always applies (see applyIdentityLoad) — this effect can fire again
         // later if identityParam changes (e.g. wallet switch in Base App),
         // and that later load must actually reach the UI, not be swallowed.
-        applyIdentityLoad(dbState, forIdentity);
+        applyIdentityLoad(dbState);
       })
       .catch(() => {
         // DB failed — fall back to localStorage, scoped to THIS identity so
         // a network blip can never surface a different account's cached
         // snapshot (identity is already known here, unlike the anonymous
         // fallback paths in the mount effect below).
-        applyIdentityLoad(loadState(scopedStorageKey(identityParam)), forIdentity);
+        applyIdentityLoad(loadState(scopedStorageKey(identityParam)));
       });
   }, [identityParam]);
 
@@ -926,25 +913,6 @@ export default function ClientPage() {
 
   useEffect(() => {
     if (!hydrated) return;
-
-    // Guard against the identity-switch race: when identityParam changes
-    // (e.g. a Base App wallet switch), there is a real gap — a network
-    // round-trip — between the NEW identityParam existing and the new
-    // account's actual data landing in `state` via applyIdentityLoad. This
-    // effect also re-runs the instant identityParam changes (it's a
-    // dependency), which — without this guard — fires using the OLD
-    // wallet's `state` but the NEW wallet's identityParam: it would write
-    // the previous wallet's stats straight into the new wallet's
-    // localStorage key immediately, and after the 800ms debounce, POST them
-    // into the new wallet's real KV record. That's why check-ins/stats were
-    // observed carrying over to a freshly-switched wallet (accessories
-    // happened to survive this because the server's sanitizeState strips
-    // any unlocked id not already in THAT identity's existing record — the
-    // one field that got protected by accident). Skipping here until
-    // loadedIdentityRef actually matches identityParam means `state` is
-    // never written/saved anywhere until it's confirmed to belong to the
-    // CURRENT identity.
-    if (identityParam !== loadedIdentityRef.current) return;
 
     // Always keep localStorage as offline fallback — scoped per identity so
     // this can never leak into a different account's cache (see
