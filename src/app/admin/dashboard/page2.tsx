@@ -48,7 +48,7 @@ type FailedPayout = {
 
 type TxnEntry = {
   fid: number | string; // string for Base App wallet-only users, e.g. "wallet:0xabc..."
-  type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin" | "wheel_spin";
+  type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin";
   txHash: string;
   amountUsd: number;
   amountDegen?: number;
@@ -56,7 +56,6 @@ type TxnEntry = {
   toWallet?: string;
   accessoryId?: string;
   accessoryName?: string;
-  wheelReward?: string; // e.g. "You won: +1 XP!", "Rare Accessory: Gold Crown!"
   ts: number;
 };
 
@@ -91,7 +90,6 @@ const TYPE_META: Record<string, { color: string; bg: string; label: string }> = 
   checkin:          { color: C.green,   bg: C.greenDim,  label: "Check-in"  },
   referral_join:    { color: C.amberGlow, bg: "#3b1f6e",  label: "Ref Join"  },
   referral_checkin: { color: C.purple,  bg: "#2e1f5e",   label: "Ref Check" },
-  wheel_spin:       { color: "#e879f9", bg: "#4a1d5e",   label: "Spin Wheel" },
 };
 
 function timeAgo(ts: number): string {
@@ -645,23 +643,6 @@ function AdminDashboardInner() {
   const realUsers = users.filter((u) => (u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0);
   const ghostUsers = users.filter((u) => !((u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0));
 
-  // ── Spin Wheel results ──────────────────────────────────────────────────
-  // Pulled from the full `txns` list (not the 500-row-capped sortedTxns)
-  // so a busy day of other activity can never push wheel spins out of view.
-  // wheelReward on each entry is the human-readable label logTransaction
-  // sent (e.g. "You won: +1 XP!", "Rare Accessory: Gold Crown!"), not a raw
-  // segment id — classifyWheelReward buckets it by substring for the
-  // breakdown cards below.
-  function classifyWheelReward(label: string): "rare" | "freecheckin" | "streaksave" | "xp" {
-    if (label.includes("Rare Accessory")) return "rare";
-    if (label.includes("Free Check-in")) return "freecheckin";
-    if (label.includes("Streak Save")) return "streaksave";
-    return "xp";
-  }
-  const wheelSpinTxns = [...txns].filter((t) => t.type === "wheel_spin").sort((a, b) => b.ts - a.ts);
-  const wheelBreakdown = { rare: 0, freecheckin: 0, streaksave: 0, xp: 0 };
-  for (const t of wheelSpinTxns) wheelBreakdown[classifyWheelReward(t.wheelReward ?? "")]++;
-
   // Base App wallet-only users have fid values like "wallet:0xabc..." which are
   // full addresses and blow out the fixed-width layout in Player Progress.
   // Give each one a short stable label ("base1", "base2", ...) for display only —
@@ -719,7 +700,6 @@ function AdminDashboardInner() {
   const filteredGhostUsers = ghostUsers.filter(playerMatchesSearch).filter(matchesNotifFilter);
 
   const filteredSortedTxns = sortedTxns.filter((t) => globalMatchesFid(t.fid) || globalMatchesFid(t.toFid ?? ""));
-  const filteredWheelSpinTxns = wheelSpinTxns.filter((t) => globalMatchesFid(t.fid));
   const filteredWebhookEvents = webhookEvents.filter((e) => globalMatchesFid(e.fid));
   const filteredReferrers = referrers.filter((u) => globalMatchesFid(u.fid));
   const notifStatusUsers = [...users].sort((a, b) => {
@@ -1281,89 +1261,6 @@ function AdminDashboardInner() {
           )}
         </div>
 
-        {/* ── Spin Wheel results ──────────────────────────────────────────
-            Dedicated view of every wheel spin (fid -> what they won), since
-            these can get diluted in the general Transaction Log once volume
-            picks up. Pulled from the FULL txn list, not the 500-row cap
-            below, so nothing here ever silently drops off. */}
-        <SectionLabel dark={dark} accent="#e879f9">Spin Wheel Results</SectionLabel>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: "1rem" }}>
-          {[
-            { key: "total", label: "Total Spins", count: wheelSpinTxns.length, color: "#e879f9" },
-            { key: "rare", label: "🌟 Rare Accessory", count: wheelBreakdown.rare, color: "#FF3CAC" },
-            { key: "freecheckin", label: "🎟️ Free Check-in", count: wheelBreakdown.freecheckin, color: C.blue },
-            { key: "streaksave", label: "🛡️ Streak Save", count: wheelBreakdown.streaksave, color: C.green },
-            { key: "xp", label: "✨ XP", count: wheelBreakdown.xp, color: C.amberGlow },
-          ].map((card) => (
-            <div key={card.key} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 14px" }}>
-              <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 6px" }}>{card.label}</p>
-              <p style={{ fontSize: 22, fontWeight: 800, color: card.color, margin: 0, fontVariantNumeric: "tabular-nums" }}>{card.count}</p>
-            </div>
-          ))}
-        </div>
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1rem" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
-            <span style={{ fontSize: 12, color: T.textMute }}>
-              {globalSearchQuery
-                ? `Showing ${filteredWheelSpinTxns.length} matching "${globalSearchQuery}" (of ${wheelSpinTxns.length} total spins)`
-                : `${wheelSpinTxns.length} total spin${wheelSpinTxns.length === 1 ? "" : "s"}`}
-            </span>
-          </div>
-          <div style={{ overflowX: "auto", maxHeight: 280, overflowY: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
-                  {["FID", "Result", "Paid", "When", "Tx"].map((h, i) => (
-                    <th key={h} style={{
-                      textAlign: i >= 2 ? "right" : "left",
-                      padding: "9px 14px",
-                      color: T.creamMute,
-                      fontWeight: 700,
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
-                      fontSize: 10,
-                      borderBottom: `1px solid ${T.border}`,
-                      background: T.surfaceAlt,
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredWheelSpinTxns.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>{globalSearchQuery ? "No matching spins." : "No spins logged yet."}</td>
-                  </tr>
-                ) : filteredWheelSpinTxns.map((t, i) => {
-                  const bucket = classifyWheelReward(t.wheelReward ?? "");
-                  const resultColor = bucket === "rare" ? "#FF3CAC" : bucket === "freecheckin" ? C.blue : bucket === "streaksave" ? C.green : C.amberGlow;
-                  return (
-                    <tr
-                      key={i}
-                      style={{
-                        borderBottom: `1px solid ${T.borderSub}`,
-                        background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55",
-                      }}
-                    >
-                      <td style={{ padding: "9px 14px", fontFamily: "monospace", color: dark ? C.amberGlow : "#7c3aed", fontSize: 11 }}>{t.fid}</td>
-                      <td style={{ padding: "9px 14px", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: resultColor, fontWeight: 600 }} title={t.wheelReward}>
-                        {t.wheelReward || "—"}
-                      </td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 600, color: C.green }}>${(t.amountUsd || 0).toFixed(2)}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute, whiteSpace: "nowrap" }}>{timeAgo(t.ts)}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right" }}>
-                        <a href={`https://basescan.org/tx/${t.txHash}`} target="_blank" rel="noopener noreferrer"
-                          style={{ color: dark ? C.blue : "#1d4ed8", fontSize: 11, fontWeight: 600, textDecoration: "none" }}>
-                          ↗ view
-                        </a>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
         {/* ── Transaction log ── */}
         <SectionLabel dark={dark}>Transaction Log</SectionLabel>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -1405,10 +1302,6 @@ function AdminDashboardInner() {
                   let amountColor = T.textSub;
                   if (t.type === "accessory_unlock") {
                     detail = t.accessoryName || t.accessoryId || "";
-                    amount = `$${(t.amountUsd || 0).toFixed(2)}`;
-                    amountColor = C.green;
-                  } else if (t.type === "wheel_spin") {
-                    detail = t.wheelReward || "—";
                     amount = `$${(t.amountUsd || 0).toFixed(2)}`;
                     amountColor = C.green;
                   } else if (t.type === "referral_join" || t.type === "referral_checkin") {
