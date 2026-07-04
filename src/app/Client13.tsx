@@ -1514,46 +1514,6 @@ export default function ClientPage() {
         console.log("[PAYMENT] wallet (injected):", accounts[0]);
         if (!fid && !walletAddress) setWalletAddress(accounts[0].toLowerCase());
 
-        // ── Ensure the wallet is actually on Base before doing anything else.
-        // Unlike Path 1 (Farcaster bridge, always Base-scoped) and Path 2
-        // (Base Account/wagmi, which calls switchChain explicitly), this
-        // path previously never told the wallet which chain to use at all —
-        // eth_sendTransaction below had no chainId, so a wallet sitting on
-        // a different active network (BNB Chain, Mantle, etc.) would try to
-        // resolve USDC_CONTRACT's address on the WRONG chain. That mismatch
-        // is the likely cause of transactions getting stuck mid-sign in
-        // Rabby/MetaMask/Ambire — confirmed by the wallet's own background
-        // network log showing it querying bnbchain.org / mantle.xyz RPCs
-        // rather than Base, right before the stuck sign window.
-        const baseChainHex = `0x${base.id.toString(16)}`;
-        try {
-          await injected.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: baseChainHex }],
-          });
-        } catch (switchErr: any) {
-          // 4902 = chain not added to the wallet yet — add it, then the
-          // wallet switches to it as part of the same add flow.
-          if (switchErr?.code === 4902) {
-            try {
-              await injected.request({
-                method: "wallet_addEthereumChain",
-                params: [{
-                  chainId: baseChainHex,
-                  chainName: "Base",
-                  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-                  rpcUrls: ["https://mainnet.base.org"],
-                  blockExplorerUrls: ["https://basescan.org"],
-                }],
-              });
-            } catch (addErr) {
-              console.log("[PAYMENT] wallet_addEthereumChain failed:", addErr);
-            }
-          } else {
-            console.log("[PAYMENT] wallet_switchEthereumChain failed:", switchErr);
-          }
-        }
-
         // From here on we have a REAL connected wallet. Everything below
         // either returns a txHash or throws — it deliberately does NOT
         // fall through to Path 2 (Base Account/wagmi) anymore. Launching a
@@ -1705,17 +1665,6 @@ export default function ClientPage() {
         // unsupported for some other reason) attribution isn't guaranteed,
         // but the payment itself still succeeds and remains fully
         // verifiable server-side.
-        //
-        // Note: an earlier version of this fix stripped the suffix here,
-        // suspecting wallet-side calldata simulation was choking on the
-        // trailing attribution bytes. That was a reasonable guess at the
-        // time but turned out to be wrong — the actual root cause was the
-        // missing wallet_switchEthereumChain call above (wallet stuck
-        // resolving USDC_CONTRACT on the wrong chain, e.g. BSC/Mantle,
-        // confirmed via the wallet's own network log + manual repro).
-        // With the chain switch now in place, there's no evidence the
-        // suffix itself was ever a problem, so it stays — no reason to give
-        // up attribution tracking on this path for an unconfirmed theory.
         console.log("[PAYMENT] sending tx (injected, legacy), microUsdc:", microUsdc);
         const txHash: string = await injected.request({
           method: "eth_sendTransaction",
@@ -1723,7 +1672,6 @@ export default function ClientPage() {
             from: accounts[0] as `0x${string}`,
             to: USDC_CONTRACT,
             data,
-            chainId: baseChainHex,
           }],
         });
 
