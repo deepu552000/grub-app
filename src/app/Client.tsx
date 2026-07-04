@@ -1671,6 +1671,25 @@ export default function ClientPage() {
     return d.toISOString().slice(0, 10);
   }
 
+  // How many dots the streak row should show today. New accounts start at
+  // 1 (just today's slot) and grow by one dot per real day, so day 1 of a
+  // brand-new wallet lights up the LEFTMOST (and only) dot instead of the
+  // rightmost slot of a padded 7-dot row. Once 7 real calendar days have
+  // elapsed since the account's earliest known check-in, this caps at 7 and
+  // behaves exactly like the old fixed trailing-7-day window (oldest day
+  // drops off the left as today advances). No history yet at all (never
+  // checked in) still shows a single pending dot for today.
+  function checkinWindowSize(): number {
+    const history = state.checkinHistory ?? [];
+    if (history.length === 0) return 1;
+    const earliestHistoryDay = history.slice().sort()[0];
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const daysElapsed = Math.floor(
+      (new Date(todayKey()).getTime() - new Date(earliestHistoryDay).getTime()) / msPerDay
+    ) + 1;
+    return Math.max(1, Math.min(7, daysElapsed));
+  }
+
   const checkinStreak = state.checkinStreak ?? 0;
   const missedYesterday = !checkedInToday && state.lastCheckInDay !== "" && state.lastCheckInDay !== yesterdayKey() && state.lastCheckInDay !== todayKey();
   const streakRewardEarned = checkinStreak > 0 && checkinStreak % 7 === 0;
@@ -1952,9 +1971,8 @@ export default function ClientPage() {
         amountUsd: CHECKIN_USD,
       }, checkinIdentity);
     } catch (err: any) {
+      console.error("[CHECKIN] payment failed — raw error:", err);
       const msg: string = err?.message ?? String(err);
-      if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
-        setCheckinError("Cancelled. Tap Check In to try again.");
       } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
         setCheckinError("No wallet connected. Open in Farcaster to pay.");
       } else if (msg.toLowerCase().includes("saving failed") || msg.toLowerCase().includes("identity")) {
@@ -1987,6 +2005,7 @@ export default function ClientPage() {
       paidWallet = paymentResult.walletAddress;
       if (!txHash) throw new Error("Payment returned no transaction hash. Spin aborted.");
     } catch (err: any) {
+      console.error("[WHEEL] payment failed — raw error:", err);
       const msg: string = err?.message ?? String(err);
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
         setWheelError("Cancelled. Tap Spin to try again.");
@@ -2751,7 +2770,7 @@ export default function ClientPage() {
       playSfx("unlock");
       console.log("[UNLOCK] complete ✅");
     } catch (err: any) {
-      console.error("[UNLOCK] error caught:", err?.message ?? err);
+      console.error("[UNLOCK] error caught (raw):", err);
       const msg: string = err?.message ?? String(err);
       playSfx("error");
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
@@ -3369,32 +3388,27 @@ export default function ClientPage() {
               )}
               <p>Check in to unlock today's care actions</p>
               <div style={{ display: "flex", gap: 7, justifyContent: "center", alignItems: "center" }}>
-                {Array.from({ length: 7 }).map((_, i) => {
-                  // These dots are a real calendar record of the last 7
-                  // days — green = checked in that day, red = that day
-                  // passed with no check-in, grey = today/future (not
-                  // reached yet). This is separate from the "X/7 days"
-                  // text below and the reward math, which track your
-                  // current no-miss run length (gateCyclePos) — a miss
-                  // resets that counter but still shows up here as red.
-                  // Rendered oldest → newest, left to right, so today is
-                  // always the rightmost dot (i=0 daysAgo=6 is 6 days ago,
-                  // i=6 daysAgo=0 is today).
-                  const daysAgo = 6 - i;
+                {Array.from({ length: checkinWindowSize() }).map((_, i, arr) => {
+                  // These dots are a real calendar record — green = checked
+                  // in that day, red = that day passed with no check-in,
+                  // grey = today (not reached yet). This is separate from
+                  // the "X/7 days" text below, which tracks your current
+                  // no-miss run length (gateCyclePos) and resets to 1 the
+                  // moment a miss breaks the chain — the dots themselves
+                  // keep the real day-by-day record and do NOT reset, so a
+                  // green/red/green pattern can sit side by side while the
+                  // text above independently goes back to "Day 1 of 7".
+                  // The row GROWS from 1 dot on account day 1 up to 7 dots
+                  // (see checkinWindowSize) — so a brand-new wallet's first
+                  // check-in lights up dot 1, the only (and leftmost) dot,
+                  // rather than sitting in a padded 7-slot row. Once the
+                  // window reaches 7, it behaves exactly like the old fixed
+                  // trailing-7-day view (today always rightmost).
+                  const daysAgo = arr.length - 1 - i;
                   const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
-                  // A day only counts as "missed" if it falls AFTER the
-                  // account's actual earliest known check-in. Day-keys are
-                  // "YYYY-MM-DD" strings, so lexicographic min == earliest
-                  // date. Without this, gating on e.g. "has checked in at
-                  // least once" still breaks the moment a brand-new wallet
-                  // does its very first check-in: totalCheckIns flips to 1,
-                  // but the 6 days before that first-ever check-in would
-                  // still show red, as if they'd been neglected, when the
-                  // account simply didn't exist yet on those days.
-                  const earliestHistoryDay = history.length > 0 ? history.slice().sort()[0] : null;
-                  const missed = earliestHistoryDay !== null && dayKey >= earliestHistoryDay && dayKey < todayKey() && !hit;
+                  const missed = dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 13, height: 13, borderRadius: "50%",
@@ -3452,18 +3466,18 @@ export default function ClientPage() {
                   : `Day ${cyclePos} of 7 → keep it going for ${7 - cyclePos} more day${7 - cyclePos === 1 ? "" : "s"} to get +5 XP`}
               </small>
               <div style={{ display: "flex", gap: 7 }}>
-                {Array.from({ length: 7 }).map((_, i) => {
-                  // Same real-calendar record as the gate view — green =
-                  // checked in, red = missed, grey = today/future.
-                  // Oldest → newest, left to right (today is rightmost).
-                  const daysAgo = 6 - i;
+                {Array.from({ length: checkinWindowSize() }).map((_, i, arr) => {
+                  // Same growing-window model as the gate view above —
+                  // dots grow from 1 on account day 1 up to 7, then behave
+                  // like the old fixed trailing-7-day view. This row does
+                  // NOT reset on a miss — only the "Day X of 7" text above
+                  // (driven by cyclePos) resets to 1; the dots keep the
+                  // real history.
+                  const daysAgo = arr.length - 1 - i;
                   const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
-                  // See the gate view above — don't mark days before the
-                  // account's actual earliest known check-in as "missed".
-                  const earliestHistoryDay = history.length > 0 ? history.slice().sort()[0] : null;
-                  const missed = earliestHistoryDay !== null && dayKey >= earliestHistoryDay && dayKey < todayKey() && !hit;
+                  const missed = dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 14, height: 14, borderRadius: "50%",

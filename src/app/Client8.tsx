@@ -3,7 +3,7 @@
 import sdk from "@farcaster/miniapp-sdk";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState, useRef } from "react";
-import { connect, getAccount, sendTransaction, switchChain } from "wagmi/actions";
+import { connect, getAccount, reconnect, sendTransaction, switchChain, watchAccount } from "wagmi/actions";
 import { base } from "wagmi/chains";
 import { wagmiConfig } from "@/lib/wagmi";
 import { Attribution } from "ox/erc8021";
@@ -58,15 +58,51 @@ function normalizeWallet(...candidates: (string | null | undefined)[]): string |
   return null;
 }
 
-// Explicit connect — triggers the wallet's connect prompt (eth_requestAccounts).
-// Used by a manual "Connect Wallet" button for Base App users who haven't
-// already got a wallet connected when the app loads.
-async function requestInjectedWallet(): Promise<string | null> {
+// Silent, no-popup identity check for the !fid (no Farcaster context) case,
+// run once at mount. Tries a real injected provider first (still valid for
+// e.g. a MetaMask/Coinbase extension in a plain desktop browser), then falls
+// back to wagmi's reconnect() for Base Account.
+//
+// This fallback exists because Base App stopped treating mini apps as
+// Farcaster mini apps on April 9, 2026 (see wagmi.ts) and, per Base's own
+// current docs, no longer injects window.ethereum either — it's just a
+// standard web view now, and identity is expected to come from wagmi
+// (useAccount / the Base Account connector), not window.ethereum. Without
+// this, detectInjectedWallet() alone always returned null inside Base App,
+// so returning users never got silently re-identified and the FAQ's debug
+// readout showed "no identity yet" even after a wallet had been connected
+// in a previous session.
+//
+// reconnect() only restores a connector wagmi already knows was previously
+// connected (it does not prompt) — safe to call unconditionally on mount.
+async function silentlyDetectWallet(): Promise<string | null> {
+  const injected = await detectInjectedWallet();
+  if (injected) return injected;
   try {
-    const eth = (typeof window !== "undefined" ? (window as any).ethereum : null);
-    if (!eth) return null;
-    const accounts: string[] = await eth.request({ method: "eth_requestAccounts" });
-    return accounts && accounts.length > 0 ? accounts[0].toLowerCase() : null;
+    await reconnect(wagmiConfig);
+    const account = getAccount(wagmiConfig);
+    return account.address ? account.address.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Explicit connect — actually shows the wallet's connect UI. Used by the
+// manual "Connect Wallet" button for Base App / plain-browser users with no
+// Farcaster fid and no wallet already reconnected silently above. A brand
+// new wallet can never be picked up silently — this is the one path that
+// requires an explicit user gesture, same as on the standard web.
+//
+// Goes through wagmi's Base Account connector rather than window.ethereum:
+// Base App no longer injects a provider in its post-April-9-2026 mode, so
+// window.ethereum-based connect (the old requestInjectedWallet(), now
+// removed) had silently stopped doing anything in Base App.
+async function connectBaseWallet(): Promise<string | null> {
+  try {
+    const result = await connect(wagmiConfig, { connector: wagmiConfig.connectors[0] });
+    const account = getAccount(wagmiConfig);
+    const address = account.address ?? result?.accounts?.[0];
+    return address ? address.toLowerCase() : null;
   } catch {
     return null;
   }
@@ -704,10 +740,31 @@ export default function ClientPage() {
   const [state, setState] = useState<PetState>(defaultState);
   const [hydrated, setHydrated] = useState(false);
   const hydratedRef = useRef(false);
+  // Tracks which identity (identityParam value) the CURRENT `state` actually
+  // belongs to — distinct from `hydrated`, which only tracks "has anything
+  // ever been loaded." When a wallet switch changes identityParam, there is
+  // a real gap (a network round-trip) between the new identityParam existing
+  // and the new account's data actually landing in `state` via
+  // applyIdentityLoad. The debounced autosave effect below must not write
+  // during that gap — otherwise it saves the OLD wallet's `state` under the
+  // NEW wallet's identity, leaking stats across accounts (see the save
+  // effect's guard for the full explanation).
+  const loadedIdentityRef = useRef<string | null>(null);
+  // True whenever `state` did NOT come from a confirmed, well-formed DB read
+  // for the CURRENT identity — i.e. the DB fetch failed, timed out, or came
+  // back with an unexpected/error shape, and we fell back to localStorage
+  // instead. This is a safety net for the "empty-state got saved over real
+  // data" bug: the debounced autosave effect below must never POST `state`
+  // to the server while this is true, because that state is not known-good
+  // — persisting it would silently overwrite a real DB record (accessories,
+  // stats, everything) with a stale or empty snapshot the moment the server
+  // hiccups. Cleared the instant a genuine DB read succeeds.
+  const untrustedLoadRef = useRef(false);
 
   function hydrateWith(s: PetState) {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
+    loadedIdentityRef.current = identityParam;
     setState(s);
     setHydrated(true);
   }
@@ -724,8 +781,10 @@ export default function ClientPage() {
   // actually applied it to the UI, leaving the FIRST account's pet state
   // displayed indefinitely. That's the "Base App shows the same
   // session/data for every wallet" bug. Re-identity loads must always win.
-  function applyIdentityLoad(s: PetState) {
+  function applyIdentityLoad(s: PetState, identity: string | null, trusted: boolean) {
     hydratedRef.current = true;
+    loadedIdentityRef.current = identity;
+    untrustedLoadRef.current = !trusted;
     setState(s);
     setHydrated(true);
   }
@@ -745,6 +804,12 @@ export default function ClientPage() {
   // popup, just `eth_accounts` — and use that address as the identity
   // instead. This never runs, and never overrides, the fid path above.
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  // True once the mount-time silent wallet check (silentlyDetectWallet) has
+  // resolved either way. Gates the "Connect Wallet" button below so it
+  // doesn't flash on screen for the ~instant it takes to find out a wallet
+  // was already reconnected.
+  const [walletCheckDone, setWalletCheckDone] = useState(false);
+  const [connectingWallet, setConnectingWallet] = useState(false);
   // Single string used as the identity query param for /api/pet — "fid"
   // wins whenever both happen to be present (never should be, in practice).
   const identityParam = fid ? `fid=${fid}` : walletAddress ? `wallet=${walletAddress}` : null;
@@ -774,29 +839,65 @@ export default function ClientPage() {
   const kittyRef = useRef<HTMLDivElement>(null);
 
   // Load state from DB using FID (or wallet address for Base App users).
-  // After loading, merge accessories.unlocked from localStorage so any unlock
-  // that was saved locally but not yet persisted to DB is never lost.
   useEffect(() => {
     if (!identityParam) return;
-    fetch(`/api/pet?${identityParam}`)
-      .then((r) => r.json())
-      .then((saved) => {
-        const dbState = saved ? loadStateFromSaved(saved) : { ...defaultState, lastVisit: Date.now() };
+    const forIdentity = identityParam; // pin the identity this fetch is FOR — see applyIdentityLoad
+    let cancelled = false;
 
-        // DB is source of truth for unlocked accessories — never merge from localStorage
-        // as that would allow anyone to add accessories by editing localStorage.
-        // Always applies (see applyIdentityLoad) — this effect can fire again
-        // later if identityParam changes (e.g. wallet switch in Base App),
-        // and that later load must actually reach the UI, not be swallowed.
-        applyIdentityLoad(dbState);
-      })
-      .catch(() => {
-        // DB failed — fall back to localStorage, scoped to THIS identity so
-        // a network blip can never surface a different account's cached
-        // snapshot (identity is already known here, unlike the anonymous
-        // fallback paths in the mount effect below).
-        applyIdentityLoad(loadState(scopedStorageKey(identityParam)));
-      });
+    async function loadWithRetries() {
+      let lastErr: unknown = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const r = await fetch(`/api/pet?${forIdentity}`);
+          // A non-2xx response (rate limit, cold-start timeout, KV lookup
+          // miss, etc.) can still carry a valid JSON body such as
+          // { error: "..." }. Without checking r.ok, that error object was
+          // previously accepted as if it were real saved state:
+          // loadStateFromSaved() would then find no `.accessories` field on
+          // it and quietly substitute an EMPTY accessory state — which the
+          // debounced autosave effect turned around and POSTed straight
+          // back to the DB, permanently erasing a real unlock (or streak,
+          // XP, etc.) the moment the server had one transient hiccup. This
+          // is the root cause of "accessory paid for and shows unlocked
+          // elsewhere, but Closet UI still shows it locked even after a
+          // full reload" — the live DB record itself was getting wiped.
+          if (!r.ok) throw new Error(`/api/pet returned HTTP ${r.status}`);
+          const saved = await r.json();
+          // Guard against a 200 response whose body isn't actually a pet
+          // record (e.g. `{}` or an error-shaped object with no numeric xp)
+          // — treat anything that doesn't look like real saved state the
+          // same as "no record yet" rather than silently emptying accessories.
+          if (saved && typeof saved === "object" && typeof (saved as any).xp !== "number" && Object.keys(saved).length > 0) {
+            throw new Error("/api/pet returned an unexpected response shape");
+          }
+          if (cancelled) return;
+          const dbState = saved ? loadStateFromSaved(saved) : { ...defaultState, lastVisit: Date.now() };
+          // DB is source of truth for unlocked accessories — never merge
+          // from localStorage as that would allow anyone to add accessories
+          // by editing localStorage. This is a genuinely confirmed DB read
+          // (trusted=true), so it's safe for the autosave effect to persist
+          // future local changes on top of it.
+          applyIdentityLoad(dbState, forIdentity, true);
+          return;
+        } catch (e) {
+          lastErr = e;
+          if (attempt < 3) await new Promise((res) => setTimeout(res, 800 * attempt));
+        }
+      }
+      console.error("[LOAD] /api/pet failed after 3 attempts, falling back to localStorage:", lastErr);
+      if (cancelled) return;
+      // DB fetch never succeeded — fall back to localStorage, scoped to
+      // THIS identity so a network blip can never surface a different
+      // account's cached snapshot. Marked untrusted (trusted=false) so the
+      // autosave effect below will NOT persist this to the server — we
+      // don't actually know whether this local snapshot is fresher or
+      // staler than whatever the DB has, so the only safe move is to show
+      // it locally without touching the DB until a real read succeeds.
+      applyIdentityLoad(loadState(scopedStorageKey(forIdentity)), forIdentity, false);
+    }
+
+    loadWithRetries();
+    return () => { cancelled = true; };
   }, [identityParam]);
 
   useEffect(() => {
@@ -866,11 +967,14 @@ export default function ClientPage() {
           // localStorage-only. If nothing is connected yet, the "Connect
           // Wallet" affordance in the UI below still gives Base App users a
           // way in.
-          detectInjectedWallet().then((addr) => {
+          silentlyDetectWallet().then((addr) => {
+            setWalletCheckDone(true);
             if (addr) {
               setWalletAddress(addr);
               // DB load useEffect (keyed on identityParam) takes over from here.
             } else {
+              // Nothing to silently reconnect to — the "Connect Wallet"
+              // button (gated on walletCheckDone) is the way in from here.
               hydrateWith(loadState());
             }
           });
@@ -882,7 +986,8 @@ export default function ClientPage() {
         // this effect. Just try the same silent wallet check before
         // falling back to localStorage.
         clearTimeout(fallbackTimer);
-        detectInjectedWallet().then((addr) => {
+        silentlyDetectWallet().then((addr) => {
+          setWalletCheckDone(true);
           if (addr) {
             setWalletAddress(addr);
           } else {
@@ -911,8 +1016,41 @@ export default function ClientPage() {
     return () => eth.removeListener?.("accountsChanged", onAccountsChanged);
   }, [fid]);
 
+  // Same safety net as above, for the wagmi/Base Account connector — needed
+  // now that Base App no longer injects window.ethereum at all, so the
+  // listener above never fires there. watchAccount covers both an account
+  // switch and a disconnect through the Base Account connector itself.
+  useEffect(() => {
+    const unwatch = watchAccount(wagmiConfig, {
+      onChange(account) {
+        if (fid) return; // fid always wins — never let this override a Farcaster identity
+        setWalletAddress(account.address ? account.address.toLowerCase() : null);
+      },
+    });
+    return () => unwatch();
+  }, [fid]);
+
   useEffect(() => {
     if (!hydrated) return;
+
+    // Guard against the identity-switch race: when identityParam changes
+    // (e.g. a Base App wallet switch), there is a real gap — a network
+    // round-trip — between the NEW identityParam existing and the new
+    // account's actual data landing in `state` via applyIdentityLoad. This
+    // effect also re-runs the instant identityParam changes (it's a
+    // dependency), which — without this guard — fires using the OLD
+    // wallet's `state` but the NEW wallet's identityParam: it would write
+    // the previous wallet's stats straight into the new wallet's
+    // localStorage key immediately, and after the 800ms debounce, POST them
+    // into the new wallet's real KV record. That's why check-ins/stats were
+    // observed carrying over to a freshly-switched wallet (accessories
+    // happened to survive this because the server's sanitizeState strips
+    // any unlocked id not already in THAT identity's existing record — the
+    // one field that got protected by accident). Skipping here until
+    // loadedIdentityRef actually matches identityParam means `state` is
+    // never written/saved anywhere until it's confirmed to belong to the
+    // CURRENT identity.
+    if (identityParam !== loadedIdentityRef.current) return;
 
     // Always keep localStorage as offline fallback — scoped per identity so
     // this can never leak into a different account's cache (see
@@ -922,6 +1060,17 @@ export default function ClientPage() {
     // Save to DB if we have an identity (fid or wallet) — debounced 800ms
     // to avoid hammering on rapid taps.
     if (!identityParam) return;
+
+    // Never let a state that came from an untrusted fallback (DB read
+    // failed/returned a bad shape, see the load effect above) get POSTed
+    // back to the server — that would silently overwrite real DB data
+    // (accessories, streak, XP, everything) with a stale or empty local
+    // snapshot. The background retry effect below will clear this flag and
+    // pull the real DB state as soon as a genuine read succeeds; local
+    // changes made in the meantime still land in localStorage just above,
+    // so nothing is lost on this device even though the server save waits.
+    if (untrustedLoadRef.current) return;
+
     const timer = setTimeout(() => {
       fetch("/api/pet", {
         method: "POST",
@@ -933,6 +1082,36 @@ export default function ClientPage() {
     }, 800);
     return () => clearTimeout(timer);
   }, [state, hydrated, identityParam]);
+
+  // Background self-heal: while the current state is an untrusted fallback
+  // (see untrustedLoadRef), periodically retry the real DB load instead of
+  // staying stuck in "can't save" mode until the user manually reloads the
+  // app. As soon as a genuine read succeeds, it replaces `state` with the
+  // confirmed DB record and clears the flag, so normal autosave resumes.
+  useEffect(() => {
+    if (!hydrated || !identityParam) return;
+    if (!untrustedLoadRef.current) return;
+    const forIdentity = identityParam;
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      if (cancelled || !untrustedLoadRef.current || identityParam !== forIdentity) return;
+      try {
+        const r = await fetch(`/api/pet?${forIdentity}`);
+        if (!r.ok) return;
+        const saved = await r.json();
+        if (saved && typeof saved === "object" && typeof (saved as any).xp !== "number" && Object.keys(saved).length > 0) {
+          return; // still a bad shape — try again next tick
+        }
+        if (cancelled) return;
+        const dbState = saved ? loadStateFromSaved(saved) : { ...defaultState, lastVisit: Date.now() };
+        console.log("[LOAD] background retry succeeded — replacing untrusted fallback with confirmed DB state");
+        applyIdentityLoad(dbState, forIdentity, true);
+      } catch {
+        // still failing — leave untrustedLoadRef set and try again next tick
+      }
+    }, 15000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [hydrated, identityParam, state]);
 
   const mood = useMemo(() => moodFor(state), [state]);
   const stage = getStage(state.xp);
@@ -1262,14 +1441,66 @@ export default function ClientPage() {
     // BEFORE Base Account/wagmi because it's simpler and far more reliable
     // inside a WebView, where WebAuthn/passkeys are known to hang silently.
     if (typeof window !== "undefined" && (window as any).ethereum) {
+      const injected = (window as any).ethereum;
+      let accounts: string[] = [];
       try {
-        const injected = (window as any).ethereum;
-        const accounts: string[] = await injected.request({ method: "eth_requestAccounts" });
-        if (accounts && accounts.length > 0) {
-          console.log("[PAYMENT] wallet (injected):", accounts[0]);
-          if (!fid && !walletAddress) setWalletAddress(accounts[0].toLowerCase());
+        accounts = await injected.request({ method: "eth_requestAccounts" });
+      } catch (err) {
+        // Getting accounts itself failed — no real wallet connection was
+        // ever established, so this is the one case still safe to fall
+        // through to Path 2 below.
+        const msg = (err as any)?.message?.toLowerCase?.() ?? "";
+        if (msg.includes("reject") || msg.includes("denied")) throw err;
+        console.log("[PAYMENT] injected eth_requestAccounts failed, falling back:", err);
+      }
 
-          // ── Try EIP-5792 wallet_sendCalls FIRST ─────────────────────────
+      if (accounts && accounts.length > 0) {
+        console.log("[PAYMENT] wallet (injected):", accounts[0]);
+        if (!fid && !walletAddress) setWalletAddress(accounts[0].toLowerCase());
+
+        // From here on we have a REAL connected wallet. Everything below
+        // either returns a txHash or throws — it deliberately does NOT
+        // fall through to Path 2 (Base Account/wagmi) anymore. Launching a
+        // second, unrelated wallet stack (Base Account's own passkey/popup
+        // flow) while a different extension (Rabby, MetaMask, etc.) is the
+        // page's active provider is exactly the kind of cross-provider
+        // interference that produces obscure failures like "Cannot read
+        // properties of undefined (reading 'error')" — silently retrying
+        // through a second wallet after a real attempt also risks a
+        // genuine double-charge if the first attempt actually went through.
+        // Any error here now surfaces directly to the caller instead.
+
+        // ── Try EIP-5792 wallet_sendCalls, but only if the wallet actually
+        // advertises support for it via wallet_getCapabilities first. Base
+        // App's Smart Wallet supports this; plain EOA wallets like Rabby or
+        // MetaMask do not. Calling wallet_sendCalls unconditionally relied
+        // on every wallet failing *cleanly* for an unsupported method — in
+        // practice some wallets throw a malformed error instead of a clean
+        // "not supported" one, which there's no reliable way to parse
+        // around. Checking capabilities first means we simply never call
+        // wallet_sendCalls on a wallet that can't handle it.
+        let supportsSendCalls = false;
+        try {
+          const caps: any = await injected.request({
+            method: "wallet_getCapabilities",
+            params: [accounts[0]],
+          });
+          const chainHex = `0x${base.id.toString(16)}`;
+          const chainCaps = caps?.[chainHex] ?? caps?.[base.id];
+          supportsSendCalls = !!(
+            chainCaps?.atomic?.status === "supported" ||
+            chainCaps?.atomic?.status === "ready" ||
+            chainCaps?.atomicBatch?.supported
+          );
+        } catch {
+          // Capability check itself unsupported/failed — treat as no
+          // support and go straight to the legacy path below, rather than
+          // finding out the hard way via wallet_sendCalls.
+          supportsSendCalls = false;
+        }
+
+        if (supportsSendCalls) {
+          // ── wallet_sendCalls ─────────────────────────────────────────────
           // Base App's wallet is a Smart Wallet (ERC-4337). Plain
           // eth_sendTransaction gets intercepted and re-encoded into a
           // UserOperation (EntryPoint.handleOps, selector 0x1fad948c)
@@ -1358,48 +1589,39 @@ export default function ClientPage() {
             console.log("[PAYMENT] confirmed ✅ txHash (sendCalls):", txHash);
             return { txHash, walletAddress: accounts[0].toLowerCase() };
           } catch (sendCallsErr) {
-            // Once the batch was actually submitted, this is terminal for
-            // the injected-wallet path — never fall through to a second
-            // send, whether the reason was a slow confirmation or an
-            // on-chain failure. Surface the error as-is.
+            // Once the batch was actually submitted, this is terminal —
+            // never fall through to a second send, whether the reason was
+            // a slow confirmation or an on-chain failure. Surface as-is.
             if (callsSubmitted) throw sendCallsErr;
 
             const scMsg = (sendCallsErr as any)?.message?.toLowerCase?.() ?? "";
             if (scMsg.includes("reject") || scMsg.includes("denied")) throw sendCallsErr;
-            // Wallet doesn't support wallet_sendCalls (e.g. a plain EOA
-            // injected wallet like MetaMask) or the call otherwise failed
-            // BEFORE submission — safe to fall through to the legacy path.
-            console.log("[PAYMENT] wallet_sendCalls unavailable/failed, falling back to eth_sendTransaction:", sendCallsErr);
+            // Failed BEFORE submission — safe to fall through to the
+            // legacy path below.
+            console.log("[PAYMENT] wallet_sendCalls failed pre-submission, falling back to eth_sendTransaction:", sendCallsErr);
           }
-
-          // ── Legacy fallback: plain eth_sendTransaction ──────────────────
-          // Suffix is appended manually to `data`. Correct and sufficient
-          // for EOA wallets that forward calldata verbatim. For a Smart
-          // Wallet that still ends up here (sendCalls unsupported for some
-          // other reason) attribution isn't guaranteed, but the payment
-          // itself still succeeds and remains fully verifiable server-side.
-          console.log("[PAYMENT] sending tx (injected, legacy), microUsdc:", microUsdc);
-          const txHash: string = await injected.request({
-            method: "eth_sendTransaction",
-            params: [{
-              from: accounts[0] as `0x${string}`,
-              to: USDC_CONTRACT,
-              data,
-            }],
-          });
-
-          if (!txHash) throw new Error("No transaction hash returned. Please try again.");
-          console.log("[PAYMENT] confirmed ✅ txHash (injected):", txHash);
-          return { txHash, walletAddress: accounts[0].toLowerCase() };
         }
-      } catch (err) {
-        // If the user explicitly rejected, don't silently fall through to a
-        // second wallet flow — surface it immediately.
-        const msg = (err as any)?.message?.toLowerCase?.() ?? "";
-        if (msg.includes("reject") || msg.includes("denied")) throw err;
-        // Otherwise (no accounts, method not supported, etc.) fall through
-        // to Path 2 below.
-        console.log("[PAYMENT] injected wallet attempt failed, falling back:", err);
+
+        // ── Legacy fallback: plain eth_sendTransaction ──────────────────
+        // Suffix is appended manually to `data`. Correct and sufficient
+        // for EOA wallets that forward calldata verbatim (Rabby, MetaMask,
+        // etc.) For a Smart Wallet that still ends up here (sendCalls
+        // unsupported for some other reason) attribution isn't guaranteed,
+        // but the payment itself still succeeds and remains fully
+        // verifiable server-side.
+        console.log("[PAYMENT] sending tx (injected, legacy), microUsdc:", microUsdc);
+        const txHash: string = await injected.request({
+          method: "eth_sendTransaction",
+          params: [{
+            from: accounts[0] as `0x${string}`,
+            to: USDC_CONTRACT,
+            data,
+          }],
+        });
+
+        if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+        console.log("[PAYMENT] confirmed ✅ txHash (injected):", txHash);
+        return { txHash, walletAddress: accounts[0].toLowerCase() };
       }
     }
 
@@ -1601,10 +1823,6 @@ export default function ClientPage() {
     const saveWallet = normalizeWallet(paidWallet, walletAddress);
     const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
 
-    if (!fid && saveWallet && saveWallet !== walletAddress) {
-      setWalletAddress(saveWallet);
-    }
-
     if (!saveIdentity) {
       throw new Error(`Payment succeeded but no identity was found to save it under. Contact support with tx: ${txHash}`);
     }
@@ -1645,6 +1863,16 @@ export default function ClientPage() {
 
     if (!saved) {
       throw new Error(`Payment confirmed but saving failed (${lastError}). Your streak may not survive a refresh — contact support with tx: ${txHash}`);
+    }
+
+    // Only NOW does the DB actually have this wallet's fresh state, so it's
+    // safe to update walletAddress — that flips identityParam and fires the
+    // DB-load effect, which will fetch this same fresh save instead of
+    // racing ahead of it and overwriting local `state` with a stale
+    // pre-checkin snapshot (was: this ran BEFORE the save, above the retry
+    // loop — see the race this fixes at the top of handleUnlockAccessory).
+    if (!fid && saveWallet && saveWallet !== walletAddress) {
+      setWalletAddress(saveWallet);
     }
 
     return saveIdentity;
@@ -1824,9 +2052,6 @@ export default function ClientPage() {
 
           const saveWallet = normalizeWallet(paidWallet, walletAddress);
           const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-          if (!fid && saveWallet && saveWallet !== walletAddress) {
-            setWalletAddress(saveWallet);
-          }
           if (saveIdentity && computedState) {
             try {
               const res = await fetch("/api/pet", {
@@ -1843,6 +2068,13 @@ export default function ClientPage() {
               const data = await res.json().catch(() => ({}));
               if (res.ok && data.ok) {
                 console.log("[WHEEL] DB saved ✅ (rareaccessory fallback -> xp10)");
+                // Only sync walletAddress once the DB actually has this
+                // fresh state — see the setWalletAddress race doc in
+                // handleUnlockAccessory for why this can't run before the
+                // save completes.
+                if (!fid && saveWallet && saveWallet !== walletAddress) {
+                  setWalletAddress(saveWallet);
+                }
               } else {
                 console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
               }
@@ -1903,9 +2135,6 @@ export default function ClientPage() {
       // and independently verify the $0.01 payment server-side.
       const saveWallet = normalizeWallet(paidWallet, walletAddress);
       const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-      if (!fid && saveWallet && saveWallet !== walletAddress) {
-        setWalletAddress(saveWallet);
-      }
       if (saveIdentity && computedState) {
         try {
           const res = await fetch("/api/pet", {
@@ -1922,6 +2151,12 @@ export default function ClientPage() {
           const data = await res.json().catch(() => ({}));
           if (res.ok && data.ok) {
             console.log("[WHEEL] DB saved ✅");
+            // Only sync walletAddress once the DB actually has this fresh
+            // state — see the setWalletAddress race doc in
+            // handleUnlockAccessory for why this can't run before the save.
+            if (!fid && saveWallet && saveWallet !== walletAddress) {
+              setWalletAddress(saveWallet);
+            }
           } else {
             console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
           }
@@ -1976,10 +2211,6 @@ export default function ClientPage() {
       setWheelAccessoryChoices(null);
       setWheelChoiceTx(null);
       return;
-    }
-
-    if (!fid && saveWallet && saveWallet !== walletAddress) {
-      setWalletAddress(saveWallet);
     }
 
     setWheelChoicePending(true);
@@ -2060,6 +2291,14 @@ export default function ClientPage() {
       );
       setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}! (save pending — see note below)`);
       return;
+    }
+
+    // Only NOW does the DB actually have this wallet's fresh state — see
+    // the setWalletAddress race doc in handleUnlockAccessory for why this
+    // can't run before the save completes (it used to, right above the
+    // isUnlocked-guard check, before wheelChoicePending was even set).
+    if (!fid && saveWallet && saveWallet !== walletAddress) {
+      setWalletAddress(saveWallet);
     }
 
     logTransaction({
@@ -2411,12 +2650,6 @@ export default function ClientPage() {
       const saveWallet = normalizeWallet(paidWallet, walletAddress);
       const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
 
-      // Also sync React state so subsequent renders (debounced autosave,
-      // identityParam-based DB load, etc.) know about this wallet too.
-      if (!fid && saveWallet && saveWallet !== walletAddress) {
-        setWalletAddress(saveWallet);
-      }
-
       if (!saveIdentity) {
         console.warn("[UNLOCK] no identity! DB save skipped");
         throw new Error(
@@ -2484,6 +2717,21 @@ export default function ClientPage() {
           `Payment confirmed but saving failed (${lastError}). ` +
           `Your accessory may disappear on refresh — if so, contact support with tx: ${txHash}`,
         );
+      }
+
+      // Only NOW does the DB actually have this wallet's fresh state
+      // (including this unlock), so it's safe to sync React state to it.
+      // Updating walletAddress flips identityParam, which fires the
+      // DB-load effect — that effect will fetch this same fresh save
+      // instead of racing ahead of it. Previously this ran BEFORE the save
+      // (right after computing saveWallet, above), which meant the reload
+      // could land in the gap between the optimistic local unlock and the
+      // POST actually persisting it, overwriting `state` with the
+      // pre-purchase snapshot and making the newly-bought accessory look
+      // locked in the Closet even though the DB (and any dashboard reading
+      // it) already had it unlocked correctly.
+      if (!fid && saveWallet && saveWallet !== walletAddress) {
+        setWalletAddress(saveWallet);
       }
 
       // Log confirmed transaction — fire and forget. Use saveIdentity (the
@@ -2657,6 +2905,30 @@ export default function ClientPage() {
                   style={{ width: "100%" }}
                 />
               </div>
+            )}
+            {/* Only for the no-fid (Base App / plain browser) case, and only
+                once the silent reconnect check has actually finished coming
+                up empty — a brand new wallet can't be picked up silently,
+                so this explicit-gesture button is the only way in. Never
+                shown in Farcaster, and never shown once walletAddress (or
+                fid) is set. */}
+            {!fid && !walletAddress && walletCheckDone && (
+              <button
+                className="ghost-button"
+                type="button"
+                disabled={connectingWallet}
+                onClick={async () => {
+                  setConnectingWallet(true);
+                  try {
+                    const addr = await connectBaseWallet();
+                    if (addr) setWalletAddress(addr);
+                  } finally {
+                    setConnectingWallet(false);
+                  }
+                }}
+              >
+                {connectingWallet ? "Connecting…" : "Connect Wallet"}
+              </button>
             )}
             <button className="ghost-button" type="button" onClick={() => setShowFaq(true)}>
               ?
@@ -3112,7 +3384,17 @@ export default function ClientPage() {
                   const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
-                  const missed = dayKey < todayKey() && !hit;
+                  // A day only counts as "missed" if it falls AFTER the
+                  // account's actual earliest known check-in. Day-keys are
+                  // "YYYY-MM-DD" strings, so lexicographic min == earliest
+                  // date. Without this, gating on e.g. "has checked in at
+                  // least once" still breaks the moment a brand-new wallet
+                  // does its very first check-in: totalCheckIns flips to 1,
+                  // but the 6 days before that first-ever check-in would
+                  // still show red, as if they'd been neglected, when the
+                  // account simply didn't exist yet on those days.
+                  const earliestHistoryDay = history.length > 0 ? history.slice().sort()[0] : null;
+                  const missed = earliestHistoryDay !== null && dayKey >= earliestHistoryDay && dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 13, height: 13, borderRadius: "50%",
@@ -3178,7 +3460,10 @@ export default function ClientPage() {
                   const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
-                  const missed = dayKey < todayKey() && !hit;
+                  // See the gate view above — don't mark days before the
+                  // account's actual earliest known check-in as "missed".
+                  const earliestHistoryDay = history.length > 0 ? history.slice().sort()[0] : null;
+                  const missed = earliestHistoryDay !== null && dayKey >= earliestHistoryDay && dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 14, height: 14, borderRadius: "50%",
@@ -3977,7 +4262,7 @@ export default function ClientPage() {
         )}
 
       </section>
-      {showFaq && <FaqModal onClose={() => setShowFaq(false)} />}
+      {showFaq && <FaqModal onClose={() => setShowFaq(false)} debugInfo={fid ? `fid:${fid}` : walletAddress ? `wallet:${walletAddress}` : "no identity yet"} />}
     </main>
   );
 }
@@ -4325,7 +4610,7 @@ const faqSections = [
   },
 ];
 
-function FaqModal({ onClose }: { onClose: () => void }) {
+function FaqModal({ onClose, debugInfo }: { onClose: () => void; debugInfo?: string }) {
   const [open, setOpen] = useState<number | null>(0);
   return (
     <div className="faq-backdrop" onClick={onClose}>
@@ -4351,6 +4636,17 @@ function FaqModal({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
+        {/* Tiny, low-visibility identity readout — purely diagnostic, not
+            meant as a real UI feature. Lets you confirm from inside Base App
+            (no devtools needed) whether switching wallets + reloading is
+            actually changing the identity the app is using, without which
+            it's impossible to tell a client-side detection bug apart from
+            a server-side one returning the same data regardless of wallet. */}
+        {debugInfo && (
+          <div style={{ padding: "6px 16px", fontSize: 11, opacity: 0.45, textAlign: "center" }}>
+            {debugInfo}
+          </div>
+        )}
       </div>
     </div>
   );
