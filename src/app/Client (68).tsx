@@ -17,19 +17,45 @@ const BUILDER_CODE_SUFFIX = Attribution.toDataSuffix({
 });
 
 // ── Base App / injected-wallet identity helper ──────────────────────────────
-// Silently checks for an already-connected injected wallet (no popup) via
-// eth_accounts. Used as the identity fallback when Farcaster context has no
-// fid — i.e. the Base App case. Safe to call in any browser; returns null
-// if there's no injected provider or nothing is connected yet.
+// Base App's in-app browser IS the wallet — there's no separate "connect"
+// gesture for the user to take, unlike a plain browser + extension. That
+// means the silent, permission-gated `eth_accounts` (which only ever
+// returns something if the site was PREVIOUSLY authorized via
+// eth_requestAccounts) is the wrong call here: on a fresh Base App session
+// it just comes back empty and the app falls through to localStorage-only
+// mode, silently losing whatever gets paid for in that state.
+// `eth_requestAccounts` is safe to call unconditionally instead — inside
+// Base App it resolves immediately with the active account (the host
+// already trusts itself, no visible prompt), and in a genuine external
+// browser with a real extension it shows at most one native approve
+// dialog (or rejects cleanly, same fallback as before).
 async function detectInjectedWallet(): Promise<string | null> {
   try {
     const eth = (typeof window !== "undefined" ? (window as any).ethereum : null);
     if (!eth) return null;
-    const accounts: string[] = await eth.request({ method: "eth_accounts" });
+    const accounts: string[] = await eth.request({ method: "eth_requestAccounts" });
     return accounts && accounts.length > 0 ? accounts[0].toLowerCase() : null;
   } catch {
     return null;
   }
+}
+
+// Normalizes a list of candidate wallet addresses down to the first
+// non-empty one, treating "" the same as null/undefined. Needed because a
+// bare `a ?? b` chain does NOT fall through on an empty string (only on
+// null/undefined) — while every caller's *next* check is a truthy `? :`,
+// which DOES treat "" as missing. That mismatch was letting a payment
+// succeed locally (accessory added to state/localStorage) while the
+// identity used to save it collapsed to `null` a moment later, so the
+// server-side save silently never happened — see the "no account found"
+// bug. Centralizing the check here means every save site treats "" the
+// same way, once.
+function normalizeWallet(...candidates: (string | null | undefined)[]): string | null {
+  for (const candidate of candidates) {
+    const trimmed = (candidate ?? "").trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
 }
 
 // Explicit connect — triggers the wallet's connect prompt (eth_requestAccounts).
@@ -132,6 +158,17 @@ type Ripple = {
 };
 
 const STORAGE_KEY = "grub-white-kitty-v1";
+
+// Scopes the localStorage key to the current identity (fid or wallet) once
+// known, so switching accounts in the SAME browser can never read/write a
+// previous account's cached snapshot. Falls back to the plain, unscoped
+// STORAGE_KEY when no identity is known yet — i.e. genuine anonymous/local-
+// only play, where there's no wallet to mix across in the first place.
+// `identity` is expected to be identityParam ("fid=123" / "wallet=0xabc") or
+// null — already unique per account, no extra hashing needed.
+function scopedStorageKey(identity: string | null): string {
+  return identity ? `${STORAGE_KEY}:${identity}` : STORAGE_KEY;
+}
 
 const stages = [
   {
@@ -479,9 +516,9 @@ function moodFor(state: PetState): Mood {
   return "content";
 }
 
-function loadState(): PetState {
+function loadState(storageKey: string = STORAGE_KEY): PetState {
   try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
+    const saved = window.localStorage.getItem(storageKey);
     if (!saved) return { ...defaultState, lastVisit: Date.now() };
 
     const parsed = JSON.parse(saved) as PetState;
@@ -733,8 +770,11 @@ export default function ClientPage() {
         hydrateWith(dbState);
       })
       .catch(() => {
-        // DB failed — fall back to localStorage
-        hydrateWith(loadState());
+        // DB failed — fall back to localStorage, scoped to THIS identity so
+        // a network blip can never surface a different account's cached
+        // snapshot (identity is already known here, unlike the anonymous
+        // fallback paths in the mount effect below).
+        hydrateWith(loadState(scopedStorageKey(identityParam)));
       });
   }, [identityParam]);
 
@@ -833,11 +873,30 @@ export default function ClientPage() {
     return () => clearTimeout(fallbackTimer);
   }, []);
 
+  // Safety net for switching accounts WITHOUT a page reload (e.g. a wallet
+  // extension's account switcher). Only matters when there's no fid — once
+  // fid is set, this is a no-op since identityParam always prefers fid.
+  // Without this, walletAddress stays pinned to whatever detectInjectedWallet()
+  // found once at mount, so a switch mid-session would silently keep
+  // reading/writing the OLD wallet's grub:pet:wallet:<addr> record.
+  useEffect(() => {
+    const eth = (typeof window !== "undefined" ? (window as any).ethereum : null);
+    if (!eth?.on) return;
+    const onAccountsChanged = (accounts: string[]) => {
+      if (fid) return; // fid always wins — never let this override a Farcaster identity
+      setWalletAddress(accounts && accounts.length > 0 ? accounts[0].toLowerCase() : null);
+    };
+    eth.on("accountsChanged", onAccountsChanged);
+    return () => eth.removeListener?.("accountsChanged", onAccountsChanged);
+  }, [fid]);
+
   useEffect(() => {
     if (!hydrated) return;
 
-    // Always keep localStorage as offline fallback
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    // Always keep localStorage as offline fallback — scoped per identity so
+    // this can never leak into a different account's cache (see
+    // scopedStorageKey doc comment above).
+    window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(state));
 
     // Save to DB if we have an identity (fid or wallet) — debounced 800ms
     // to avoid hammering on rapid taps.
@@ -1155,7 +1214,10 @@ export default function ClientPage() {
         // that confirmation IS the gate. Receipt polling via FC provider is not supported,
         // so we trust the hash and unlock immediately. Server-side verify-payment route
         // provides the on-chain double-check for audit purposes.
-        return { txHash, walletAddress: accounts[0] };
+        // .toLowerCase() to match every other return path below — the server
+        // already normalizes case in petKey(), but there's no reason for the
+        // client to be the one inconsistent source.
+        return { txHash, walletAddress: accounts[0].toLowerCase() };
       }
     }
 
@@ -1376,15 +1438,68 @@ export default function ClientPage() {
   const gateStreakRewardEarned = gateStreak > 0 && gateStreak % 7 === 0;
 
 
+  // Determines whether today's check-in has a gap (a day was missed) and, if
+  // so, tries to atomically spend one Streak Save credit on the SERVER
+  // before any local state changes happen. Returns whether a save was
+  // actually confirmed, and the server's post-spend balance.
+  //
+  // This replaces the old approach of applyCheckIn deciding AND decrementing
+  // streakSaveCredits purely in local React state, which never touched the
+  // server at all — the decremented number only ever reached the DB via the
+  // regular debounced autosave, the same non-atomic path that let a stale
+  // save wipe fid 3325017's credits. Now the spend is a real, atomic
+  // kv.decrby on the server (see /api/pet's "consume_credit" action and
+  // lib/grub-credits.ts) — two overlapping attempts, or a stale autosave in
+  // flight at the same time, can no longer double-spend or resurrect a
+  // credit that's already gone.
+  async function checkStreakSave(): Promise<{ used: boolean; remaining?: number }> {
+    const isNewDay = state.lastCheckInDay !== todayKey();
+    if (!isNewDay) return { used: false };
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yKey = yesterday.toISOString().slice(0, 10);
+    const rawConsecutive = state.lastCheckInDay === yKey;
+    const hasGap = state.lastCheckInDay !== "" && !rawConsecutive;
+
+    if (!hasGap || (state.streakSaveCredits ?? 0) <= 0) return { used: false };
+
+    const streakSaveWallet = normalizeWallet(walletAddress);
+    const saveIdentity = fid ? { fid } : streakSaveWallet ? { wallet: streakSaveWallet } : null;
+    if (!saveIdentity) return { used: false };
+
+    try {
+      const res = await fetch("/api/pet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...saveIdentity, state, action: "consume_credit", creditType: "streakSave" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.ok) return { used: true, remaining: data.remaining };
+      // Server says no credit was actually available (e.g. another device
+      // already spent it) — fail safe: no save, streak resets like any
+      // other missed day. Never fabricate a save the server didn't confirm.
+      return { used: false };
+    } catch {
+      // Network blip — same fail-safe direction as above.
+      return { used: false };
+    }
+  }
+
   // Applies check-in to local state (and localStorage via the existing
   // auto-save effect). Returns the resulting state so callers that need to
   // persist a PAID checkin can await that separately with retries (see
   // doCheckIn) — persistence used to happen inside here as a fire-and-forget
   // fetch, which meant a failed/slow server-side payment verification was
   // only ever logged to the console while the UI already showed success.
-  function applyCheckIn(): PetState {
+  //
+  // `streakSaveInfo` is decided (and, if used, already atomically spent on
+  // the server) by checkStreakSave() BEFORE this is called — this function
+  // no longer makes that decision or touches the credit count itself, it
+  // just applies what the server already confirmed.
+  function applyCheckIn(streakSaveInfo: { used: boolean; remaining?: number } = { used: false }): PetState {
     let computed: PetState = state;
-    let usedStreakSave = false;
+    const usedStreakSave = streakSaveInfo.used;
     setState((current) => {
       const isNewDay = current.lastCheckInDay !== todayKey();
       if (!isNewDay) { computed = current; return current; }
@@ -1392,15 +1507,7 @@ export default function ClientPage() {
       yesterday.setDate(yesterday.getDate() - 1);
       const yKey = yesterday.toISOString().slice(0, 10);
       const rawConsecutive = current.lastCheckInDay === yKey;
-      // Streak Save (won from the Spin Wheel): if there's a gap — a day (or
-      // more) was missed — but a Streak Save credit is banked, auto-consume
-      // one credit and treat today as if it were consecutive, so the streak
-      // survives the miss. Only applies when there's an actual prior
-      // check-in history (current.lastCheckInDay !== "") — a brand new
-      // player has nothing to "save".
-      const hasGap = current.lastCheckInDay !== "" && !rawConsecutive;
-      const useStreakSave = hasGap && (current.streakSaveCredits ?? 0) > 0;
-      const consecutive = rawConsecutive || useStreakSave;
+      const consecutive = rawConsecutive || usedStreakSave;
       const newCheckinStreak = consecutive ? (current.checkinStreak ?? 0) + 1 : 1;
       const streakBonus = newCheckinStreak % 7 === 0 ? 5 : 0;
       const history = [...(current.checkinHistory ?? []), todayKey()].slice(-7);
@@ -1413,12 +1520,13 @@ export default function ClientPage() {
         checkinHistory: history,
         totalCheckIns: (current.totalCheckIns ?? 0) + 1,
         actionsToday: { feed: 0, play: 0, groom: 0, nap: 0 },
-        streakSaveCredits: useStreakSave
-          ? Math.max(0, (current.streakSaveCredits ?? 0) - 1)
+        // Mirror the server's real post-spend balance when a save was used;
+        // otherwise leave the count untouched (nothing was spent).
+        streakSaveCredits: usedStreakSave
+          ? (streakSaveInfo.remaining ?? Math.max(0, (current.streakSaveCredits ?? 0) - 1))
           : (current.streakSaveCredits ?? 0),
       };
       computed = newState;
-      usedStreakSave = useStreakSave;
       return newState;
     });
     // Was `(state.checkinStreak + 1) % 7 === 0`, which assumed today was
@@ -1453,7 +1561,11 @@ export default function ClientPage() {
   async function persistPaidCheckin(newState: PetState, txHash: string, paidWallet: string | null): Promise<{ fid?: string | number | null; wallet?: string | null }> {
     // Use the wallet that ACTUALLY signed this payment over the possibly-stale
     // walletAddress state var — same reasoning as handleUnlockAccessory.
-    const saveWallet = paidWallet ?? walletAddress;
+    // normalizeWallet() treats "" the same as null/undefined, closing the gap
+    // where a bare ?? would keep an empty string and the identity check
+    // below would then (correctly) treat it as missing — see normalizeWallet
+    // doc comment for the full "no account found" bug this fixes.
+    const saveWallet = normalizeWallet(paidWallet, walletAddress);
     const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
 
     if (!fid && saveWallet && saveWallet !== walletAddress) {
@@ -1511,7 +1623,8 @@ export default function ClientPage() {
 
     // Free check-in (first 5 days) — no payment needed
     if (isFreeCheckin) {
-      applyCheckIn();
+      const streakSaveInfo = await checkStreakSave();
+      applyCheckIn(streakSaveInfo);
       setLastAction(
         freeCheckInsLeft === 1
           ? `Day started! Last free check-in used. Tomorrow costs $0.01.`
@@ -1521,15 +1634,39 @@ export default function ClientPage() {
     }
 
     // Free check-in credit won from the Spin Wheel — no payment needed.
-    // Consumed before the paid path below.
+    // Spend it on the server FIRST (atomic, replay-safe) before applying
+    // anything locally — if the server says it's already gone (e.g. spent
+    // from another device a moment ago), fall through to the paid flow
+    // below instead of trusting the stale local count.
     if ((state.freeCheckinCredits ?? 0) > 0) {
-      setState((prev) => ({
-        ...prev,
-        freeCheckinCredits: Math.max(0, (prev.freeCheckinCredits ?? 0) - 1),
-      }));
-      applyCheckIn();
-      setLastAction("🎡 Free check-in from your Spin Wheel win! Day started.");
-      return;
+      const freeCheckinWallet = normalizeWallet(walletAddress);
+      const saveIdentity = fid ? { fid } : freeCheckinWallet ? { wallet: freeCheckinWallet } : null;
+      let spent = false;
+      if (saveIdentity) {
+        try {
+          const res = await fetch("/api/pet", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...saveIdentity, state, action: "consume_credit", creditType: "freeCheckin" }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data?.ok) {
+            spent = true;
+            setState((prev) => ({ ...prev, freeCheckinCredits: data.remaining }));
+          }
+        } catch {
+          // network blip — fall through to paid flow below
+        }
+      }
+
+      if (spent) {
+        const streakSaveInfo = await checkStreakSave();
+        applyCheckIn(streakSaveInfo);
+        setLastAction("🎡 Free check-in from your Spin Wheel win! Day started.");
+        return;
+      }
+      // else: credit wasn't actually available server-side — fall through
+      // to the paid flow rather than silently doing nothing.
     }
 
     // Paid check-in — exact $0.01 USDC on Base via contract call
@@ -1537,7 +1674,8 @@ export default function ClientPage() {
     try {
       const { txHash, walletAddress: paidWallet } = await sendUsdcPayment(CHECKIN_USD, "checkin");
 
-      const newState = applyCheckIn();
+      const streakSaveInfo = await checkStreakSave();
+      const newState = applyCheckIn(streakSaveInfo);
       // Await the server save (with retries) before treating this as done —
       // see persistPaidCheckin's docstring for why this can't be
       // fire-and-forget.
@@ -1639,7 +1777,7 @@ export default function ClientPage() {
             const newState: PetState = { ...prev, xp: prev.xp + consolationXp };
             computedState = newState;
             try {
-              window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+              window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
             } catch (e) {
               console.error("[WHEEL] localStorage failed", e);
             }
@@ -1651,7 +1789,7 @@ export default function ClientPage() {
           playSfx("checkin");
           setWheelSpinning(false);
 
-          const saveWallet = paidWallet ?? walletAddress;
+          const saveWallet = normalizeWallet(paidWallet, walletAddress);
           const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
           if (!fid && saveWallet && saveWallet !== walletAddress) {
             setWalletAddress(saveWallet);
@@ -1693,7 +1831,7 @@ export default function ClientPage() {
         // confirmWheelAccessoryChoice() does the actual state update + save.
         setWheelChoiceError(null);
         setWheelAccessoryChoices(lockedForStage);
-        setWheelChoiceTx({ txHash: txHash!, wallet: paidWallet ?? walletAddress ?? null });
+        setWheelChoiceTx({ txHash: txHash!, wallet: normalizeWallet(paidWallet, walletAddress) });
         setWheelResultLabel(`🌟 Rare Accessory! Pick your Stage ${stageIndex} item below.`);
         setLastAction("🎡 Spin Wheel: Rare Accessory! Choose your item.");
         playSfx("unlock");
@@ -1712,7 +1850,7 @@ export default function ClientPage() {
             : { ...prev, streakSaveCredits: (prev.streakSaveCredits ?? 0) + 1 };
         computedState = newState;
         try {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+          window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
         } catch (e) {
           console.error("[WHEEL] localStorage failed", e);
         }
@@ -1730,7 +1868,7 @@ export default function ClientPage() {
       // NOTE: this expects a corresponding update to the /api/pet route to
       // accept action: "wheel_spin" (mirroring "checkin"/"unlock_accessory")
       // and independently verify the $0.01 payment server-side.
-      const saveWallet = paidWallet ?? walletAddress;
+      const saveWallet = normalizeWallet(paidWallet, walletAddress);
       const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
       if (!fid && saveWallet && saveWallet !== walletAddress) {
         setWalletAddress(saveWallet);
@@ -1800,7 +1938,7 @@ export default function ClientPage() {
       };
       computedState = newState;
       try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+        window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
       } catch (e) {
         console.error("[WHEEL] localStorage failed", e);
       }
@@ -1808,7 +1946,7 @@ export default function ClientPage() {
     });
 
     const { txHash, wallet } = wheelChoiceTx;
-    const saveWallet = wallet ?? walletAddress;
+    const saveWallet = normalizeWallet(wallet, walletAddress);
     const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
     if (!fid && saveWallet && saveWallet !== walletAddress) {
       setWalletAddress(saveWallet);
@@ -2218,7 +2356,7 @@ export default function ClientPage() {
         };
         computedState = newState;
         try {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+          window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
           console.log("[UNLOCK] localStorage saved");
         } catch (e) { console.error("[UNLOCK] localStorage failed", e); }
         return newState;
@@ -2233,7 +2371,7 @@ export default function ClientPage() {
       // wallet just got connected inside sendUsdcPayment and setWalletAddress()
       // hasn't re-rendered yet, so identityParam is still null even though we
       // now have a perfectly good wallet address to save under.
-      const saveWallet = paidWallet ?? walletAddress;
+      const saveWallet = normalizeWallet(paidWallet, walletAddress);
       const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
 
       // Also sync React state so subsequent renders (debounced autosave,
