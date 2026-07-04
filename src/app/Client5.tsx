@@ -3,7 +3,7 @@
 import sdk from "@farcaster/miniapp-sdk";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState, useRef } from "react";
-import { connect, getAccount, reconnect, sendTransaction, switchChain, watchAccount } from "wagmi/actions";
+import { connect, getAccount, sendTransaction, switchChain } from "wagmi/actions";
 import { base } from "wagmi/chains";
 import { wagmiConfig } from "@/lib/wagmi";
 import { Attribution } from "ox/erc8021";
@@ -58,51 +58,15 @@ function normalizeWallet(...candidates: (string | null | undefined)[]): string |
   return null;
 }
 
-// Silent, no-popup identity check for the !fid (no Farcaster context) case,
-// run once at mount. Tries a real injected provider first (still valid for
-// e.g. a MetaMask/Coinbase extension in a plain desktop browser), then falls
-// back to wagmi's reconnect() for Base Account.
-//
-// This fallback exists because Base App stopped treating mini apps as
-// Farcaster mini apps on April 9, 2026 (see wagmi.ts) and, per Base's own
-// current docs, no longer injects window.ethereum either — it's just a
-// standard web view now, and identity is expected to come from wagmi
-// (useAccount / the Base Account connector), not window.ethereum. Without
-// this, detectInjectedWallet() alone always returned null inside Base App,
-// so returning users never got silently re-identified and the FAQ's debug
-// readout showed "no identity yet" even after a wallet had been connected
-// in a previous session.
-//
-// reconnect() only restores a connector wagmi already knows was previously
-// connected (it does not prompt) — safe to call unconditionally on mount.
-async function silentlyDetectWallet(): Promise<string | null> {
-  const injected = await detectInjectedWallet();
-  if (injected) return injected;
+// Explicit connect — triggers the wallet's connect prompt (eth_requestAccounts).
+// Used by a manual "Connect Wallet" button for Base App users who haven't
+// already got a wallet connected when the app loads.
+async function requestInjectedWallet(): Promise<string | null> {
   try {
-    await reconnect(wagmiConfig);
-    const account = getAccount(wagmiConfig);
-    return account.address ? account.address.toLowerCase() : null;
-  } catch {
-    return null;
-  }
-}
-
-// Explicit connect — actually shows the wallet's connect UI. Used by the
-// manual "Connect Wallet" button for Base App / plain-browser users with no
-// Farcaster fid and no wallet already reconnected silently above. A brand
-// new wallet can never be picked up silently — this is the one path that
-// requires an explicit user gesture, same as on the standard web.
-//
-// Goes through wagmi's Base Account connector rather than window.ethereum:
-// Base App no longer injects a provider in its post-April-9-2026 mode, so
-// window.ethereum-based connect (the old requestInjectedWallet(), now
-// removed) had silently stopped doing anything in Base App.
-async function connectBaseWallet(): Promise<string | null> {
-  try {
-    const result = await connect(wagmiConfig, { connector: wagmiConfig.connectors[0] });
-    const account = getAccount(wagmiConfig);
-    const address = account.address ?? result?.accounts?.[0];
-    return address ? address.toLowerCase() : null;
+    const eth = (typeof window !== "undefined" ? (window as any).ethereum : null);
+    if (!eth) return null;
+    const accounts: string[] = await eth.request({ method: "eth_requestAccounts" });
+    return accounts && accounts.length > 0 ? accounts[0].toLowerCase() : null;
   } catch {
     return null;
   }
@@ -804,12 +768,6 @@ export default function ClientPage() {
   // popup, just `eth_accounts` — and use that address as the identity
   // instead. This never runs, and never overrides, the fid path above.
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  // True once the mount-time silent wallet check (silentlyDetectWallet) has
-  // resolved either way. Gates the "Connect Wallet" button below so it
-  // doesn't flash on screen for the ~instant it takes to find out a wallet
-  // was already reconnected.
-  const [walletCheckDone, setWalletCheckDone] = useState(false);
-  const [connectingWallet, setConnectingWallet] = useState(false);
   // Single string used as the identity query param for /api/pet — "fid"
   // wins whenever both happen to be present (never should be, in practice).
   const identityParam = fid ? `fid=${fid}` : walletAddress ? `wallet=${walletAddress}` : null;
@@ -967,14 +925,11 @@ export default function ClientPage() {
           // localStorage-only. If nothing is connected yet, the "Connect
           // Wallet" affordance in the UI below still gives Base App users a
           // way in.
-          silentlyDetectWallet().then((addr) => {
-            setWalletCheckDone(true);
+          detectInjectedWallet().then((addr) => {
             if (addr) {
               setWalletAddress(addr);
               // DB load useEffect (keyed on identityParam) takes over from here.
             } else {
-              // Nothing to silently reconnect to — the "Connect Wallet"
-              // button (gated on walletCheckDone) is the way in from here.
               hydrateWith(loadState());
             }
           });
@@ -986,8 +941,7 @@ export default function ClientPage() {
         // this effect. Just try the same silent wallet check before
         // falling back to localStorage.
         clearTimeout(fallbackTimer);
-        silentlyDetectWallet().then((addr) => {
-          setWalletCheckDone(true);
+        detectInjectedWallet().then((addr) => {
           if (addr) {
             setWalletAddress(addr);
           } else {
@@ -1014,20 +968,6 @@ export default function ClientPage() {
     };
     eth.on("accountsChanged", onAccountsChanged);
     return () => eth.removeListener?.("accountsChanged", onAccountsChanged);
-  }, [fid]);
-
-  // Same safety net as above, for the wagmi/Base Account connector — needed
-  // now that Base App no longer injects window.ethereum at all, so the
-  // listener above never fires there. watchAccount covers both an account
-  // switch and a disconnect through the Base Account connector itself.
-  useEffect(() => {
-    const unwatch = watchAccount(wagmiConfig, {
-      onChange(account) {
-        if (fid) return; // fid always wins — never let this override a Farcaster identity
-        setWalletAddress(account.address ? account.address.toLowerCase() : null);
-      },
-    });
-    return () => unwatch();
   }, [fid]);
 
   useEffect(() => {
@@ -2862,30 +2802,6 @@ export default function ClientPage() {
                   style={{ width: "100%" }}
                 />
               </div>
-            )}
-            {/* Only for the no-fid (Base App / plain browser) case, and only
-                once the silent reconnect check has actually finished coming
-                up empty — a brand new wallet can't be picked up silently,
-                so this explicit-gesture button is the only way in. Never
-                shown in Farcaster, and never shown once walletAddress (or
-                fid) is set. */}
-            {!fid && !walletAddress && walletCheckDone && (
-              <button
-                className="ghost-button"
-                type="button"
-                disabled={connectingWallet}
-                onClick={async () => {
-                  setConnectingWallet(true);
-                  try {
-                    const addr = await connectBaseWallet();
-                    if (addr) setWalletAddress(addr);
-                  } finally {
-                    setConnectingWallet(false);
-                  }
-                }}
-              >
-                {connectingWallet ? "Connecting…" : "Connect Wallet"}
-              </button>
             )}
             <button className="ghost-button" type="button" onClick={() => setShowFaq(true)}>
               ?
