@@ -21,7 +21,7 @@ import { kv } from "@vercel/kv";
 import { ACCESSORIES } from "@/lib/accessories";
 import { getAuth } from "@clerk/nextjs/server";
 import { registerReferral } from "@/lib/referral";
-import { grantCredit, revokeCredit, getCredits } from "@/lib/grub-credits";
+import { grantCredit, getCredits } from "@/lib/grub-credits";
 
 const VALID_ACCESSORY_IDS = new Set(ACCESSORIES.map((a) => a.id));
 
@@ -222,35 +222,6 @@ export async function POST(req: NextRequest) {
       await kv.set(`grub:pet:${fid}`, { ...state, [field]: newValue });
 
       return NextResponse.json({ ok: true, fid, action, creditType, granted: grantAmount, newValue });
-    }
-
-    // ── Remove a banked Spin Wheel credit (manual correction) ───────────
-    // Use this to undo an accidental double-grant, or to correct a count
-    // that's too high for any other reason. Always succeeds and floors at
-    // 0 — see revokeCredit() in lib/grub-credits.ts for why this is
-    // deliberately different from the in-game spend path.
-    if (action === "revoke_credit") {
-      const { creditType, amount } = body;
-
-      if (creditType !== "freeCheckin" && creditType !== "streakSave") {
-        return NextResponse.json(
-          { ok: false, reason: `creditType must be "freeCheckin" or "streakSave", got "${creditType}"` },
-          { status: 400 }
-        );
-      }
-
-      const revokeAmount = typeof amount === "number" && amount > 0 ? Math.floor(amount) : 1;
-
-      const state = await getPetState(fid);
-      if (!state) return NextResponse.json({ ok: false, reason: `no pet state for fid ${fid}` });
-
-      const field = creditType === "freeCheckin" ? "freeCheckinCredits" : "streakSaveCredits";
-      const newValue = await revokeCredit(`grub:pet:${fid}`, creditType, revokeAmount);
-
-      // Mirror into the blob, same as grant_credit above.
-      await kv.set(`grub:pet:${fid}`, { ...state, [field]: newValue });
-
-      return NextResponse.json({ ok: true, fid, action, creditType, revoked: revokeAmount, newValue });
     }
 
     // ── Ban / unban ─────────────────────────────────────────────────────

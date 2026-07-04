@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { ACCESSORIES } from "@/lib/accessories";
-import { grantCredit, spendCreditIfAvailable, getCredits, type CreditType } from "@/lib/grub-credits";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -140,15 +139,13 @@ async function verifyUsdcTransfer(
 //      itself is still client-reported, not server-recomputed from scratch.
 const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick (up to 9) + a small buffer
 
-// NOTE: freeCheckinCredits / streakSaveCredits are NO LONGER sanitized or
-// accepted from the client here at all — see lib/grub-credits.ts. They now
-// live in their own atomic `kv.incrby`/`kv.decrby` keys, mutated only via
-// grantCredit()/spendCreditIfAvailable() below, and are stamped onto the
-// saved blob (and every response) from that source of truth via
-// withCreditTruth(), overwriting whatever the client sent. This closes the
-// race that wiped fid 3325017's credits: a stale autosave carrying an old
-// credit number can no longer overwrite a real grant or spend, because the
-// client's copy of these two fields is never trusted or written anywhere.
+// A single Spin Wheel win awards +1 to at most ONE of these two fields (never
+// both, never more than 1). Capping the per-save increase the same way as xp
+// above closes the same hole: without this, a direct POST to this route could
+// set either field to any number and mint unlimited free check-ins / streak
+// saves. Consumption (the field going down) is untouched — that's the client
+// spending a credit it already had, which is safe to trust either way.
+const MAX_CREDIT_GAIN_PER_SAVE = 1;
 
 function sanitizeState(existingRaw: any, incomingState: any) {
   const existingUnlocked: string[] = existingRaw?.accessories?.unlocked ?? [];
@@ -170,25 +167,37 @@ function sanitizeState(existingRaw: any, incomingState: any) {
     safeXp = existingXp + MAX_XP_GAIN_PER_SAVE;
   }
 
+  const existingFreeCheckin: number = typeof existingRaw?.freeCheckinCredits === "number" ? existingRaw.freeCheckinCredits : 0;
+  const incomingFreeCheckin: number = typeof incomingState?.freeCheckinCredits === "number" ? Math.max(0, incomingState.freeCheckinCredits) : existingFreeCheckin;
+  let safeFreeCheckin = incomingFreeCheckin;
+  if (incomingFreeCheckin - existingFreeCheckin > MAX_CREDIT_GAIN_PER_SAVE) {
+    console.warn(
+      `[pet] freeCheckinCredits gain clamped — requested +${incomingFreeCheckin - existingFreeCheckin}, allowed +${MAX_CREDIT_GAIN_PER_SAVE}`,
+    );
+    safeFreeCheckin = existingFreeCheckin + MAX_CREDIT_GAIN_PER_SAVE;
+  }
+
+  const existingStreakSave: number = typeof existingRaw?.streakSaveCredits === "number" ? existingRaw.streakSaveCredits : 0;
+  const incomingStreakSave: number = typeof incomingState?.streakSaveCredits === "number" ? Math.max(0, incomingState.streakSaveCredits) : existingStreakSave;
+  let safeStreakSave = incomingStreakSave;
+  if (incomingStreakSave - existingStreakSave > MAX_CREDIT_GAIN_PER_SAVE) {
+    console.warn(
+      `[pet] streakSaveCredits gain clamped — requested +${incomingStreakSave - existingStreakSave}, allowed +${MAX_CREDIT_GAIN_PER_SAVE}`,
+    );
+    safeStreakSave = existingStreakSave + MAX_CREDIT_GAIN_PER_SAVE;
+  }
+
   return {
     ...incomingState,
     xp: safeXp,
+    freeCheckinCredits: safeFreeCheckin,
+    streakSaveCredits: safeStreakSave,
     accessories: {
       ...incomingState?.accessories,
       unlocked: safeUnlocked,
       equipped: safeEquipped,
     },
   };
-}
-
-// Stamps the real atomic credit values onto a state object, overwriting
-// whatever (possibly stale, possibly fabricated) numbers were already on it.
-// Call this immediately before every kv.set of the pet blob, and on every
-// GET, so the blob's freeCheckinCredits/streakSaveCredits fields are always
-// just a mirror of the atomic keys — never an independent source of truth.
-async function withCreditTruth(key: string, obj: any) {
-  const credits = await getCredits(key);
-  return { ...obj, ...credits };
 }
 
 // ── GET — fetch pet state ────────────────────────────────────────────────────
@@ -199,11 +208,8 @@ export async function GET(req: NextRequest) {
   if (!key) return NextResponse.json({ error: "missing fid or wallet" }, { status: 400 });
 
   try {
-    const state = await kv.get<any>(key);
-    if (!state) return NextResponse.json(null);
-    // Always answer with the real atomic credit values, never the blob's
-    // (possibly stale) copy — see withCreditTruth().
-    return NextResponse.json(await withCreditTruth(key, state));
+    const state = await kv.get(key);
+    return NextResponse.json(state ?? null);
   } catch (err: any) {
     return NextResponse.json({ error: err?.message }, { status: 500 });
   }
@@ -282,7 +288,7 @@ export async function POST(req: NextRequest) {
         { ...existingForUnlock, accessories: { ...existingForUnlock?.accessories, unlocked: [...existingUnlockedList, accessoryId] } },
         state,
       );
-      await kv.set(key, await withCreditTruth(key, sanitized));
+      await kv.set(key, sanitized);
 
       // Mark txHash as used only NOW, after the state write actually
       // succeeded (kept for 1 year). Previously this happened right after
@@ -326,7 +332,7 @@ export async function POST(req: NextRequest) {
       // Save state
       const existingForCheckin = await kv.get<any>(key);
       const sanitizedCheckin = sanitizeState(existingForCheckin, state);
-      await kv.set(key, await withCreditTruth(key, sanitizedCheckin));
+      await kv.set(key, sanitizedCheckin);
 
       // Mark txHash as used only after the save succeeded — same reasoning
       // as the unlock_accessory path above.
@@ -382,17 +388,15 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
+      // Fresh read, taken as close to the write as possible — this is the
+      // server's own source of truth for the +1, not the client's `state`.
       const existingForSpin = await kv.get<any>(key);
 
       const serverComputed: Record<string, any> = {};
       if (wheelReward === "freecheckin") {
-        // Atomic INCRBY — replaces the old read-then-write on the JSON blob.
-        // See lib/grub-credits.ts for why: two concurrent writes here could
-        // never step on each other now, regardless of what else is saving
-        // the blob at the same moment.
-        serverComputed.freeCheckinCredits = await grantCredit(key, "freeCheckin");
+        serverComputed.freeCheckinCredits = (existingForSpin?.freeCheckinCredits ?? 0) + 1;
       } else if (wheelReward === "streaksave") {
-        serverComputed.streakSaveCredits = await grantCredit(key, "streakSave");
+        serverComputed.streakSaveCredits = (existingForSpin?.streakSaveCredits ?? 0) + 1;
       } else if (wheelReward === "rareaccessory") {
         if (!accessoryId) {
           return NextResponse.json({ error: "rareaccessory reward requires accessoryId" }, { status: 400 });
@@ -413,57 +417,12 @@ export async function POST(req: NextRequest) {
       // `state` and the pre-write existingForSpin snapshot for these fields.
       const merged = { ...existingForSpin, ...state, ...serverComputed };
       const sanitized = sanitizeState(existingForSpin, merged);
-      const finalState = await withCreditTruth(key, sanitized);
-      await kv.set(key, finalState);
+      await kv.set(key, sanitized);
 
       await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "wheel_spin", wheelReward: wheelReward ?? null, ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
 
       console.log(`[pet] ✅ wheel spin saved ${who} reward=${wheelReward ?? "unknown"} tx=${txHash}`);
-      // Return the actual post-grant credit balance so the client can sync
-      // its optimistic local +1 to the real server number instead of trusting
-      // its own guess.
-      return NextResponse.json({
-        ok: true,
-        freeCheckinCredits: finalState.freeCheckinCredits,
-        streakSaveCredits: finalState.streakSaveCredits,
-      });
-    }
-
-    // ── Atomic credit spend — Free Check-in or Streak Save being consumed ────
-    // Called by the client the moment it wants to use a banked credit
-    // (starting a free check-in, or auto-saving a streak on a missed day),
-    // BEFORE it commits that locally. This is what makes consumption safe:
-    // previously spends only ever happened by the client mutating its own
-    // React state and letting the regular debounced autosave carry the
-    // decremented number down — which is exactly the shape of race that can
-    // wipe a credit (a stale in-flight autosave with an old, higher number
-    // landing after a real spend). kv.decrby is atomic, so two overlapping
-    // spend attempts (or a spend overlapping a stale autosave) can't corrupt
-    // the count anymore — and a stale autosave can no longer write a credit
-    // number at all, since withCreditTruth() always overwrites it on save.
-    if (action === "consume_credit") {
-      const { creditType } = body as { creditType?: CreditType };
-      if (creditType !== "freeCheckin" && creditType !== "streakSave") {
-        return NextResponse.json(
-          { error: `creditType must be "freeCheckin" or "streakSave", got "${creditType}"` },
-          { status: 400 },
-        );
-      }
-
-      const newValue = await spendCreditIfAvailable(key, creditType);
-      if (newValue === null) {
-        return NextResponse.json({ ok: false, error: "No credit available to spend." }, { status: 409 });
-      }
-
-      // Mirror into the blob too, so GET / the debug-kv dashboard stay
-      // accurate without a second round trip. The atomic key is still the
-      // real source of truth.
-      const existing = await kv.get<any>(key);
-      if (existing) {
-        await kv.set(key, await withCreditTruth(key, existing));
-      }
-
-      return NextResponse.json({ ok: true, creditType, remaining: newValue });
+      return NextResponse.json({ ok: true });
     }
 
     // ── All other state saves (feeding, mood, equip, etc.) ───────────────────
@@ -472,7 +431,7 @@ export async function POST(req: NextRequest) {
     const existingRaw = await kv.get<any>(key);
     const safeState = sanitizeState(existingRaw, state);
 
-    await kv.set(key, await withCreditTruth(key, safeState));
+    await kv.set(key, safeState);
     return NextResponse.json({ ok: true });
 
   } catch (err: any) {

@@ -1805,11 +1805,9 @@ function AdminDashboardInner() {
                         <div style={{ fontSize: 14, fontWeight: 700, color: T.cream }}>{controlState.state.streakSaveCredits ?? 0} banked</div>
                       </div>
                     </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 8 }}>
                       <Btn onClick={() => runAction("grant_credit", { creditType: "freeCheckin", amount: 1 })} variant="default">+1 Free Check-in</Btn>
-                      <Btn onClick={() => runAction("revoke_credit", { creditType: "freeCheckin", amount: 1 })} variant="red">−1 Free Check-in</Btn>
                       <Btn onClick={() => runAction("grant_credit", { creditType: "streakSave", amount: 1 })} variant="default">+1 Streak Save</Btn>
-                      <Btn onClick={() => runAction("revoke_credit", { creditType: "streakSave", amount: 1 })} variant="red">−1 Streak Save</Btn>
                     </div>
                   </div>
 

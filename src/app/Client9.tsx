@@ -1376,67 +1376,15 @@ export default function ClientPage() {
   const gateStreakRewardEarned = gateStreak > 0 && gateStreak % 7 === 0;
 
 
-  // Determines whether today's check-in has a gap (a day was missed) and, if
-  // so, tries to atomically spend one Streak Save credit on the SERVER
-  // before any local state changes happen. Returns whether a save was
-  // actually confirmed, and the server's post-spend balance.
-  //
-  // This replaces the old approach of applyCheckIn deciding AND decrementing
-  // streakSaveCredits purely in local React state, which never touched the
-  // server at all — the decremented number only ever reached the DB via the
-  // regular debounced autosave, the same non-atomic path that let a stale
-  // save wipe fid 3325017's credits. Now the spend is a real, atomic
-  // kv.decrby on the server (see /api/pet's "consume_credit" action and
-  // lib/grub-credits.ts) — two overlapping attempts, or a stale autosave in
-  // flight at the same time, can no longer double-spend or resurrect a
-  // credit that's already gone.
-  async function checkStreakSave(): Promise<{ used: boolean; remaining?: number }> {
-    const isNewDay = state.lastCheckInDay !== todayKey();
-    if (!isNewDay) return { used: false };
-
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yKey = yesterday.toISOString().slice(0, 10);
-    const rawConsecutive = state.lastCheckInDay === yKey;
-    const hasGap = state.lastCheckInDay !== "" && !rawConsecutive;
-
-    if (!hasGap || (state.streakSaveCredits ?? 0) <= 0) return { used: false };
-
-    const saveIdentity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
-    if (!saveIdentity) return { used: false };
-
-    try {
-      const res = await fetch("/api/pet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...saveIdentity, state, action: "consume_credit", creditType: "streakSave" }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data?.ok) return { used: true, remaining: data.remaining };
-      // Server says no credit was actually available (e.g. another device
-      // already spent it) — fail safe: no save, streak resets like any
-      // other missed day. Never fabricate a save the server didn't confirm.
-      return { used: false };
-    } catch {
-      // Network blip — same fail-safe direction as above.
-      return { used: false };
-    }
-  }
-
   // Applies check-in to local state (and localStorage via the existing
   // auto-save effect). Returns the resulting state so callers that need to
   // persist a PAID checkin can await that separately with retries (see
   // doCheckIn) — persistence used to happen inside here as a fire-and-forget
   // fetch, which meant a failed/slow server-side payment verification was
   // only ever logged to the console while the UI already showed success.
-  //
-  // `streakSaveInfo` is decided (and, if used, already atomically spent on
-  // the server) by checkStreakSave() BEFORE this is called — this function
-  // no longer makes that decision or touches the credit count itself, it
-  // just applies what the server already confirmed.
-  function applyCheckIn(streakSaveInfo: { used: boolean; remaining?: number } = { used: false }): PetState {
+  function applyCheckIn(): PetState {
     let computed: PetState = state;
-    const usedStreakSave = streakSaveInfo.used;
+    let usedStreakSave = false;
     setState((current) => {
       const isNewDay = current.lastCheckInDay !== todayKey();
       if (!isNewDay) { computed = current; return current; }
@@ -1444,7 +1392,15 @@ export default function ClientPage() {
       yesterday.setDate(yesterday.getDate() - 1);
       const yKey = yesterday.toISOString().slice(0, 10);
       const rawConsecutive = current.lastCheckInDay === yKey;
-      const consecutive = rawConsecutive || usedStreakSave;
+      // Streak Save (won from the Spin Wheel): if there's a gap — a day (or
+      // more) was missed — but a Streak Save credit is banked, auto-consume
+      // one credit and treat today as if it were consecutive, so the streak
+      // survives the miss. Only applies when there's an actual prior
+      // check-in history (current.lastCheckInDay !== "") — a brand new
+      // player has nothing to "save".
+      const hasGap = current.lastCheckInDay !== "" && !rawConsecutive;
+      const useStreakSave = hasGap && (current.streakSaveCredits ?? 0) > 0;
+      const consecutive = rawConsecutive || useStreakSave;
       const newCheckinStreak = consecutive ? (current.checkinStreak ?? 0) + 1 : 1;
       const streakBonus = newCheckinStreak % 7 === 0 ? 5 : 0;
       const history = [...(current.checkinHistory ?? []), todayKey()].slice(-7);
@@ -1457,13 +1413,12 @@ export default function ClientPage() {
         checkinHistory: history,
         totalCheckIns: (current.totalCheckIns ?? 0) + 1,
         actionsToday: { feed: 0, play: 0, groom: 0, nap: 0 },
-        // Mirror the server's real post-spend balance when a save was used;
-        // otherwise leave the count untouched (nothing was spent).
-        streakSaveCredits: usedStreakSave
-          ? (streakSaveInfo.remaining ?? Math.max(0, (current.streakSaveCredits ?? 0) - 1))
+        streakSaveCredits: useStreakSave
+          ? Math.max(0, (current.streakSaveCredits ?? 0) - 1)
           : (current.streakSaveCredits ?? 0),
       };
       computed = newState;
+      usedStreakSave = useStreakSave;
       return newState;
     });
     // Was `(state.checkinStreak + 1) % 7 === 0`, which assumed today was
@@ -1556,8 +1511,7 @@ export default function ClientPage() {
 
     // Free check-in (first 5 days) — no payment needed
     if (isFreeCheckin) {
-      const streakSaveInfo = await checkStreakSave();
-      applyCheckIn(streakSaveInfo);
+      applyCheckIn();
       setLastAction(
         freeCheckInsLeft === 1
           ? `Day started! Last free check-in used. Tomorrow costs $0.01.`
@@ -1567,38 +1521,15 @@ export default function ClientPage() {
     }
 
     // Free check-in credit won from the Spin Wheel — no payment needed.
-    // Spend it on the server FIRST (atomic, replay-safe) before applying
-    // anything locally — if the server says it's already gone (e.g. spent
-    // from another device a moment ago), fall through to the paid flow
-    // below instead of trusting the stale local count.
+    // Consumed before the paid path below.
     if ((state.freeCheckinCredits ?? 0) > 0) {
-      const saveIdentity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
-      let spent = false;
-      if (saveIdentity) {
-        try {
-          const res = await fetch("/api/pet", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...saveIdentity, state, action: "consume_credit", creditType: "freeCheckin" }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data?.ok) {
-            spent = true;
-            setState((prev) => ({ ...prev, freeCheckinCredits: data.remaining }));
-          }
-        } catch {
-          // network blip — fall through to paid flow below
-        }
-      }
-
-      if (spent) {
-        const streakSaveInfo = await checkStreakSave();
-        applyCheckIn(streakSaveInfo);
-        setLastAction("🎡 Free check-in from your Spin Wheel win! Day started.");
-        return;
-      }
-      // else: credit wasn't actually available server-side — fall through
-      // to the paid flow rather than silently doing nothing.
+      setState((prev) => ({
+        ...prev,
+        freeCheckinCredits: Math.max(0, (prev.freeCheckinCredits ?? 0) - 1),
+      }));
+      applyCheckIn();
+      setLastAction("🎡 Free check-in from your Spin Wheel win! Day started.");
+      return;
     }
 
     // Paid check-in — exact $0.01 USDC on Base via contract call
@@ -1606,8 +1537,7 @@ export default function ClientPage() {
     try {
       const { txHash, walletAddress: paidWallet } = await sendUsdcPayment(CHECKIN_USD, "checkin");
 
-      const streakSaveInfo = await checkStreakSave();
-      const newState = applyCheckIn(streakSaveInfo);
+      const newState = applyCheckIn();
       // Await the server save (with retries) before treating this as done —
       // see persistPaidCheckin's docstring for why this can't be
       // fire-and-forget.

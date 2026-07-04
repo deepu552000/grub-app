@@ -21,7 +21,6 @@ import { kv } from "@vercel/kv";
 import { ACCESSORIES } from "@/lib/accessories";
 import { getAuth } from "@clerk/nextjs/server";
 import { registerReferral } from "@/lib/referral";
-import { grantCredit, revokeCredit, getCredits } from "@/lib/grub-credits";
 
 const VALID_ACCESSORY_IDS = new Set(ACCESSORIES.map((a) => a.id));
 
@@ -57,9 +56,6 @@ export async function GET(req: NextRequest) {
 
   const referredByFid = await kv.get<string>(`ref:${fid}`);
   const referredUsers = (await kv.get<number[]>(`referrer:${fid}:referred`)) ?? [];
-  // Read credits from the atomic keys, not the blob — the blob copy is only
-  // a mirror and can lag by design (see lib/grub-credits.ts).
-  const credits = await getCredits(`grub:pet:${fid}`);
 
   return NextResponse.json({
     ok: true,
@@ -72,8 +68,8 @@ export async function GET(req: NextRequest) {
       happiness: state.happiness ?? 0,
       totalCheckIns: state.totalCheckIns ?? 0,
       banned: state.banned ?? false,
-      freeCheckinCredits: credits.freeCheckinCredits,
-      streakSaveCredits: credits.streakSaveCredits,
+      freeCheckinCredits: state.freeCheckinCredits ?? 0,
+      streakSaveCredits: state.streakSaveCredits ?? 0,
       accessoriesUnlocked: state.accessories?.unlocked ?? [],
       accessoriesEquipped: state.accessories?.equipped ?? {},
     },
@@ -210,47 +206,12 @@ export async function POST(req: NextRequest) {
       const state = await getPetState(fid);
       if (!state) return NextResponse.json({ ok: false, reason: `no pet state for fid ${fid}` });
 
-      // Atomic INCRBY — same helper the wheel_spin win path uses, so a
-      // manual correction here can never drift out of sync with a
-      // concurrent player-triggered grant/spend on the same fid.
       const field = creditType === "freeCheckin" ? "freeCheckinCredits" : "streakSaveCredits";
-      const newValue = await grantCredit(`grub:pet:${fid}`, creditType, grantAmount);
+      const newValue = (state[field] ?? 0) + grantAmount;
 
-      // Mirror into the blob so GET /api/admin/user-control and the
-      // debug-kv dashboard stay accurate without extra plumbing — the
-      // atomic key remains the real source of truth.
       await kv.set(`grub:pet:${fid}`, { ...state, [field]: newValue });
 
       return NextResponse.json({ ok: true, fid, action, creditType, granted: grantAmount, newValue });
-    }
-
-    // ── Remove a banked Spin Wheel credit (manual correction) ───────────
-    // Use this to undo an accidental double-grant, or to correct a count
-    // that's too high for any other reason. Always succeeds and floors at
-    // 0 — see revokeCredit() in lib/grub-credits.ts for why this is
-    // deliberately different from the in-game spend path.
-    if (action === "revoke_credit") {
-      const { creditType, amount } = body;
-
-      if (creditType !== "freeCheckin" && creditType !== "streakSave") {
-        return NextResponse.json(
-          { ok: false, reason: `creditType must be "freeCheckin" or "streakSave", got "${creditType}"` },
-          { status: 400 }
-        );
-      }
-
-      const revokeAmount = typeof amount === "number" && amount > 0 ? Math.floor(amount) : 1;
-
-      const state = await getPetState(fid);
-      if (!state) return NextResponse.json({ ok: false, reason: `no pet state for fid ${fid}` });
-
-      const field = creditType === "freeCheckin" ? "freeCheckinCredits" : "streakSaveCredits";
-      const newValue = await revokeCredit(`grub:pet:${fid}`, creditType, revokeAmount);
-
-      // Mirror into the blob, same as grant_credit above.
-      await kv.set(`grub:pet:${fid}`, { ...state, [field]: newValue });
-
-      return NextResponse.json({ ok: true, fid, action, creditType, revoked: revokeAmount, newValue });
     }
 
     // ── Ban / unban ─────────────────────────────────────────────────────
