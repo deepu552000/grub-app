@@ -1,9 +1,6 @@
 // Save as: src/app/api/share-card/route.tsx
 // Generates a dynamic OG image card for sharing Grub on Farcaster.
 // Usage: /api/share-card?stage=1&mood=content&xp=240&streak=5&bond=42
-// Rendered at 1200x800 (3:2) — Farcaster Mini App embeds require a 3:2 image;
-// anything else (e.g. the old 480x480 square) gets center-cropped by the
-// client feed, which was clipping the win banner and stats row.
 // Spin Wheel win card: add &win=<label> (e.g. "Rare Accessory: Gold Glasses"
 // or "+10 XP"), &winId=<segment id> (e.g. "xp10", "freecheckin",
 // "rareaccessory" — must match a key in WIN_STYLES below, drives the emoji/
@@ -146,12 +143,14 @@ export async function GET(req: NextRequest) {
       <div
         style={{
           display:        "flex",
-          flexDirection:  "row",
+          flexDirection:  "column",
           alignItems:     "center",
+          justifyContent: "flex-start",
+          gap:            12,
           width:          "100%",
           height:         "100%",
           background:     "linear-gradient(145deg, #0e0c1a 0%, #16112a 55%, #0b0b1c 100%)",
-          padding:        "40px 56px",
+          padding:        "18px 32px 18px",
           fontFamily:     "sans-serif",
           position:       "relative",
           overflow:       "hidden",
@@ -161,155 +160,150 @@ export async function GET(req: NextRequest) {
         <div
           style={{
             position:   "absolute",
-            top: "50%", left: "23%",
+            top: "44%", left: "50%",
             transform:  "translate(-50%, -50%)",
-            width: 480,  height: 480,
+            width: 340,  height: 340,
             borderRadius: "50%",
-            background: "radial-gradient(circle, rgba(190,160,255,0.16) 0%, transparent 70%)",
+            background: "radial-gradient(circle, rgba(190,160,255,0.14) 0%, transparent 70%)",
             display:    "flex",
           }}
         />
 
-        {/* ── Left: cat + stage name + mood ── */}
-        <div
-          style={{
-            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-            gap: 14, width: 420, flexShrink: 0,
-          }}
-        >
+        {/* ── Header ── */}
+        <div style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span style={{ fontSize: 20, fontWeight: 800, color: "#e8d8ff", letterSpacing: 2 }}>GRUB</span>
+            <span style={{ fontSize: 12, color: "#7a6a9a", letterSpacing: 1 }}>Virtual Cat · Farcaster</span>
+          </div>
+          <div
+            style={{
+              display: "flex", alignItems: "center",
+              background: "rgba(170,130,255,0.14)",
+              border: "1px solid rgba(170,130,255,0.28)",
+              borderRadius: 20, padding: "4px 14px",
+            }}
+          >
+            <span style={{ fontSize: 12, color: "#c4a8ff", fontWeight: 600 }}>
+              Stage {stageParam} · {stageData.title}
+            </span>
+          </div>
+        </div>
+
+        {/* ── Spin Wheel win banner (optional) ── */}
+        {win && (
+          isRareWin ? (
+            <div
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                width: "100%",
+                background: "linear-gradient(90deg, rgba(255,60,172,0.28) 0%, rgba(255,200,80,0.28) 50%, rgba(255,60,172,0.28) 100%)",
+                border: "1.5px solid rgba(255,210,120,0.65)",
+                borderRadius: 16,
+                padding: "8px 12px",
+                boxShadow: "0 0 24px rgba(255,180,90,0.35)",
+              }}
+            >
+              <span style={{ fontSize: 20, display: "flex" }}>🎉</span>
+              <span style={{ fontSize: 17, fontWeight: 800, color: "#fff3da", letterSpacing: 0.3 }}>
+                WON: {win}
+              </span>
+              <span style={{ fontSize: 20, display: "flex" }}>🎉</span>
+            </div>
+          ) : winStyle.tier === "highlight" ? (
+            <div
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                background: winStyle.bg,
+                border: `1.5px solid ${winStyle.border}`,
+                borderRadius: 16,
+                padding: "7px 18px",
+                boxShadow: `0 0 18px ${winStyle.border}`,
+              }}
+            >
+              <span style={{ fontSize: 18, display: "flex" }}>{winStyle.emoji}</span>
+              <span style={{ fontSize: 16, fontWeight: 800, color: winStyle.text, letterSpacing: 0.3 }}>
+                Won: {win}
+              </span>
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                background: winStyle.bg,
+                border: `1px solid ${winStyle.border}`,
+                borderRadius: 14,
+                padding: XP_SCALE_STEPS[winStyle.scale]?.padding ?? XP_SCALE_STEPS[0].padding,
+              }}
+            >
+              <span style={{ fontSize: XP_SCALE_STEPS[winStyle.scale]?.emojiSize ?? XP_SCALE_STEPS[0].emojiSize, display: "flex" }}>
+                {winStyle.emoji}
+              </span>
+              <span
+                style={{
+                  fontSize: XP_SCALE_STEPS[winStyle.scale]?.fontSize ?? XP_SCALE_STEPS[0].fontSize,
+                  color: winStyle.text,
+                  fontWeight: 600,
+                }}
+              >
+                Won: {win}
+              </span>
+            </div>
+          )
+        )}
+
+        {/* ── Cat image ── */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
           {catSrc ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={catSrc}
               alt="Grub"
-              width={300}
-              height={300}
-              style={{ objectFit: "contain", filter: "drop-shadow(0 0 32px rgba(200,160,255,0.32))" }}
+              width={180}
+              height={180}
+              style={{ objectFit: "contain", filter: "drop-shadow(0 0 20px rgba(200,160,255,0.30))" }}
             />
           ) : (
-            <span style={{ fontSize: 140, display: "flex" }}>🐾</span>
+            <span style={{ fontSize: 96 }}>🐾</span>
           )}
-          <span style={{ fontSize: 32, fontWeight: 800, color: "#f0e8ff", letterSpacing: 0.4 }}>
+        </div>
+
+        {/* ── Stage name + mood pill ── */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 26, fontWeight: 800, color: "#f0e8ff", letterSpacing: 0.4 }}>
             {stageData.name}
           </span>
           <div
             style={{
-              display: "flex", alignItems: "center", gap: 7,
+              display: "flex", alignItems: "center", gap: 6,
               background: moodBg, border: `1px solid ${moodBorder}`,
-              borderRadius: 18, padding: "5px 16px",
+              borderRadius: 16, padding: "4px 14px",
             }}
           >
-            <span style={{ fontSize: 16, display: "flex" }}>{moodEmoji(mood)}</span>
-            <span style={{ fontSize: 15, color: "#ddd0ff", fontWeight: 500 }}>{moodLabel(mood)}</span>
+            <span style={{ fontSize: 14, display: "flex" }}>{moodEmoji(mood)}</span>
+            <span style={{ fontSize: 13, color: "#ddd0ff", fontWeight: 500 }}>{moodLabel(mood)}</span>
           </div>
         </div>
 
-        {/* ── Right: header, win banner, stats ── */}
-        <div style={{ display: "flex", flexDirection: "column", flex: 1, height: "100%", justifyContent: "center", gap: 22 }}>
-          {/* Header */}
-          <div style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 9 }}>
-              <span style={{ fontSize: 26, fontWeight: 800, color: "#e8d8ff", letterSpacing: 2 }}>GRUB</span>
-              <span style={{ fontSize: 14, color: "#7a6a9a", letterSpacing: 1 }}>Virtual Cat · Farcaster</span>
-            </div>
+        {/* ── Stats row (4 pills) ── */}
+        <div style={{ display: "flex", gap: 10, width: "100%", justifyContent: "center" }}>
+          {stats.map(({ label, value }) => (
             <div
+              key={label}
               style={{
-                display: "flex", alignItems: "center",
-                background: "rgba(170,130,255,0.14)",
-                border: "1px solid rgba(170,130,255,0.28)",
-                borderRadius: 22, padding: "6px 16px",
+                display: "flex", flexDirection: "column", alignItems: "center",
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.09)",
+                borderRadius: 12, padding: "9px 0", minWidth: 0, flex: 1,
               }}
             >
-              <span style={{ fontSize: 14, color: "#c4a8ff", fontWeight: 600 }}>
-                Stage {stageParam} · {stageData.title}
-              </span>
+              <span style={{ fontSize: 15, fontWeight: 800, color: "#e8d8ff" }}>{value}</span>
+              <span style={{ fontSize: 9, color: "#7a6a90", letterSpacing: 1, marginTop: 2 }}>{label}</span>
             </div>
-          </div>
-
-          {/* Spin Wheel win banner (optional) */}
-          {win && (
-            isRareWin ? (
-              <div
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                  width: "100%",
-                  background: "linear-gradient(90deg, rgba(255,60,172,0.28) 0%, rgba(255,200,80,0.28) 50%, rgba(255,60,172,0.28) 100%)",
-                  border: "2px solid rgba(255,210,120,0.65)",
-                  borderRadius: 18,
-                  padding: "16px 20px",
-                  boxShadow: "0 0 32px rgba(255,180,90,0.35)",
-                }}
-              >
-                <span style={{ fontSize: 28, display: "flex" }}>🎉</span>
-                <span style={{ fontSize: 24, fontWeight: 800, color: "#fff3da", letterSpacing: 0.3 }}>
-                  WON: {win}
-                </span>
-                <span style={{ fontSize: 28, display: "flex" }}>🎉</span>
-              </div>
-            ) : winStyle.tier === "highlight" ? (
-              <div
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                  width: "100%",
-                  background: winStyle.bg,
-                  border: `2px solid ${winStyle.border}`,
-                  borderRadius: 18,
-                  padding: "14px 20px",
-                  boxShadow: `0 0 26px ${winStyle.border}`,
-                }}
-              >
-                <span style={{ fontSize: 24, display: "flex" }}>{winStyle.emoji}</span>
-                <span style={{ fontSize: 22, fontWeight: 800, color: winStyle.text, letterSpacing: 0.3 }}>
-                  Won: {win}
-                </span>
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  background: winStyle.bg,
-                  border: `1px solid ${winStyle.border}`,
-                  borderRadius: 16,
-                  padding: XP_SCALE_STEPS[winStyle.scale]?.padding ?? XP_SCALE_STEPS[0].padding,
-                  alignSelf: "flex-start",
-                }}
-              >
-                <span style={{ fontSize: (XP_SCALE_STEPS[winStyle.scale]?.emojiSize ?? XP_SCALE_STEPS[0].emojiSize) + 4, display: "flex" }}>
-                  {winStyle.emoji}
-                </span>
-                <span
-                  style={{
-                    fontSize: (XP_SCALE_STEPS[winStyle.scale]?.fontSize ?? XP_SCALE_STEPS[0].fontSize) + 4,
-                    color: winStyle.text,
-                    fontWeight: 600,
-                  }}
-                >
-                  Won: {win}
-                </span>
-              </div>
-            )
-          )}
-
-          {/* Stats row (4 pills) */}
-          <div style={{ display: "flex", gap: 14, width: "100%" }}>
-            {stats.map(({ label, value }) => (
-              <div
-                key={label}
-                style={{
-                  display: "flex", flexDirection: "column", alignItems: "center",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.09)",
-                  borderRadius: 14, padding: "16px 0", minWidth: 0, flex: 1,
-                }}
-              >
-                <span style={{ fontSize: 24, fontWeight: 800, color: "#e8d8ff" }}>{value}</span>
-                <span style={{ fontSize: 12, color: "#7a6a90", letterSpacing: 1, marginTop: 4 }}>{label}</span>
-              </div>
-            ))}
-          </div>
+          ))}
         </div>
+
       </div>
     ),
-    { width: 1200, height: 800 },
+    { width: 480, height: 480 },
   );
 }
