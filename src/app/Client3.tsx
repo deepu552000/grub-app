@@ -1633,6 +1633,10 @@ export default function ClientPage() {
     const saveWallet = normalizeWallet(paidWallet, walletAddress);
     const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
 
+    if (!fid && saveWallet && saveWallet !== walletAddress) {
+      setWalletAddress(saveWallet);
+    }
+
     if (!saveIdentity) {
       throw new Error(`Payment succeeded but no identity was found to save it under. Contact support with tx: ${txHash}`);
     }
@@ -1673,16 +1677,6 @@ export default function ClientPage() {
 
     if (!saved) {
       throw new Error(`Payment confirmed but saving failed (${lastError}). Your streak may not survive a refresh — contact support with tx: ${txHash}`);
-    }
-
-    // Only NOW does the DB actually have this wallet's fresh state, so it's
-    // safe to update walletAddress — that flips identityParam and fires the
-    // DB-load effect, which will fetch this same fresh save instead of
-    // racing ahead of it and overwriting local `state` with a stale
-    // pre-checkin snapshot (was: this ran BEFORE the save, above the retry
-    // loop — see the race this fixes at the top of handleUnlockAccessory).
-    if (!fid && saveWallet && saveWallet !== walletAddress) {
-      setWalletAddress(saveWallet);
     }
 
     return saveIdentity;
@@ -1862,6 +1856,9 @@ export default function ClientPage() {
 
           const saveWallet = normalizeWallet(paidWallet, walletAddress);
           const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
+          if (!fid && saveWallet && saveWallet !== walletAddress) {
+            setWalletAddress(saveWallet);
+          }
           if (saveIdentity && computedState) {
             try {
               const res = await fetch("/api/pet", {
@@ -1878,13 +1875,6 @@ export default function ClientPage() {
               const data = await res.json().catch(() => ({}));
               if (res.ok && data.ok) {
                 console.log("[WHEEL] DB saved ✅ (rareaccessory fallback -> xp10)");
-                // Only sync walletAddress once the DB actually has this
-                // fresh state — see the setWalletAddress race doc in
-                // handleUnlockAccessory for why this can't run before the
-                // save completes.
-                if (!fid && saveWallet && saveWallet !== walletAddress) {
-                  setWalletAddress(saveWallet);
-                }
               } else {
                 console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
               }
@@ -1945,6 +1935,9 @@ export default function ClientPage() {
       // and independently verify the $0.01 payment server-side.
       const saveWallet = normalizeWallet(paidWallet, walletAddress);
       const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
+      if (!fid && saveWallet && saveWallet !== walletAddress) {
+        setWalletAddress(saveWallet);
+      }
       if (saveIdentity && computedState) {
         try {
           const res = await fetch("/api/pet", {
@@ -1961,12 +1954,6 @@ export default function ClientPage() {
           const data = await res.json().catch(() => ({}));
           if (res.ok && data.ok) {
             console.log("[WHEEL] DB saved ✅");
-            // Only sync walletAddress once the DB actually has this fresh
-            // state — see the setWalletAddress race doc in
-            // handleUnlockAccessory for why this can't run before the save.
-            if (!fid && saveWallet && saveWallet !== walletAddress) {
-              setWalletAddress(saveWallet);
-            }
           } else {
             console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
           }
@@ -2021,6 +2008,10 @@ export default function ClientPage() {
       setWheelAccessoryChoices(null);
       setWheelChoiceTx(null);
       return;
+    }
+
+    if (!fid && saveWallet && saveWallet !== walletAddress) {
+      setWalletAddress(saveWallet);
     }
 
     setWheelChoicePending(true);
@@ -2101,14 +2092,6 @@ export default function ClientPage() {
       );
       setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}! (save pending — see note below)`);
       return;
-    }
-
-    // Only NOW does the DB actually have this wallet's fresh state — see
-    // the setWalletAddress race doc in handleUnlockAccessory for why this
-    // can't run before the save completes (it used to, right above the
-    // isUnlocked-guard check, before wheelChoicePending was even set).
-    if (!fid && saveWallet && saveWallet !== walletAddress) {
-      setWalletAddress(saveWallet);
     }
 
     logTransaction({
@@ -2460,6 +2443,12 @@ export default function ClientPage() {
       const saveWallet = normalizeWallet(paidWallet, walletAddress);
       const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
 
+      // Also sync React state so subsequent renders (debounced autosave,
+      // identityParam-based DB load, etc.) know about this wallet too.
+      if (!fid && saveWallet && saveWallet !== walletAddress) {
+        setWalletAddress(saveWallet);
+      }
+
       if (!saveIdentity) {
         console.warn("[UNLOCK] no identity! DB save skipped");
         throw new Error(
@@ -2527,21 +2516,6 @@ export default function ClientPage() {
           `Payment confirmed but saving failed (${lastError}). ` +
           `Your accessory may disappear on refresh — if so, contact support with tx: ${txHash}`,
         );
-      }
-
-      // Only NOW does the DB actually have this wallet's fresh state
-      // (including this unlock), so it's safe to sync React state to it.
-      // Updating walletAddress flips identityParam, which fires the
-      // DB-load effect — that effect will fetch this same fresh save
-      // instead of racing ahead of it. Previously this ran BEFORE the save
-      // (right after computing saveWallet, above), which meant the reload
-      // could land in the gap between the optimistic local unlock and the
-      // POST actually persisting it, overwriting `state` with the
-      // pre-purchase snapshot and making the newly-bought accessory look
-      // locked in the Closet even though the DB (and any dashboard reading
-      // it) already had it unlocked correctly.
-      if (!fid && saveWallet && saveWallet !== walletAddress) {
-        setWalletAddress(saveWallet);
       }
 
       // Log confirmed transaction — fire and forget. Use saveIdentity (the
