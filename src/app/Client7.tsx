@@ -3384,17 +3384,13 @@ export default function ClientPage() {
                   const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
-                  // A day only counts as "missed" if it falls AFTER the
-                  // account's actual earliest known check-in. Day-keys are
-                  // "YYYY-MM-DD" strings, so lexicographic min == earliest
-                  // date. Without this, gating on e.g. "has checked in at
-                  // least once" still breaks the moment a brand-new wallet
-                  // does its very first check-in: totalCheckIns flips to 1,
-                  // but the 6 days before that first-ever check-in would
-                  // still show red, as if they'd been neglected, when the
-                  // account simply didn't exist yet on those days.
-                  const earliestHistoryDay = history.length > 0 ? history.slice().sort()[0] : null;
-                  const missed = earliestHistoryDay !== null && dayKey >= earliestHistoryDay && dayKey < todayKey() && !hit;
+                  // A day only counts as "missed" if the account had
+                  // already checked in at least once before — otherwise
+                  // every day before a brand-new wallet's first-ever visit
+                  // (totalCheckIns === 0) would show up red, as if it had
+                  // been neglected, when the account simply didn't exist
+                  // yet on those days.
+                  const missed = (state.totalCheckIns ?? 0) > 0 && dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 13, height: 13, borderRadius: "50%",
@@ -3461,9 +3457,8 @@ export default function ClientPage() {
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
                   // See the gate view above — don't mark days before the
-                  // account's actual earliest known check-in as "missed".
-                  const earliestHistoryDay = history.length > 0 ? history.slice().sort()[0] : null;
-                  const missed = earliestHistoryDay !== null && dayKey >= earliestHistoryDay && dayKey < todayKey() && !hit;
+                  // account's first-ever check-in as "missed".
+                  const missed = (state.totalCheckIns ?? 0) > 0 && dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 14, height: 14, borderRadius: "50%",
