@@ -68,7 +68,7 @@ async function getFcProviderWithTimeout(ms = 1200) {
 }
 
 
-import { ACCESSORIES, getAccessory, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage, groupEquippedByLayer, type Accessory, type AccessorySlot } from "@/lib/accessories";
+import { ACCESSORIES, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage, groupEquippedByLayer, type Accessory, type AccessorySlot } from "@/lib/accessories";
 import {
   type AccessoryState,
   createEmptyAccessoryState,
@@ -112,10 +112,7 @@ type PetState = {
   lastAccessoryXpAt: number; // timestamp of last equip-XP grant/check — a rolling
                               // ~24h timer, paused (not advanced) while mood is
                               // hungry/feral/sleepy, independent of check-in
-  freeCheckinCredits: number; // banked from Spin Wheel wins — waives the next
-                               // paid ($0.01) check-in, one per credit
-  streakSaveCredits: number;  // banked from Spin Wheel wins — auto-consumed to
-                               // protect checkinStreak the next time a day is missed
+
 };
 
 type FloatingNumber = {
@@ -400,8 +397,6 @@ const defaultState: PetState = {
   lastEventDay: "",
   accessories: createEmptyAccessoryState(),
   lastAccessoryXpAt: Date.now(),
-  freeCheckinCredits: 0,
-  streakSaveCredits: 0,
 };
 
 // Equip XP is checked on a rolling window, not a calendar day — someone who
@@ -574,90 +569,6 @@ function loadStateFromSaved(parsed: PetState): PetState {
     xp: (parsed.xp ?? 0) + accessoryXpTick.xpAwarded,
     lastAccessoryXpAt: accessoryXpTick.nextAt,
   };
-}
-
-// ── Spin Wheel config ────────────────────────────────────────────────────
-// $0.01 per spin. Pure-XP rewards plus two check-in perks (no Glimmer, no
-// "nothing" slot, no exclusive cosmetic — by design). Weights are integers
-// that sum to 100 and double as percentages.
-type WheelRewardType = "xp" | "freeCheckin" | "streakSave" | "accessoryChoice";
-type WheelSegment = {
-  id: string;
-  label: string;
-  shortLabel: string; // fits inside the wedge
-  color: string;
-  type: WheelRewardType;
-  xp?: number;
-  weight: number; // out of 100
-};
-
-// "rareaccessory" (3%) was carved out of the five XP segments only, roughly
-// proportional to their old weights (30/25/20/8/7 -> 29/24/19/8/7 — the three
-// biggest slices each gave up exactly 1 point, the two smallest untouched).
-// freeCheckin/streakSave weights are unchanged. Landing on it lets the player
-// pick any not-yet-unlocked accessory for their cat's CURRENT stage — see
-// doWheelSpin's accessoryChoice branch below for the picker flow, and
-// route.ts's WHEEL_REWARDS["rareaccessory"] for server-side handling.
-const WHEEL_SEGMENTS: WheelSegment[] = [
-  { id: "xp1", label: "+1 XP", shortLabel: "+1", color: "#F5B942", type: "xp", xp: 1, weight: 29 },
-  { id: "xp2", label: "+2 XP", shortLabel: "+2", color: "#F2994A", type: "xp", xp: 2, weight: 24 },
-  { id: "xp3", label: "+3 XP", shortLabel: "+3", color: "#EB5757", type: "xp", xp: 3, weight: 19 },
-  { id: "xp5", label: "+5 XP", shortLabel: "+5", color: "#BB6BD9", type: "xp", xp: 5, weight: 8 },
-  { id: "xp10", label: "+10 XP", shortLabel: "+10", color: "#EE4266", type: "xp", xp: 10, weight: 7 },
-  { id: "freecheckin", label: "Free Check-in", shortLabel: "Free\nCheck-in", color: "#2EC4F1", type: "freeCheckin", weight: 5 },
-  { id: "streaksave", label: "Streak Save", shortLabel: "Streak\nSave", color: "#27AE60", type: "streakSave", weight: 5 },
-  { id: "rareaccessory", label: "Rare Accessory", shortLabel: "Rare\nItem", color: "#FF3CAC", type: "accessoryChoice", weight: 3 },
-];
-
-// Sanity check in dev — weights must sum to 100.
-if (process.env.NODE_ENV !== "production") {
-  const total = WHEEL_SEGMENTS.reduce((sum, s) => sum + s.weight, 0);
-  if (total !== 100) {
-    console.warn(`[WHEEL] segment weights sum to ${total}, expected 100`);
-  }
-}
-
-// Weighted random pick — returns the chosen segment and its index (index is
-// needed to compute where the wheel should visually stop).
-function pickWheelSegment(): { segment: WheelSegment; index: number } {
-  const total = WHEEL_SEGMENTS.reduce((sum, s) => sum + s.weight, 0);
-  let roll = Math.random() * total;
-  for (let i = 0; i < WHEEL_SEGMENTS.length; i++) {
-    roll -= WHEEL_SEGMENTS[i].weight;
-    if (roll <= 0) return { segment: WHEEL_SEGMENTS[i], index: i };
-  }
-  // Floating point fallback — should be unreachable.
-  return { segment: WHEEL_SEGMENTS[WHEEL_SEGMENTS.length - 1], index: WHEEL_SEGMENTS.length - 1 };
-}
-
-// Builds an SVG wedge path for segment `index` of `total`, centered at
-// (cx, cy) with radius r. 0deg is straight up (12 o'clock) to match the
-// fixed pointer, going clockwise.
-function wheelWedgePath(index: number, total: number, cx: number, cy: number, r: number): string {
-  const segAngle = 360 / total;
-  const startAngle = index * segAngle - 90; // -90 shifts 0deg to 12 o'clock
-  const endAngle = startAngle + segAngle;
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const x1 = cx + r * Math.cos(toRad(startAngle));
-  const y1 = cy + r * Math.sin(toRad(startAngle));
-  const x2 = cx + r * Math.cos(toRad(endAngle));
-  const y2 = cy + r * Math.sin(toRad(endAngle));
-  const largeArc = segAngle > 180 ? 1 : 0;
-  return `M ${cx} ${cy} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${largeArc} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`;
-}
-
-// Lightens (positive amt) or darkens (negative amt) a hex color by `amt` per
-// channel (0-255 scale). Used to auto-derive a gem-style radial gradient
-// (light highlight → base color → dark shadow) from each wheel segment's
-// single base color, so new/changed segment colors always render as a
-// polished gem without hand-authoring a gradient per color.
-function shadeColor(hex: string, amt: number): string {
-  const num = parseInt(hex.replace("#", ""), 16);
-  const clamp = (v: number) => Math.min(255, Math.max(0, v));
-  const r = clamp(((num >> 16) & 0xff) + amt);
-  const g = clamp(((num >> 8) & 0xff) + amt);
-  const b = clamp((num & 0xff) + amt);
-  return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
 
 let floatId = 0;
@@ -888,24 +799,6 @@ export default function ClientPage() {
   const [closetOpen, setClosetOpen] = useState(false);
   const [referralOpen, setReferralOpen] = useState(false);
 
-  // ── Spin Wheel state ───────────────────────────────────────────────────
-  const [wheelOpen, setWheelOpen] = useState(false);
-  const wheelSectionRef = useRef<HTMLElement>(null);
-  const [wheelSpinning, setWheelSpinning] = useState(false);
-  const [wheelRotation, setWheelRotation] = useState(0); // cumulative degrees, keeps growing spin to spin
-  const [wheelResultLabel, setWheelResultLabel] = useState<string | null>(null);
-  const [wheelError, setWheelError] = useState<string | null>(null);
-
-  // Rare Accessory picker — populated only when a spin lands on the
-  // "rareaccessory" segment AND there's at least one locked accessory left
-  // for the cat's current stage. Payment for the spin has already gone
-  // through by the time this is set; the payment info is held here so the
-  // pick can be finalized (and persisted) once the player chooses an item.
-  const [wheelAccessoryChoices, setWheelAccessoryChoices] = useState<Accessory[] | null>(null);
-  const [wheelChoiceTx, setWheelChoiceTx] = useState<{ txHash: string; wallet: string | null } | null>(null);
-  const [wheelChoicePending, setWheelChoicePending] = useState(false);
-  const [wheelChoiceError, setWheelChoiceError] = useState<string | null>(null);
-
   // ── Referral Festival Banner ──────────────────────────────────────────────
   // Today (29 Jun): teaser. 30 Jun–2 Jul: live festival. After: hidden.
   // Session-only dismiss — banner reappears every time they open the app during festival
@@ -935,17 +828,6 @@ export default function ClientPage() {
     }));
     setFestivalBubbles(newBubbles);
     setTimeout(() => setFestivalBubbles([]), 2200);
-  }
-
-  // ── Spin Wheel Promo Banner ────────────────────────────────────────────
-  // Announces the new Spin Wheel feature. Session-only dismiss, same pattern
-  // as the accessory XP banner below — reappears every time the app is
-  // reopened until the person closes it with the ✕ for that session.
-  const [wheelBannerDismissed, setWheelBannerDismissed] = useState(false);
-  const showWheelBanner = !wheelBannerDismissed;
-
-  function dismissWheelBanner() {
-    setWheelBannerDismissed(true);
   }
 
   // ── Closet / Accessory XP Banner ──────────────────────────────────────────
@@ -1080,7 +962,6 @@ export default function ClientPage() {
   // ── Check-in payment state ────────────────────────────────────────────────
   const FREE_CHECKIN_DAYS = 5;
   const CHECKIN_USD = 0.01; // $0.01 per check-in after the free period
-  const WHEEL_USD = 0.01; // $0.01 per Spin Wheel spin
   const RECIPIENT = "0xCF8A44059652DB5Af8B4CB62938c5DC6916eB082" as const;
 
   const totalCheckIns = state.totalCheckIns ?? 0;
@@ -1107,7 +988,7 @@ export default function ClientPage() {
   // saves under the wrong (null) identity and the unlock/checkin is lost on
   // refresh — this was the root cause of the "accessory reverts to locked
   // after refresh" bug.
-  async function sendUsdcPayment(usdAmount: number, purpose: "checkin" | "accessory" | "wheel", accessoryId?: string): Promise<{ txHash: string; walletAddress: string | null }> {
+  async function sendUsdcPayment(usdAmount: number, purpose: "checkin" | "accessory", accessoryId?: string): Promise<{ txHash: string; walletAddress: string | null }> {
     console.log("[PAYMENT] start, amount:", usdAmount, "purpose:", purpose);
 
     // Build ERC-20 transfer(address,uint256) calldata — shared by both paths.
@@ -1384,23 +1265,13 @@ export default function ClientPage() {
   // only ever logged to the console while the UI already showed success.
   function applyCheckIn(): PetState {
     let computed: PetState = state;
-    let usedStreakSave = false;
     setState((current) => {
       const isNewDay = current.lastCheckInDay !== todayKey();
       if (!isNewDay) { computed = current; return current; }
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const yKey = yesterday.toISOString().slice(0, 10);
-      const rawConsecutive = current.lastCheckInDay === yKey;
-      // Streak Save (won from the Spin Wheel): if there's a gap — a day (or
-      // more) was missed — but a Streak Save credit is banked, auto-consume
-      // one credit and treat today as if it were consecutive, so the streak
-      // survives the miss. Only applies when there's an actual prior
-      // check-in history (current.lastCheckInDay !== "") — a brand new
-      // player has nothing to "save".
-      const hasGap = current.lastCheckInDay !== "" && !rawConsecutive;
-      const useStreakSave = hasGap && (current.streakSaveCredits ?? 0) > 0;
-      const consecutive = rawConsecutive || useStreakSave;
+      const consecutive = current.lastCheckInDay === yKey;
       const newCheckinStreak = consecutive ? (current.checkinStreak ?? 0) + 1 : 1;
       const streakBonus = newCheckinStreak % 7 === 0 ? 5 : 0;
       const history = [...(current.checkinHistory ?? []), todayKey()].slice(-7);
@@ -1413,12 +1284,8 @@ export default function ClientPage() {
         checkinHistory: history,
         totalCheckIns: (current.totalCheckIns ?? 0) + 1,
         actionsToday: { feed: 0, play: 0, groom: 0, nap: 0 },
-        streakSaveCredits: useStreakSave
-          ? Math.max(0, (current.streakSaveCredits ?? 0) - 1)
-          : (current.streakSaveCredits ?? 0),
       };
       computed = newState;
-      usedStreakSave = useStreakSave;
       return newState;
     });
     // Was `(state.checkinStreak + 1) % 7 === 0`, which assumed today was
@@ -1429,8 +1296,6 @@ export default function ClientPage() {
     const isSeventhDay = computed.checkinStreak > 0 && computed.checkinStreak % 7 === 0;
     setLastAction(isSeventhDay
       ? "7-day streak! +5 XP bonus dropped. Keep it going!"
-      : usedStreakSave
-      ? "🛡️ Streak Save used — your streak survived the missed day!"
       : "Day started! Care for Grub to earn XP and keep your streak.");
     playSfx("checkin");
 
@@ -1520,18 +1385,6 @@ export default function ClientPage() {
       return;
     }
 
-    // Free check-in credit won from the Spin Wheel — no payment needed.
-    // Consumed before the paid path below.
-    if ((state.freeCheckinCredits ?? 0) > 0) {
-      setState((prev) => ({
-        ...prev,
-        freeCheckinCredits: Math.max(0, (prev.freeCheckinCredits ?? 0) - 1),
-      }));
-      applyCheckIn();
-      setLastAction("🎡 Free check-in from your Spin Wheel win! Day started.");
-      return;
-    }
-
     // Paid check-in — exact $0.01 USDC on Base via contract call
     setCheckinPending(true);
     try {
@@ -1569,337 +1422,6 @@ export default function ClientPage() {
       setCheckinPending(false);
     }
   }
-
-  // ── Spin Wheel ─────────────────────────────────────────────────────────
-  // Pays $0.01, then rolls a weighted reward and spins the wheel to land on
-  // it. Payment happens FIRST (same order as check-in/accessory unlock) so
-  // nothing is ever paid for without a confirmed reward.
-  async function doWheelSpin() {
-    if (wheelSpinning) return;
-    setWheelError(null);
-    setWheelResultLabel(null);
-    setWheelChoiceError(null);
-
-    let txHash: string | null = null;
-    let paidWallet: string | null = null;
-    try {
-      const paymentResult = await sendUsdcPayment(WHEEL_USD, "wheel");
-      txHash = paymentResult.txHash;
-      paidWallet = paymentResult.walletAddress;
-      if (!txHash) throw new Error("Payment returned no transaction hash. Spin aborted.");
-    } catch (err: any) {
-      const msg: string = err?.message ?? String(err);
-      if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
-        setWheelError("Cancelled. Tap Spin to try again.");
-      } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
-        setWheelError("No wallet connected. Open in Farcaster to pay.");
-      } else {
-        setWheelError(`Payment failed: ${msg.slice(0, 80)}`);
-      }
-      return;
-    }
-
-    // Payment confirmed on-chain — roll the reward and animate the wheel.
-    setWheelSpinning(true);
-    const { segment, index } = pickWheelSegment();
-    const segAngle = 360 / WHEEL_SEGMENTS.length;
-    // Angle (from 12 o'clock, clockwise) of this segment's center.
-    const segCenterAngle = index * segAngle + segAngle / 2;
-    // The fixed pointer sits at 12 o'clock (0deg). To bring the segment
-    // center under the pointer, the wheel must rotate by -segCenterAngle
-    // (plus full spins for drama). Keep spinning in the same direction and
-    // always further than before so it never looks like it's rewinding.
-    const extraSpins = 5 + Math.floor(Math.random() * 3); // 5–7 full spins
-    const currentNormalized = ((wheelRotation % 360) + 360) % 360;
-    const targetNormalized = ((-segCenterAngle % 360) + 360) % 360;
-    let delta = targetNormalized - currentNormalized;
-    if (delta <= 0) delta += 360;
-    const newRotation = wheelRotation + extraSpins * 360 + delta;
-    setWheelRotation(newRotation);
-
-    const SPIN_DURATION_MS = 4200;
-    setTimeout(async () => {
-      // Rare Accessory: don't apply/persist anything yet — hand off to the
-      // picker (below) so the player can choose WHICH accessory they get.
-      // The payment (txHash/paidWallet) is already confirmed at this point,
-      // so it's simply held until they pick. If they've already unlocked
-      // everything available for their current stage, there's nothing left
-      // to give — fall back to a flat +10 XP consolation prize instead of
-      // showing an empty picker (reported to the server as the ordinary
-      // "xp10" reward, same as landing on that wedge directly).
-      if (segment.type === "accessoryChoice") {
-        const lockedForStage = getAccessoriesForStage(stageIndex).filter(
-          (a) => !isUnlocked(state.accessories, a.id)
-        );
-
-        if (lockedForStage.length === 0) {
-          const consolationXp = 10;
-          let computedState: PetState | null = null;
-          setState((prev) => {
-            const newState: PetState = { ...prev, xp: prev.xp + consolationXp };
-            computedState = newState;
-            try {
-              window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-            } catch (e) {
-              console.error("[WHEEL] localStorage failed", e);
-            }
-            return newState;
-          });
-
-          setWheelResultLabel(`Rare Accessory (already own everything!) — +${consolationXp} XP instead`);
-          setLastAction(`🎡 Spin Wheel: already unlocked every Stage ${stageIndex} item — +${consolationXp} XP instead!`);
-          playSfx("checkin");
-          setWheelSpinning(false);
-
-          const saveWallet = paidWallet ?? walletAddress;
-          const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-          if (!fid && saveWallet && saveWallet !== walletAddress) {
-            setWalletAddress(saveWallet);
-          }
-          if (saveIdentity && computedState) {
-            try {
-              const res = await fetch("/api/pet", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  ...saveIdentity,
-                  state: computedState,
-                  action: "wheel_spin",
-                  wheelReward: "xp10",
-                  txHash: txHash!,
-                }),
-              });
-              const data = await res.json().catch(() => ({}));
-              if (res.ok && data.ok) {
-                console.log("[WHEEL] DB saved ✅ (rareaccessory fallback -> xp10)");
-              } else {
-                console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
-              }
-            } catch (e) {
-              console.error("[WHEEL] DB save network error", e);
-            }
-            logTransaction({
-              type: "wheel_spin",
-              txHash: txHash!,
-              amountUsd: WHEEL_USD,
-              wheelReward: `${segment.label} (fallback +${consolationXp} XP)`,
-              walletAddress: saveWallet ?? undefined,
-            }, saveIdentity);
-          }
-          return;
-        }
-
-        // Items available — open the picker and wait for the player's pick.
-        // confirmWheelAccessoryChoice() does the actual state update + save.
-        setWheelChoiceError(null);
-        setWheelAccessoryChoices(lockedForStage);
-        setWheelChoiceTx({ txHash: txHash!, wallet: paidWallet ?? walletAddress ?? null });
-        setWheelResultLabel(`🌟 Rare Accessory! Pick your Stage ${stageIndex} item below.`);
-        setLastAction("🎡 Spin Wheel: Rare Accessory! Choose your item.");
-        playSfx("unlock");
-        setWheelSpinning(false);
-        return;
-      }
-
-      // Apply the reward to local state (and localStorage) immediately.
-      let computedState: PetState | null = null;
-      setState((prev) => {
-        const newState: PetState =
-          segment.type === "xp"
-            ? { ...prev, xp: prev.xp + (segment.xp ?? 0) }
-            : segment.type === "freeCheckin"
-            ? { ...prev, freeCheckinCredits: (prev.freeCheckinCredits ?? 0) + 1 }
-            : { ...prev, streakSaveCredits: (prev.streakSaveCredits ?? 0) + 1 };
-        computedState = newState;
-        try {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-        } catch (e) {
-          console.error("[WHEEL] localStorage failed", e);
-        }
-        return newState;
-      });
-
-      setWheelResultLabel(`You won: ${segment.label}!`);
-      setLastAction(`🎡 Spin Wheel: ${segment.label}!`);
-      playSfx(segment.type === "xp" ? "checkin" : "unlock");
-      setWheelSpinning(false);
-
-      // Persist to the server. Reuses the same fid-or-wallet identity
-      // resolution as check-in/accessory unlock. Non-blocking beyond this —
-      // the reward is already applied locally either way.
-      // NOTE: this expects a corresponding update to the /api/pet route to
-      // accept action: "wheel_spin" (mirroring "checkin"/"unlock_accessory")
-      // and independently verify the $0.01 payment server-side.
-      const saveWallet = paidWallet ?? walletAddress;
-      const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-      if (!fid && saveWallet && saveWallet !== walletAddress) {
-        setWalletAddress(saveWallet);
-      }
-      if (saveIdentity && computedState) {
-        try {
-          const res = await fetch("/api/pet", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ...saveIdentity,
-              state: computedState,
-              action: "wheel_spin",
-              wheelReward: segment.id,
-              txHash: txHash!,
-            }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ok) {
-            console.log("[WHEEL] DB saved ✅");
-          } else {
-            console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
-          }
-        } catch (e) {
-          console.error("[WHEEL] DB save network error", e);
-        }
-        logTransaction({
-          type: "wheel_spin",
-          txHash: txHash!,
-          amountUsd: WHEEL_USD,
-          wheelReward: segment.label,
-          walletAddress: saveWallet ?? undefined,
-        }, saveIdentity);
-      }
-    }, SPIN_DURATION_MS);
-  }
-
-  // ── Rare Accessory picker — confirm choice ────────────────────────────────
-  // Called when the player taps an item in the picker after landing on the
-  // "Rare Accessory" wheel segment. Payment for the spin was already
-  // confirmed in doWheelSpin (txHash held in wheelChoiceTx) — this just
-  // applies the unlock (same one-time unlock-XP reward as a normal paid
-  // unlock, via getUnlockXp) and persists it under the "wheel_spin" action
-  // with wheelReward "rareaccessory" + the chosen accessoryId, mirroring how
-  // unlock_accessory reports accessoryId today.
-  async function confirmWheelAccessoryChoice(accessoryId: string) {
-    if (wheelChoicePending || !wheelChoiceTx) return;
-    if (isUnlocked(state.accessories, accessoryId)) {
-      // Shouldn't happen (picker only lists locked items) but guard anyway.
-      setWheelChoiceError("Already unlocked — pick a different item.");
-      return;
-    }
-
-    setWheelChoicePending(true);
-    setWheelChoiceError(null);
-
-    const unlockXp = getUnlockXp(accessoryId);
-    let computedState: PetState | null = null;
-    setState((prev) => {
-      const newState: PetState = {
-        ...prev,
-        xp: prev.xp + unlockXp,
-        accessories: {
-          ...prev.accessories,
-          unlocked: [...prev.accessories.unlocked, accessoryId],
-        },
-      };
-      computedState = newState;
-      try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-      } catch (e) {
-        console.error("[WHEEL] localStorage failed", e);
-      }
-      return newState;
-    });
-
-    const { txHash, wallet } = wheelChoiceTx;
-    const saveWallet = wallet ?? walletAddress;
-    const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-    if (!fid && saveWallet && saveWallet !== walletAddress) {
-      setWalletAddress(saveWallet);
-    }
-
-    const accessory = getAccessory(accessoryId);
-
-    if (!saveIdentity || !computedState) {
-      // No identity to save under — same edge case doUnlockAccessory guards
-      // against. The pick is applied locally (localStorage) for this
-      // session; surface this plainly rather than silently losing it.
-      setWheelChoicePending(false);
-      setWheelChoiceError(
-        `Payment confirmed but no account was found to save it under. Contact support with tx: ${txHash}`
-      );
-      setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}!`);
-      setWheelAccessoryChoices(null);
-      setWheelChoiceTx(null);
-      return;
-    }
-
-    // Retry the save up to 3 times (same pattern as handleUnlockAccessory) —
-    // the pick is already applied to local state above, so re-tapping the
-    // item would be blocked by the isUnlocked guard at the top of this
-    // function. Retrying here instead keeps that guard correct.
-    let saved = false;
-    let lastError = "";
-    for (let attempt = 1; attempt <= 3 && !saved; attempt++) {
-      try {
-        const res = await fetch("/api/pet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...saveIdentity,
-            state: computedState,
-            action: "wheel_spin",
-            wheelReward: "rareaccessory",
-            accessoryId,
-            txHash,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.ok) {
-          saved = true;
-          console.log(`[WHEEL] DB saved ✅ (rare accessory, attempt ${attempt})`);
-        } else if (attempt > 1 && String(data?.error ?? "").includes("already been used")) {
-          // Server only marks a txHash used AFTER a successful save, so
-          // hitting this on a retry means an earlier attempt actually
-          // succeeded and we just never saw the response.
-          saved = true;
-          console.log(`[WHEEL] DB already saved by an earlier attempt ✅ (attempt ${attempt})`);
-        } else {
-          lastError = data?.error ?? `HTTP ${res.status}`;
-          console.error(`[WHEEL] DB save rejected (attempt ${attempt}):`, lastError);
-          if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
-        }
-      } catch (e: any) {
-        lastError = e?.message ?? String(e);
-        console.error(`[WHEEL] DB save network error (attempt ${attempt}):`, lastError);
-        if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
-      }
-    }
-
-    setWheelChoicePending(false);
-    setWheelAccessoryChoices(null);
-    setWheelChoiceTx(null);
-
-    if (!saved) {
-      // Payment confirmed on-chain but persistence never confirmed after 3
-      // tries. Don't claim success — surface the txHash plainly, same as
-      // handleUnlockAccessory's failure path.
-      setWheelChoiceError(
-        `Payment confirmed but saving failed (${lastError}). Your item may disappear on refresh — if so, contact support with tx: ${txHash}`
-      );
-      setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}! (save pending — see note below)`);
-      return;
-    }
-
-    logTransaction({
-      type: "wheel_spin",
-      txHash,
-      amountUsd: WHEEL_USD,
-      wheelReward: `Rare Accessory: ${accessory?.name ?? accessoryId}`,
-      walletAddress: saveWallet ?? undefined,
-    }, saveIdentity);
-
-    setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}!`);
-    setLastAction(`🎡 Spin Wheel: unlocked ${accessory?.name ?? accessoryId}!`);
-    playSfx("unlock");
-  }
-
   const line = useMemo(() => {
     const stageDialogue = dialogue[stageIndex] ?? dialogue[1];
     const pool = stageDialogue[mood];
@@ -2136,13 +1658,12 @@ export default function ClientPage() {
   // dropped every wallet-only purchase from the txn log (unlock/checkin still
   // succeeded and persisted to KV — only this log write was skipped).
   function logTransaction(entry: {
-    type: "accessory_unlock" | "checkin" | "wheel_spin";
+    type: "accessory_unlock" | "checkin";
     txHash: string;
     amountUsd: number;
     accessoryId?: string;
     accessoryName?: string;
     walletAddress?: string;
-    wheelReward?: string;
   }, identity: { fid?: string | number | null; wallet?: string | null }) {
     const logFid = identity.fid ?? (identity.wallet ? `wallet:${identity.wallet}` : null);
     if (!logFid) return;
@@ -2560,86 +2081,6 @@ export default function ClientPage() {
           </div>
         )}
 
-        {/* ── SPIN WHEEL PROMO BANNER ── */}
-        {showWheelBanner && (
-          <div
-            onClick={() => {
-              setWheelOpen(true);
-              // Give the collapsible a tick to expand, then scroll it into view —
-              // without this the section opens off-screen and looks like nothing happened.
-              requestAnimationFrame(() => {
-                wheelSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-              });
-            }}
-            style={{
-              position: "relative",
-              margin: "8px 8px 0",
-              padding: "12px 14px",
-              background: "#fdf6e3",
-              border: "1.5px dashed #d4a017",
-              borderRadius: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              cursor: "pointer",
-              overflow: "hidden",
-              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
-            }}
-          >
-            <span
-              style={{
-                position: "absolute",
-                top: 7,
-                right: -26,
-                transform: "rotate(35deg)",
-                background: "#e63946",
-                color: "#fff",
-                fontSize: "0.6rem",
-                fontWeight: 800,
-                padding: "2px 28px",
-                letterSpacing: 0.5,
-              }}
-            >
-              NEW
-            </span>
-            <span
-              style={{
-                fontSize: "1.3rem",
-                lineHeight: 1,
-                flexShrink: 0,
-                width: 34,
-                height: 34,
-                borderRadius: "50%",
-                background: "#7c3aed",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              🎡
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#49332d", marginBottom: 1 }}>
-                Spin Wheel is live!
-              </div>
-              <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
-                Just $0.01 a spin — win XP, a free check-in, or a streak save.
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); dismissWheelBanner(); }}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
-                flexShrink: 0,
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
         {/* ── CLOSET / ACCESSORY XP BANNER ── */}
         {showAccessoryBanner && (
           <div
@@ -2914,11 +2355,7 @@ export default function ClientPage() {
           {!checkedInToday && (
             <div className="checkin-gate">
               {missedYesterday && (
-                (state.streakSaveCredits ?? 0) > 0 ? (
-                  <p style={{ color: "#4caf7d", fontSize: "0.78rem" }}>🛡️ You missed yesterday — a Streak Save will protect you</p>
-                ) : (
-                  <p style={{ color: "#b5544f", fontSize: "0.78rem" }}>⚠️ You missed yesterday — streak reset</p>
-                )
+                <p style={{ color: "#b5544f", fontSize: "0.78rem" }}>⚠️ You missed yesterday — streak reset</p>
               )}
               <p>Check in to unlock today's care actions</p>
               <div style={{ display: "flex", gap: 7, justifyContent: "center", alignItems: "center" }}>
@@ -2963,8 +2400,6 @@ export default function ClientPage() {
                   ? freeCheckInsLeft === 1
                     ? "✦ Check In · Last Free One!"
                     : `✦ Check In · Free (${freeCheckInsLeft} left)`
-                  : (state.freeCheckinCredits ?? 0) > 0
-                  ? "✦ Check In · Free (Wheel win!)"
                   : "✦ Check In · $0.01"}
               </button>
               {checkinError && (
@@ -2977,8 +2412,6 @@ export default function ClientPage() {
                   ? freeCheckInsLeft === 1
                     ? `Last free check-in · $0.01/day starts tomorrow`
                     : `First 5 days free · then $0.01/day on Base`
-                  : (state.freeCheckinCredits ?? 0) > 0
-                  ? `Spin Wheel credit applied · ${(state.freeCheckinCredits ?? 0) - 1} more banked`
                   : "Wallet payment on Base"}
               </small>
             </div>
@@ -3041,333 +2474,6 @@ export default function ClientPage() {
           >
             🐱 Share My Grub on Farcaster
           </button>
-        </section>
-
-        {/* ── SPIN WHEEL ── */}
-        <section ref={wheelSectionRef} className="stats-collapsible" style={{ marginTop: 8 }}>
-          <button
-            type="button"
-            className="stats-toggle"
-            onClick={() => setWheelOpen((o) => !o)}
-          >
-            <span>🎡 Spin Wheel · $0.01</span>
-            <span className="stats-chevron">{wheelOpen ? "▲" : "▼"}</span>
-          </button>
-
-          {wheelOpen && (
-            <div
-              className="stats-body"
-              style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "14px 10px" }}
-            >
-              {((state.freeCheckinCredits ?? 0) > 0 || (state.streakSaveCredits ?? 0) > 0) && (
-                <div style={{ display: "flex", gap: 10, fontSize: 12, fontWeight: 700, color: "#49332d", flexWrap: "wrap", justifyContent: "center" }}>
-                  {(state.freeCheckinCredits ?? 0) > 0 && (
-                    <span>🎟️ {state.freeCheckinCredits} free check-in{(state.freeCheckinCredits ?? 0) === 1 ? "" : "s"} banked</span>
-                  )}
-                  {(state.streakSaveCredits ?? 0) > 0 && (
-                    <span>🛡️ {state.streakSaveCredits} streak save{(state.streakSaveCredits ?? 0) === 1 ? "" : "s"} banked</span>
-                  )}
-                </div>
-              )}
-
-              <div style={{ position: "relative", width: 236, height: 236 }}>
-                {/* Fixed pointer at 12 o'clock — ruby gem teardrop */}
-                <svg
-                  width={30}
-                  height={40}
-                  viewBox="0 0 30 40"
-                  style={{
-                    position: "absolute",
-                    top: -10,
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    zIndex: 3,
-                    filter: "drop-shadow(0 3px 3px rgba(0,0,0,0.45))",
-                  }}
-                >
-                  <defs>
-                    <linearGradient id="rubyPointerGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#ff5c73" />
-                      <stop offset="50%" stopColor="#d61f3c" />
-                      <stop offset="100%" stopColor="#7a0c1f" />
-                    </linearGradient>
-                  </defs>
-                  <path
-                    d="M15 6 C7 6 3 13 3 19 C3 26 9 31 15 36 C21 31 27 26 27 19 C27 13 23 6 15 6 Z"
-                    fill="url(#rubyPointerGrad)"
-                    stroke="#4a0714"
-                    strokeWidth={1.5}
-                  />
-                  <ellipse cx="11" cy="15" rx="3.2" ry="5" fill="#ffffff" opacity={0.35} />
-                  <circle cx="15" cy="8" r="4.5" fill="url(#rubyPointerGrad)" stroke="#4a0714" strokeWidth={1.2} />
-                </svg>
-
-                <svg viewBox="0 0 236 236" width={236} height={236} style={{ display: "block" }}>
-                  <defs>
-                    <radialGradient id="rimOuter" cx="35%" cy="25%" r="85%">
-                      <stop offset="0%" stopColor="#fff2c4" />
-                      <stop offset="30%" stopColor="#e8bd52" />
-                      <stop offset="60%" stopColor="#a8781f" />
-                      <stop offset="85%" stopColor="#5c3d0d" />
-                      <stop offset="100%" stopColor="#2e1e06" />
-                    </radialGradient>
-                    <radialGradient id="rimInner" cx="35%" cy="25%" r="85%">
-                      <stop offset="0%" stopColor="#3a2608" />
-                      <stop offset="50%" stopColor="#6b4813" />
-                      <stop offset="100%" stopColor="#1f1404" />
-                    </radialGradient>
-                    <radialGradient id="wheelHubGold" cx="30%" cy="24%" r="90%">
-                      <stop offset="0%" stopColor="#fffbe8" />
-                      <stop offset="30%" stopColor="#f7dd7c" />
-                      <stop offset="65%" stopColor="#c9932a" />
-                      <stop offset="100%" stopColor="#6b4813" />
-                    </radialGradient>
-                    <radialGradient id="badgeGold" cx="32%" cy="26%" r="88%">
-                      <stop offset="0%" stopColor="#fffdf0" />
-                      <stop offset="40%" stopColor="#f6dc80" />
-                      <stop offset="75%" stopColor="#c9922a" />
-                      <stop offset="100%" stopColor="#7a5414" />
-                    </radialGradient>
-                    <radialGradient id="bulbOn" cx="35%" cy="30%" r="80%">
-                      <stop offset="0%" stopColor="#ffffff" />
-                      <stop offset="45%" stopColor="#ffe9a0" />
-                      <stop offset="100%" stopColor="#a87a1a" />
-                    </radialGradient>
-                    <radialGradient id="bulbOff" cx="35%" cy="30%" r="80%">
-                      <stop offset="0%" stopColor="#5c4a26" />
-                      <stop offset="100%" stopColor="#2a2110" />
-                    </radialGradient>
-                    <radialGradient id="wheelSheen" cx="50%" cy="12%" r="70%">
-                      <stop offset="0%" stopColor="#ffffff" stopOpacity={0.5} />
-                      <stop offset="50%" stopColor="#ffffff" stopOpacity={0.1} />
-                      <stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
-                    </radialGradient>
-                    {/* Auto-generated gem gradient per segment — light-to-dark derived
-                        from each segment's base color, so new colors "just work". */}
-                    {WHEEL_SEGMENTS.map((seg) => (
-                      <radialGradient key={seg.id} id={`gem-${seg.id}`} cx="42%" cy="22%" r="85%">
-                        <stop offset="0%" stopColor={shadeColor(seg.color, 75)} />
-                        <stop offset="55%" stopColor={seg.color} />
-                        <stop offset="100%" stopColor={shadeColor(seg.color, -75)} />
-                      </radialGradient>
-                    ))}
-                    <filter id="wheelShadow" x="-40%" y="-40%" width="180%" height="180%">
-                      <feDropShadow dx="0" dy="4" stdDeviation="5" floodColor="#000" floodOpacity="0.45" />
-                    </filter>
-                    <filter id="badgeShadow" x="-60%" y="-60%" width="220%" height="220%">
-                      <feDropShadow dx="0" dy="1.2" stdDeviation="1.2" floodColor="#3a2408" floodOpacity="0.55" />
-                    </filter>
-                  </defs>
-
-                  {/* Layered gold rim: outer bezel + dark inner ring for depth */}
-                  <circle cx={118} cy={118} r={116} fill="url(#rimOuter)" filter="url(#wheelShadow)" />
-                  <circle cx={118} cy={118} r={106} fill="url(#rimInner)" />
-                  <circle cx={118} cy={118} r={102} fill="none" stroke="#f7dd7c" strokeWidth={1} opacity={0.5} />
-
-                  {/* Perimeter marquee bulbs, alternating lit/unlit */}
-                  {Array.from({ length: 22 }).map((_, i) => {
-                    const a = (i * 360) / 22 - 90;
-                    const rad = (a * Math.PI) / 180;
-                    const sx = 118 + 110 * Math.cos(rad);
-                    const sy = 118 + 110 * Math.sin(rad);
-                    return (
-                      <circle
-                        key={i}
-                        cx={sx}
-                        cy={sy}
-                        r={4}
-                        fill={i % 2 === 0 ? "url(#bulbOn)" : "url(#bulbOff)"}
-                        stroke="#2e1e06"
-                        strokeWidth={0.6}
-                      />
-                    );
-                  })}
-
-                  {/* Rotating wedge disk */}
-                  <g
-                    style={{
-                      transform: `rotate(${wheelRotation}deg)`,
-                      transformOrigin: "118px 118px",
-                      transition: wheelSpinning ? "transform 4.2s cubic-bezier(0.12, 0.67, 0.1, 1)" : "none",
-                    }}
-                  >
-                    {WHEEL_SEGMENTS.map((seg, i) => (
-                      <path
-                        key={seg.id}
-                        d={wheelWedgePath(i, WHEEL_SEGMENTS.length, 118, 118, 96)}
-                        fill={`url(#gem-${seg.id})`}
-                        stroke="#3a2608"
-                        strokeWidth={1.5}
-                      />
-                    ))}
-
-                    {/* Glossy sheen over the wedges */}
-                    <circle cx={118} cy={118} r={96} fill="url(#wheelSheen)" style={{ pointerEvents: "none" }} />
-
-                    {/* Gold coin reward badges, one per segment */}
-                    {WHEEL_SEGMENTS.map((seg, i) => {
-                      const segAngle = 360 / WHEEL_SEGMENTS.length;
-                      const midAngle = i * segAngle + segAngle / 2 - 90; // -90: 0deg = 12 o'clock
-                      const rad = (midAngle * Math.PI) / 180;
-                      const bx = 118 + 68 * Math.cos(rad);
-                      const by = 118 + 68 * Math.sin(rad);
-                      return (
-                        <g key={seg.id} transform={`translate(${bx}, ${by})`}>
-                          <circle r={17} fill="url(#badgeGold)" stroke="#5c3d0d" strokeWidth={1.75} filter="url(#badgeShadow)" />
-                          <circle r={17} fill="none" stroke="#fff" strokeOpacity={0.5} strokeWidth={1} />
-                          {seg.type === "xp" ? (
-                            <>
-                              <text y={-1} textAnchor="middle" fontSize={11} fontWeight={800} fill="#5c3d0d">+{seg.xp}</text>
-                              <text y={9} textAnchor="middle" fontSize={6} fontWeight={800} fill="#8f6a1f" letterSpacing={0.8}>XP</text>
-                            </>
-                          ) : seg.type === "freeCheckin" ? (
-                            <>
-                              <path d="M-5 -8 h10 v4 l-5 11 l-5 -11 z" fill="#5c3d0d" />
-                              <text y={12} textAnchor="middle" fontSize={5.5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.5}>FREE</text>
-                            </>
-                          ) : seg.type === "accessoryChoice" ? (
-                            <>
-                              <rect x={-7} y={-3} width={14} height={11} rx={1.2} fill="#5c3d0d" />
-                              <rect x={-7} y={-6.5} width={14} height={4} rx={1.2} fill="#5c3d0d" />
-                              <rect x={-1.3} y={-6.5} width={2.6} height={11.5} fill="#8f6a1f" />
-                              <circle cx={-3.5} cy={-6.5} r={2} fill="none" stroke="#5c3d0d" strokeWidth={1.3} />
-                              <circle cx={3.5} cy={-6.5} r={2} fill="none" stroke="#5c3d0d" strokeWidth={1.3} />
-                              <text y={12} textAnchor="middle" fontSize={5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.4}>RARE</text>
-                            </>
-                          ) : (
-                            <>
-                              <path d="M0 -9 L6 -6.5 V-1 C6 4 3 7.5 0 9.5 C-3 7.5 -6 4 -6 -1 V-6.5 Z" fill="#5c3d0d" />
-                              <text y={12} textAnchor="middle" fontSize={5.5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.5}>SAVE</text>
-                            </>
-                          )}
-                        </g>
-                      );
-                    })}
-
-                    {/* Center hub — gold coin with paw emblem */}
-                    <circle cx={118} cy={118} r={28} fill="url(#wheelHubGold)" stroke="#3a2608" strokeWidth={2.5} filter="url(#wheelShadow)" />
-                    <circle cx={118} cy={118} r={28} fill="none" stroke="#fff" strokeOpacity={0.6} strokeWidth={1.25} />
-                    <circle cx={118} cy={118} r={22} fill="none" stroke="#5c3d0d" strokeWidth={0.75} opacity={0.5} />
-                    <g fill="#5c3d0d">
-                      <ellipse cx={118} cy={122} rx={7} ry={5.5} />
-                      <ellipse cx={109} cy={110} rx={3.5} ry={4} />
-                      <ellipse cx={115} cy={104} rx={3.5} ry={4} />
-                      <ellipse cx={121} cy={104} rx={3.5} ry={4} />
-                      <ellipse cx={127} cy={110} rx={3.5} ry={4} />
-                    </g>
-                  </g>
-                </svg>
-              </div>
-
-              <button
-                type="button"
-                onClick={doWheelSpin}
-                disabled={wheelSpinning || !!wheelAccessoryChoices}
-                title={wheelAccessoryChoices ? "Pick your Rare Accessory below before spinning again" : undefined}
-                style={{
-                  width: "100%",
-                  background: wheelSpinning || wheelAccessoryChoices ? "#a78bfa" : "#7c3aed",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 10,
-                  padding: "11px",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: wheelSpinning || wheelAccessoryChoices ? "default" : "pointer",
-                  opacity: wheelAccessoryChoices ? 0.6 : 1,
-                }}
-              >
-                {wheelSpinning ? "🎡 Spinning..." : "🎡 Spin · $0.01"}
-              </button>
-
-              {/* ── RARE ACCESSORY PICKER ──────────────────────────────────
-                  Shown only after landing on the Rare Accessory segment.
-                  Payment is already confirmed; picking here is free — it
-                  just decides WHICH item that win unlocks. */}
-              {wheelAccessoryChoices && (
-                <div
-                  style={{
-                    width: "100%",
-                    border: "2px solid #FF3CAC",
-                    borderRadius: 12,
-                    padding: 10,
-                    background: "rgba(255,60,172,0.08)",
-                  }}
-                >
-                  <p style={{ fontSize: "0.8rem", fontWeight: 800, textAlign: "center", marginBottom: 6, color: "#7a1a56" }}>
-                    🌟 Rare Accessory! Pick your item:
-                  </p>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(3, 1fr)",
-                      gap: 10,
-                    }}
-                  >
-                    {wheelAccessoryChoices.map((accessory) => (
-                      <button
-                        key={accessory.id}
-                        type="button"
-                        onClick={() => confirmWheelAccessoryChoice(accessory.id)}
-                        disabled={wheelChoicePending}
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: 4,
-                          border: "1px solid rgba(122,26,86,0.3)",
-                          borderRadius: 12,
-                          padding: 8,
-                          background: "rgba(255,255,255,0.7)",
-                          cursor: wheelChoicePending ? "not-allowed" : "pointer",
-                          opacity: wheelChoicePending ? 0.6 : 1,
-                        }}
-                      >
-                        <img
-                          src={accessory.imageUrl}
-                          alt={accessory.name}
-                          style={{ width: 40, height: 40, objectFit: "contain" }}
-                        />
-                        <span style={{ fontSize: 10, fontWeight: 700, textAlign: "center", lineHeight: 1.2 }}>
-                          {accessory.name}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 9,
-                            fontWeight: 700,
-                            color: "#fff",
-                            background: "#FF3CAC",
-                            borderRadius: 8,
-                            padding: "2px 8px",
-                          }}
-                        >
-                          {wheelChoicePending ? "..." : "Choose"}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {wheelChoiceError && (
-                <small style={{ color: "#b5544f", fontSize: "0.75rem", textAlign: "center" }}>
-                  {wheelChoiceError}
-                </small>
-              )}
-
-              {wheelResultLabel && !wheelSpinning && !wheelAccessoryChoices && (
-                <small style={{ color: "#4caf7d", fontSize: "0.8rem", fontWeight: 800 }}>
-                  🎉 {wheelResultLabel}
-                </small>
-              )}
-              {wheelError && (
-                <small style={{ color: "#b5544f", fontSize: "0.78rem" }}>{wheelError}</small>
-              )}
-              <small style={{ color: "#7a6a63", fontSize: "0.72rem", textAlign: "center" }}>
-                XP rewards, a free check-in, a streak save, or a Rare Accessory of your choice — wallet payment on Base.
-              </small>
-            </div>
-          )}
         </section>
 
         {/* ── STATS COLLAPSIBLE ── */}
@@ -4139,10 +3245,6 @@ const faqSections = [
   {
     title: "👗 Closet & Accessories",
     content: "The Closet lets you dress up Grub with accessories unlocked using USDC on Base.\n\nEach stage has its own accessories:\n• Stage 1 (Tiny Cloud) — $0.10 each: bows, glasses\n• Stage 2 (Pocket Purr) — $0.20 each: crown, cape, wand\n• Stage 3 (Pearl Floof) — $0.30 each: wings, wizard hat, tail charm\n• Stage 4 (Moonmilk Mythic) — $0.40 each: legendary set, 8 pieces\n\nHow it works:\n• Tap Unlock to purchase an accessory with USDC on Base\n• Once unlocked it is yours forever — no re-buying\n• Tap Equip to put it on Grub, Remove to take it off\n• You can mix and match freely within a stage\n• You can browse any stage's accessories but can only equip items that match Grub's current stage\n\nAccessories only show on Grub when she is Content or Smug. They are hidden when she is Hungry, Feral, or Sleepy — keep her happy to show off her outfits!\n\nXP rewards:\n• Unlocking an accessory gives one-time bonus XP (+3 Stage 1, +5 Stage 2, +8 Stage 3, +12 Stage 4)\n• Wearing accessories gives recurring bonus XP roughly every 24 hours: +1 XP/item at Stage 1, +2 at Stage 2, +3 at Stage 3, +3 at Stage 4 (up to 3 items count at Stage 4, even though 5 slots are equippable)\n• This daily bonus only pays out while Grub is Content or Smug — if she's Hungry, Feral, or Sleepy, the bonus pauses (not lost) until her mood recovers\n• Buying an accessory and never equipping it only gets you the one-time unlock bonus — equip it to keep earning",
-  },
-  {
-    title: "🎡 Spin Wheel",
-    content: "Spin the wheel for $0.01 (USDC on Base) and win a reward:\n\n• +1 XP — 29%\n• +2 XP — 24%\n• +3 XP — 19%\n• +5 XP — 8%\n• +10 XP — 7%\n• Free Check-in — 5% (waives tomorrow's $0.01 check-in)\n• Streak Save — 5% (auto-protects your streak the next time you miss a day)\n• 🌟 Rare Accessory — 3% (pick ANY not-yet-unlocked accessory for your cat's current stage, free — if you already own everything for that stage, you get +10 XP instead)\n\nBanked Free Check-ins and Streak Saves stack up and are used automatically — a Free Check-in is applied the next time you check in, and a Streak Save kicks in automatically if you ever miss a day.",
   },
   {
     title: "⚠️ Going Feral",

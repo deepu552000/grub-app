@@ -1,25 +1,60 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
+import { ACCESSORIES } from "@/lib/accessories";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const RECIPIENT     = "0xCF8A44059652DB5Af8B4CB62938c5DC6916eB082";
-const BASESCAN_API  = "https://api.etherscan.io/v2/api";
-const BASESCAN_KEY  = process.env.BASESCAN_API_KEY ?? "";
+// Base's own public RPC — verifies directly against the chain instead of
+// going through Etherscan. Etherscan's free-tier API key does NOT cover Base
+// (confirmed: "Free API access is not supported for this chain. Please
+// upgrade your api plan") — every verify call was failing at the API layer,
+// which the old parsing code (see git history) silently treated as "not
+// confirmed yet" and burned the full 30s retry window before timing out,
+// even for real, correctly-paid transactions. Base RPC needs no key or paid
+// plan for eth_getTransactionReceipt. If this public endpoint's rate limits
+// ever become a problem at scale, swap BASE_RPC for a provider URL (Alchemy/
+// QuickNode/CDP) — the JSON-RPC shape is identical, no other code changes.
+const BASE_RPC = "https://mainnet.base.org";
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 // Checkin price in micro-USDC
 const CHECKIN_MICRO_USDC = 10_000; // $0.01
 
-// Accessory prices in micro-USDC (6 decimals). Must match client-side.
-const ACCESSORY_PRICES: Record<string, number> = {
-  "bow-black":      100_000,  // $0.10
-  "bow-red":        100_000,
-  "party-hat-pink": 100_000,
-  "party-hat-blue": 100_000,
-  "glasses-gold":   100_000,
-  "glasses-black":  100_000,
+// Spin Wheel price in micro-USDC
+const WHEEL_MICRO_USDC = 10_000; // $0.01
+
+// Wheel reward table — the single source of truth for what each segment ID
+// actually pays out. Mirrors the client's WHEEL_SEGMENTS list (lib is not
+// shared between client/server here, so this must be kept in sync manually
+// if the wheel's rewards ever change). The server derives the resulting
+// xp/credit deltas from THIS table plus the identity's stored state — it
+// does NOT trust whatever xp/freeCheckinCredits/streakSaveCredits values the
+// client happens to report, since those numbers are what's actually being
+// paid for. This is the same reasoning as the accessory-unlock XP handling
+// below, just applied to a payment where the "item" is a random reward
+// instead of a specific accessoryId.
+const WHEEL_REWARDS: Record<string, { xp?: number; freeCheckin?: boolean; streakSave?: boolean }> = {
+  xp1: { xp: 1 },
+  xp2: { xp: 2 },
+  xp3: { xp: 3 },
+  xp5: { xp: 5 },
+  xp10: { xp: 10 },
+  freecheckin: { freeCheckin: true },
+  streaksave: { streakSave: true },
 };
+
+// Accessory prices in micro-USDC (6 decimals), derived from lib/accessories.ts
+// (the single source of truth for the catalog) instead of a hand-maintained
+// duplicate list. A hardcoded copy here previously only covered the 6 Stage 1
+// items — every Stage 2/3/4 accessory (24 of 30) fell through to "Unknown
+// accessory" even after a verified payment, since this map is checked BEFORE
+// verifyUsdcTransfer ever runs. Deriving it from ACCESSORIES means a newly
+// added accessory is priced correctly here automatically, with no separate
+// edit required.
+const ACCESSORY_PRICES: Record<string, number> = Object.fromEntries(
+  ACCESSORIES.map((a) => [a.id, Math.round(a.costUsd * 1_000_000)]),
+);
 
 // ── Identity helper ──────────────────────────────────────────────────────────
 // Grub users are identified by EITHER a Farcaster fid (Warpcast/Farcaster
@@ -43,20 +78,45 @@ function identityLabel(fid?: string | number | null, wallet?: string | null): st
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// Verify a USDC transfer on Base via Etherscan — polls up to 30s
+// Verify a USDC transfer on Base via Base's own RPC — polls up to 30s
 async function verifyUsdcTransfer(
   txHash: string,
   expectedMicroUsdc: number,
 ): Promise<{ ok: boolean; error?: string }> {
-  const url = `${BASESCAN_API}?chainid=8453&module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${BASESCAN_KEY}`;
   const recipientTopic = "0x000000000000000000000000" + RECIPIENT.replace(/^0x/, "").toLowerCase();
   const expectedHex    = "0x" + expectedMicroUsdc.toString(16).padStart(64, "0");
 
   const deadline = Date.now() + 30_000;
+  let attempts = 0;
   while (Date.now() < deadline) {
+    attempts++;
     try {
-      const res  = await fetch(url, { cache: "no-store" });
+      const res = await fetch(BASE_RPC, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_getTransactionReceipt",
+          params: [txHash],
+        }),
+      });
       const json = await res.json();
+
+      // Standard JSON-RPC error shape: { jsonrpc, id, error: { code, message } }.
+      // Distinct from "result is null" (receipt not mined yet, which is
+      // expected and just means keep polling) — an actual `error` field means
+      // something is wrong with the request itself (malformed hash, RPC
+      // rejecting the call, etc.) and isn't worth burning the full 30s on.
+      if (json?.error) {
+        console.error(`[pet] Base RPC error (attempt ${attempts}): ${JSON.stringify(json.error)}`);
+        return {
+          ok: false,
+          error: `Payment verification failed (RPC error: ${json.error.message ?? "unknown"}).`,
+        };
+      }
+
       const logs: any[] = json?.result?.logs ?? [];
 
       const match = logs.find(
@@ -94,7 +154,8 @@ async function verifyUsdcTransfer(
 //      the real game logic could produce in one call (core actions + one
 //      equip-XP tick + a buffer). This is a mitigation, not a full fix — xp
 //      itself is still client-reported, not server-recomputed from scratch.
-const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick (up to 9) + a small buffer
+const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick (up to 9) + a small buffer.
+                                  // Wheel spins max out at +10 xp (server-computed, see WHEEL_REWARDS), well within this.
 
 function sanitizeState(existingRaw: any, incomingState: any) {
   const existingUnlocked: string[] = existingRaw?.accessories?.unlocked ?? [];
@@ -195,9 +256,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
-      // Mark txHash as used (keep for 1 year)
-      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, accessoryId, ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
-
       // Ensure the accessory is actually in state before saving
       const unlocked: string[] = state?.accessories?.unlocked ?? [];
       if (!unlocked.includes(accessoryId)) {
@@ -219,6 +277,20 @@ export async function POST(req: NextRequest) {
         state,
       );
       await kv.set(key, sanitized);
+
+      // Mark txHash as used only NOW, after the state write actually
+      // succeeded (kept for 1 year). Previously this happened right after
+      // payment verification but BEFORE the save below — if that save ever
+      // failed (KV outage, etc.) the txHash was permanently burned with the
+      // accessory never actually persisted, and no retry could ever recover
+      // it since the replay guard would reject the same hash forever. Doing
+      // it last means a failed save can still be retried with the same
+      // txHash. Tradeoff: a tiny window now exists where two truly
+      // concurrent requests with the same txHash (e.g. two tabs) could both
+      // pass the verify step — acceptable, since a legitimate txHash can
+      // only ever pay for one unlock's worth of USDC regardless.
+      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, accessoryId, ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
+
       console.log(`[pet] ✅ accessory unlocked ${who} accessory=${accessoryId} tx=${txHash}`);
       return NextResponse.json({ ok: true });
     }
@@ -245,14 +317,82 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
-      // Mark txHash as used
-      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "checkin", ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
-
       // Save state
       const existingForCheckin = await kv.get<any>(key);
       const sanitizedCheckin = sanitizeState(existingForCheckin, state);
       await kv.set(key, sanitizedCheckin);
+
+      // Mark txHash as used only after the save succeeded — same reasoning
+      // as the unlock_accessory path above.
+      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "checkin", ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
+
       console.log(`[pet] ✅ checkin saved ${who} tx=${txHash}`);
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── Spin Wheel — requires verified on-chain payment ──────────────────────
+    // Unlike checkin/unlock, the reward here is random (rolled client-side
+    // AFTER payment, same order as the client). The server doesn't re-roll —
+    // it trusts which segment was landed on (wheelReward), but NOT whatever
+    // xp/credit numbers the client attached to `state`. Instead it looks up
+    // the segment in WHEEL_REWARDS and computes the resulting xp/credits
+    // itself, on top of whatever is already stored for this identity. This
+    // closes the same gap unlock_accessory closes for accessoryId — a
+    // hand-crafted POST claiming "streaksave" can never actually grant more
+    // than one real Streak Save credit, no matter what `state.xp` says.
+    if (action === "wheel_spin") {
+      const { wheelReward } = body;
+
+      if (!wheelReward || !txHash) {
+        return NextResponse.json(
+          { error: "wheel_spin requires wheelReward and txHash" },
+          { status: 400 }
+        );
+      }
+
+      const reward = WHEEL_REWARDS[wheelReward];
+      if (!reward) {
+        return NextResponse.json({ error: "Unknown wheel reward" }, { status: 400 });
+      }
+
+      // Replay attack prevention — same as checkin/unlock
+      const usedKey = `grub:used-tx:${txHash}`;
+      const alreadyUsed = await kv.get(usedKey);
+      if (alreadyUsed) {
+        return NextResponse.json(
+          { error: "This transaction has already been used." },
+          { status: 400 }
+        );
+      }
+
+      // Verify the $0.01 USDC transfer on-chain
+      const verify = await verifyUsdcTransfer(txHash, WHEEL_MICRO_USDC);
+      if (!verify.ok) {
+        return NextResponse.json({ error: verify.error }, { status: 402 });
+      }
+
+      // Compute the resulting xp/credits from stored state + this reward —
+      // NOT from whatever the client sent — then let sanitizeState apply its
+      // usual accessory/xp checks on top as a second layer.
+      const existingForWheel = await kv.get<any>(key);
+      const baseXp = typeof existingForWheel?.xp === "number" ? existingForWheel.xp : 0;
+      const baseFreeCheckin = typeof existingForWheel?.freeCheckinCredits === "number" ? existingForWheel.freeCheckinCredits : 0;
+      const baseStreakSave = typeof existingForWheel?.streakSaveCredits === "number" ? existingForWheel.streakSaveCredits : 0;
+
+      const rewardedState = {
+        ...state,
+        xp: baseXp + (reward.xp ?? 0),
+        freeCheckinCredits: baseFreeCheckin + (reward.freeCheckin ? 1 : 0),
+        streakSaveCredits: baseStreakSave + (reward.streakSave ? 1 : 0),
+      };
+      const sanitizedWheel = sanitizeState(existingForWheel, rewardedState);
+      await kv.set(key, sanitizedWheel);
+
+      // Mark txHash as used only after the save succeeded — same reasoning
+      // as the checkin/unlock paths above.
+      await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "wheel_spin", wheelReward, ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
+
+      console.log(`[pet] ✅ wheel spin ${who} reward=${wheelReward} tx=${txHash}`);
       return NextResponse.json({ ok: true });
     }
 

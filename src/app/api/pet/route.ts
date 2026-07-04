@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { ACCESSORIES } from "@/lib/accessories";
+import { getUnlockXp } from "@/lib/pet-accessories-state";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -20,6 +21,35 @@ const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a
 
 // Checkin price in micro-USDC
 const CHECKIN_MICRO_USDC = 10_000; // $0.01
+
+// Spin Wheel price in micro-USDC
+const WHEEL_MICRO_USDC = 10_000; // $0.01
+
+// Wheel reward table — the single source of truth for what each segment ID
+// actually pays out. Mirrors the client's WHEEL_SEGMENTS list (lib is not
+// shared between client/server here, so this must be kept in sync manually
+// if the wheel's rewards ever change). The server derives the resulting
+// xp/credit deltas from THIS table plus the identity's stored state — it
+// does NOT trust whatever xp/freeCheckinCredits/streakSaveCredits values the
+// client happens to report, since those numbers are what's actually being
+// paid for. This is the same reasoning as the accessory-unlock XP handling
+// below, just applied to a payment where the "item" is a random reward
+// instead of a specific accessoryId.
+// "rareaccessory" is the 3% Rare Accessory segment — unlike every other
+// segment, its payout isn't a fixed number; the client sends the specific
+// accessoryId the player picked (see the wheel_spin handler below), and the
+// resulting unlock-XP is looked up per-accessory via getUnlockXp, same as a
+// normal paid unlock.
+const WHEEL_REWARDS: Record<string, { xp?: number; freeCheckin?: boolean; streakSave?: boolean; accessoryChoice?: boolean }> = {
+  xp1: { xp: 1 },
+  xp2: { xp: 2 },
+  xp3: { xp: 3 },
+  xp5: { xp: 5 },
+  xp10: { xp: 10 },
+  freecheckin: { freeCheckin: true },
+  streaksave: { streakSave: true },
+  rareaccessory: { accessoryChoice: true },
+};
 
 // Accessory prices in micro-USDC (6 decimals), derived from lib/accessories.ts
 // (the single source of truth for the catalog) instead of a hand-maintained
@@ -131,7 +161,8 @@ async function verifyUsdcTransfer(
 //      the real game logic could produce in one call (core actions + one
 //      equip-XP tick + a buffer). This is a mitigation, not a full fix — xp
 //      itself is still client-reported, not server-recomputed from scratch.
-const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick (up to 9) + a small buffer
+const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick (up to 9) + a small buffer.
+                                  // Wheel spins max out at +10 xp (server-computed, see WHEEL_REWARDS), well within this.
 
 function sanitizeState(existingRaw: any, incomingState: any) {
   const existingUnlocked: string[] = existingRaw?.accessories?.unlocked ?? [];
@@ -303,6 +334,127 @@ export async function POST(req: NextRequest) {
       await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "checkin", ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
 
       console.log(`[pet] ✅ checkin saved ${who} tx=${txHash}`);
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── Spin Wheel — requires verified on-chain payment ──────────────────────
+    // Unlike checkin/unlock, the reward here is random (rolled client-side
+    // AFTER payment, same order as the client). The server doesn't re-roll —
+    // it trusts which segment was landed on (wheelReward), but NOT whatever
+    // xp/credit numbers the client attached to `state`. Instead it looks up
+    // the segment in WHEEL_REWARDS and computes the resulting xp/credits
+    // itself, on top of whatever is already stored for this identity. This
+    // closes the same gap unlock_accessory closes for accessoryId — a
+    // hand-crafted POST claiming "streaksave" can never actually grant more
+    // than one real Streak Save credit, no matter what `state.xp` says.
+    if (action === "wheel_spin") {
+      const { wheelReward, accessoryId } = body;
+
+      if (!wheelReward || !txHash) {
+        return NextResponse.json(
+          { error: "wheel_spin requires wheelReward and txHash" },
+          { status: 400 }
+        );
+      }
+
+      const reward = WHEEL_REWARDS[wheelReward];
+      if (!reward) {
+        return NextResponse.json({ error: "Unknown wheel reward" }, { status: 400 });
+      }
+
+      // Rare Accessory: the client only calls this action once the player
+      // has actually picked an item from the post-spin picker, so accessoryId
+      // is required here. Validate it against the real catalog rather than
+      // trusting it blindly — same reasoning as ACCESSORY_PRICES lookups in
+      // unlock_accessory above. (No stage-match check against the player's
+      // current cat stage: unlock_accessory doesn't enforce that either —
+      // stage only ever gates EQUIPPING, via canEquipForStage — so this stays
+      // consistent with the rest of the app's trust model.)
+      let chosenAccessory: { id: string; stage: number } | null = null;
+      if (reward.accessoryChoice) {
+        if (!accessoryId) {
+          return NextResponse.json(
+            { error: "wheel_spin rareaccessory reward requires accessoryId" },
+            { status: 400 }
+          );
+        }
+        const found = ACCESSORIES.find((a) => a.id === accessoryId);
+        if (!found) {
+          return NextResponse.json({ error: "Unknown accessory" }, { status: 400 });
+        }
+        chosenAccessory = found;
+      }
+
+      // Replay attack prevention — same as checkin/unlock
+      const usedKey = `grub:used-tx:${txHash}`;
+      const alreadyUsed = await kv.get(usedKey);
+      if (alreadyUsed) {
+        return NextResponse.json(
+          { error: "This transaction has already been used." },
+          { status: 400 }
+        );
+      }
+
+      // Verify the $0.01 USDC transfer on-chain
+      const verify = await verifyUsdcTransfer(txHash, WHEEL_MICRO_USDC);
+      if (!verify.ok) {
+        return NextResponse.json({ error: verify.error }, { status: 402 });
+      }
+
+      // Compute the resulting xp/credits/unlocks from stored state + this
+      // reward — NOT from whatever the client sent — then let sanitizeState
+      // apply its usual accessory/xp checks on top as a second layer.
+      const existingForWheel = await kv.get<any>(key);
+      const baseXp = typeof existingForWheel?.xp === "number" ? existingForWheel.xp : 0;
+      const baseFreeCheckin = typeof existingForWheel?.freeCheckinCredits === "number" ? existingForWheel.freeCheckinCredits : 0;
+      const baseStreakSave = typeof existingForWheel?.streakSaveCredits === "number" ? existingForWheel.streakSaveCredits : 0;
+      const existingUnlockedForWheel: string[] = existingForWheel?.accessories?.unlocked ?? [];
+
+      const rewardedState = chosenAccessory
+        ? {
+            ...state,
+            xp: baseXp + getUnlockXp(chosenAccessory.id),
+            freeCheckinCredits: baseFreeCheckin,
+            streakSaveCredits: baseStreakSave,
+            accessories: {
+              ...state?.accessories,
+              unlocked: [...existingUnlockedForWheel, chosenAccessory.id],
+            },
+          }
+        : {
+            ...state,
+            xp: baseXp + (reward.xp ?? 0),
+            freeCheckinCredits: baseFreeCheckin + (reward.freeCheckin ? 1 : 0),
+            streakSaveCredits: baseStreakSave + (reward.streakSave ? 1 : 0),
+          };
+
+      // For the accessoryChoice path, existingForWheel's unlocked list
+      // doesn't yet contain chosenAccessory.id — same trick as
+      // unlock_accessory above: fold it in before sanitizing, or
+      // sanitizeState would strip the very accessory just granted.
+      const sanitizedWheel = sanitizeState(
+        chosenAccessory
+          ? {
+              ...existingForWheel,
+              accessories: {
+                ...existingForWheel?.accessories,
+                unlocked: [...existingUnlockedForWheel, chosenAccessory.id],
+              },
+            }
+          : existingForWheel,
+        rewardedState,
+      );
+      await kv.set(key, sanitizedWheel);
+
+      // Mark txHash as used only after the save succeeded — same reasoning
+      // as the checkin/unlock paths above.
+      await kv.set(
+        usedKey,
+        { fid: fid ?? null, wallet: wallet ?? null, purpose: "wheel_spin", wheelReward, accessoryId: chosenAccessory?.id ?? null, ts: Date.now() },
+        { ex: 60 * 60 * 24 * 365 }
+      );
+
+      console.log(`[pet] ✅ wheel spin ${who} reward=${wheelReward}${chosenAccessory ? ` accessory=${chosenAccessory.id}` : ""} tx=${txHash}`);
       return NextResponse.json({ ok: true });
     }
 

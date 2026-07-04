@@ -68,7 +68,7 @@ async function getFcProviderWithTimeout(ms = 1200) {
 }
 
 
-import { ACCESSORIES, getAccessory, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage, groupEquippedByLayer, type Accessory, type AccessorySlot } from "@/lib/accessories";
+import { ACCESSORIES, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage, groupEquippedByLayer, type Accessory, type AccessorySlot } from "@/lib/accessories";
 import {
   type AccessoryState,
   createEmptyAccessoryState,
@@ -580,7 +580,7 @@ function loadStateFromSaved(parsed: PetState): PetState {
 // $0.01 per spin. Pure-XP rewards plus two check-in perks (no Glimmer, no
 // "nothing" slot, no exclusive cosmetic — by design). Weights are integers
 // that sum to 100 and double as percentages.
-type WheelRewardType = "xp" | "freeCheckin" | "streakSave" | "accessoryChoice";
+type WheelRewardType = "xp" | "freeCheckin" | "streakSave";
 type WheelSegment = {
   id: string;
   label: string;
@@ -591,22 +591,14 @@ type WheelSegment = {
   weight: number; // out of 100
 };
 
-// "rareaccessory" (3%) was carved out of the five XP segments only, roughly
-// proportional to their old weights (30/25/20/8/7 -> 29/24/19/8/7 — the three
-// biggest slices each gave up exactly 1 point, the two smallest untouched).
-// freeCheckin/streakSave weights are unchanged. Landing on it lets the player
-// pick any not-yet-unlocked accessory for their cat's CURRENT stage — see
-// doWheelSpin's accessoryChoice branch below for the picker flow, and
-// route.ts's WHEEL_REWARDS["rareaccessory"] for server-side handling.
 const WHEEL_SEGMENTS: WheelSegment[] = [
-  { id: "xp1", label: "+1 XP", shortLabel: "+1", color: "#F5B942", type: "xp", xp: 1, weight: 29 },
-  { id: "xp2", label: "+2 XP", shortLabel: "+2", color: "#F2994A", type: "xp", xp: 2, weight: 24 },
-  { id: "xp3", label: "+3 XP", shortLabel: "+3", color: "#EB5757", type: "xp", xp: 3, weight: 19 },
+  { id: "xp1", label: "+1 XP", shortLabel: "+1", color: "#F5B942", type: "xp", xp: 1, weight: 30 },
+  { id: "xp2", label: "+2 XP", shortLabel: "+2", color: "#F2994A", type: "xp", xp: 2, weight: 25 },
+  { id: "xp3", label: "+3 XP", shortLabel: "+3", color: "#EB5757", type: "xp", xp: 3, weight: 20 },
   { id: "xp5", label: "+5 XP", shortLabel: "+5", color: "#BB6BD9", type: "xp", xp: 5, weight: 8 },
   { id: "xp10", label: "+10 XP", shortLabel: "+10", color: "#EE4266", type: "xp", xp: 10, weight: 7 },
   { id: "freecheckin", label: "Free Check-in", shortLabel: "Free\nCheck-in", color: "#2EC4F1", type: "freeCheckin", weight: 5 },
   { id: "streaksave", label: "Streak Save", shortLabel: "Streak\nSave", color: "#27AE60", type: "streakSave", weight: 5 },
-  { id: "rareaccessory", label: "Rare Accessory", shortLabel: "Rare\nItem", color: "#FF3CAC", type: "accessoryChoice", weight: 3 },
 ];
 
 // Sanity check in dev — weights must sum to 100.
@@ -895,16 +887,6 @@ export default function ClientPage() {
   const [wheelRotation, setWheelRotation] = useState(0); // cumulative degrees, keeps growing spin to spin
   const [wheelResultLabel, setWheelResultLabel] = useState<string | null>(null);
   const [wheelError, setWheelError] = useState<string | null>(null);
-
-  // Rare Accessory picker — populated only when a spin lands on the
-  // "rareaccessory" segment AND there's at least one locked accessory left
-  // for the cat's current stage. Payment for the spin has already gone
-  // through by the time this is set; the payment info is held here so the
-  // pick can be finalized (and persisted) once the player chooses an item.
-  const [wheelAccessoryChoices, setWheelAccessoryChoices] = useState<Accessory[] | null>(null);
-  const [wheelChoiceTx, setWheelChoiceTx] = useState<{ txHash: string; wallet: string | null } | null>(null);
-  const [wheelChoicePending, setWheelChoicePending] = useState(false);
-  const [wheelChoiceError, setWheelChoiceError] = useState<string | null>(null);
 
   // ── Referral Festival Banner ──────────────────────────────────────────────
   // Today (29 Jun): teaser. 30 Jun–2 Jul: live festival. After: hidden.
@@ -1578,7 +1560,6 @@ export default function ClientPage() {
     if (wheelSpinning) return;
     setWheelError(null);
     setWheelResultLabel(null);
-    setWheelChoiceError(null);
 
     let txHash: string | null = null;
     let paidWallet: string | null = null;
@@ -1619,88 +1600,6 @@ export default function ClientPage() {
 
     const SPIN_DURATION_MS = 4200;
     setTimeout(async () => {
-      // Rare Accessory: don't apply/persist anything yet — hand off to the
-      // picker (below) so the player can choose WHICH accessory they get.
-      // The payment (txHash/paidWallet) is already confirmed at this point,
-      // so it's simply held until they pick. If they've already unlocked
-      // everything available for their current stage, there's nothing left
-      // to give — fall back to a flat +10 XP consolation prize instead of
-      // showing an empty picker (reported to the server as the ordinary
-      // "xp10" reward, same as landing on that wedge directly).
-      if (segment.type === "accessoryChoice") {
-        const lockedForStage = getAccessoriesForStage(stageIndex).filter(
-          (a) => !isUnlocked(state.accessories, a.id)
-        );
-
-        if (lockedForStage.length === 0) {
-          const consolationXp = 10;
-          let computedState: PetState | null = null;
-          setState((prev) => {
-            const newState: PetState = { ...prev, xp: prev.xp + consolationXp };
-            computedState = newState;
-            try {
-              window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-            } catch (e) {
-              console.error("[WHEEL] localStorage failed", e);
-            }
-            return newState;
-          });
-
-          setWheelResultLabel(`Rare Accessory (already own everything!) — +${consolationXp} XP instead`);
-          setLastAction(`🎡 Spin Wheel: already unlocked every Stage ${stageIndex} item — +${consolationXp} XP instead!`);
-          playSfx("checkin");
-          setWheelSpinning(false);
-
-          const saveWallet = paidWallet ?? walletAddress;
-          const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-          if (!fid && saveWallet && saveWallet !== walletAddress) {
-            setWalletAddress(saveWallet);
-          }
-          if (saveIdentity && computedState) {
-            try {
-              const res = await fetch("/api/pet", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  ...saveIdentity,
-                  state: computedState,
-                  action: "wheel_spin",
-                  wheelReward: "xp10",
-                  txHash: txHash!,
-                }),
-              });
-              const data = await res.json().catch(() => ({}));
-              if (res.ok && data.ok) {
-                console.log("[WHEEL] DB saved ✅ (rareaccessory fallback -> xp10)");
-              } else {
-                console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
-              }
-            } catch (e) {
-              console.error("[WHEEL] DB save network error", e);
-            }
-            logTransaction({
-              type: "wheel_spin",
-              txHash: txHash!,
-              amountUsd: WHEEL_USD,
-              wheelReward: `${segment.label} (fallback +${consolationXp} XP)`,
-              walletAddress: saveWallet ?? undefined,
-            }, saveIdentity);
-          }
-          return;
-        }
-
-        // Items available — open the picker and wait for the player's pick.
-        // confirmWheelAccessoryChoice() does the actual state update + save.
-        setWheelChoiceError(null);
-        setWheelAccessoryChoices(lockedForStage);
-        setWheelChoiceTx({ txHash: txHash!, wallet: paidWallet ?? walletAddress ?? null });
-        setWheelResultLabel(`🌟 Rare Accessory! Pick your Stage ${stageIndex} item below.`);
-        setLastAction("🎡 Spin Wheel: Rare Accessory! Choose your item.");
-        playSfx("unlock");
-        setWheelSpinning(false);
-        return;
-      }
-
       // Apply the reward to local state (and localStorage) immediately.
       let computedState: PetState | null = null;
       setState((prev) => {
@@ -1719,7 +1618,7 @@ export default function ClientPage() {
         return newState;
       });
 
-      setWheelResultLabel(`You won: ${segment.label}!`);
+      setWheelResultLabel(segment.label);
       setLastAction(`🎡 Spin Wheel: ${segment.label}!`);
       playSfx(segment.type === "xp" ? "checkin" : "unlock");
       setWheelSpinning(false);
@@ -1766,138 +1665,6 @@ export default function ClientPage() {
         }, saveIdentity);
       }
     }, SPIN_DURATION_MS);
-  }
-
-  // ── Rare Accessory picker — confirm choice ────────────────────────────────
-  // Called when the player taps an item in the picker after landing on the
-  // "Rare Accessory" wheel segment. Payment for the spin was already
-  // confirmed in doWheelSpin (txHash held in wheelChoiceTx) — this just
-  // applies the unlock (same one-time unlock-XP reward as a normal paid
-  // unlock, via getUnlockXp) and persists it under the "wheel_spin" action
-  // with wheelReward "rareaccessory" + the chosen accessoryId, mirroring how
-  // unlock_accessory reports accessoryId today.
-  async function confirmWheelAccessoryChoice(accessoryId: string) {
-    if (wheelChoicePending || !wheelChoiceTx) return;
-    if (isUnlocked(state.accessories, accessoryId)) {
-      // Shouldn't happen (picker only lists locked items) but guard anyway.
-      setWheelChoiceError("Already unlocked — pick a different item.");
-      return;
-    }
-
-    setWheelChoicePending(true);
-    setWheelChoiceError(null);
-
-    const unlockXp = getUnlockXp(accessoryId);
-    let computedState: PetState | null = null;
-    setState((prev) => {
-      const newState: PetState = {
-        ...prev,
-        xp: prev.xp + unlockXp,
-        accessories: {
-          ...prev.accessories,
-          unlocked: [...prev.accessories.unlocked, accessoryId],
-        },
-      };
-      computedState = newState;
-      try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-      } catch (e) {
-        console.error("[WHEEL] localStorage failed", e);
-      }
-      return newState;
-    });
-
-    const { txHash, wallet } = wheelChoiceTx;
-    const saveWallet = wallet ?? walletAddress;
-    const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-    if (!fid && saveWallet && saveWallet !== walletAddress) {
-      setWalletAddress(saveWallet);
-    }
-
-    const accessory = getAccessory(accessoryId);
-
-    if (!saveIdentity || !computedState) {
-      // No identity to save under — same edge case doUnlockAccessory guards
-      // against. The pick is applied locally (localStorage) for this
-      // session; surface this plainly rather than silently losing it.
-      setWheelChoicePending(false);
-      setWheelChoiceError(
-        `Payment confirmed but no account was found to save it under. Contact support with tx: ${txHash}`
-      );
-      setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}!`);
-      setWheelAccessoryChoices(null);
-      setWheelChoiceTx(null);
-      return;
-    }
-
-    // Retry the save up to 3 times (same pattern as handleUnlockAccessory) —
-    // the pick is already applied to local state above, so re-tapping the
-    // item would be blocked by the isUnlocked guard at the top of this
-    // function. Retrying here instead keeps that guard correct.
-    let saved = false;
-    let lastError = "";
-    for (let attempt = 1; attempt <= 3 && !saved; attempt++) {
-      try {
-        const res = await fetch("/api/pet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...saveIdentity,
-            state: computedState,
-            action: "wheel_spin",
-            wheelReward: "rareaccessory",
-            accessoryId,
-            txHash,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.ok) {
-          saved = true;
-          console.log(`[WHEEL] DB saved ✅ (rare accessory, attempt ${attempt})`);
-        } else if (attempt > 1 && String(data?.error ?? "").includes("already been used")) {
-          // Server only marks a txHash used AFTER a successful save, so
-          // hitting this on a retry means an earlier attempt actually
-          // succeeded and we just never saw the response.
-          saved = true;
-          console.log(`[WHEEL] DB already saved by an earlier attempt ✅ (attempt ${attempt})`);
-        } else {
-          lastError = data?.error ?? `HTTP ${res.status}`;
-          console.error(`[WHEEL] DB save rejected (attempt ${attempt}):`, lastError);
-          if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
-        }
-      } catch (e: any) {
-        lastError = e?.message ?? String(e);
-        console.error(`[WHEEL] DB save network error (attempt ${attempt}):`, lastError);
-        if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
-      }
-    }
-
-    setWheelChoicePending(false);
-    setWheelAccessoryChoices(null);
-    setWheelChoiceTx(null);
-
-    if (!saved) {
-      // Payment confirmed on-chain but persistence never confirmed after 3
-      // tries. Don't claim success — surface the txHash plainly, same as
-      // handleUnlockAccessory's failure path.
-      setWheelChoiceError(
-        `Payment confirmed but saving failed (${lastError}). Your item may disappear on refresh — if so, contact support with tx: ${txHash}`
-      );
-      setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}! (save pending — see note below)`);
-      return;
-    }
-
-    logTransaction({
-      type: "wheel_spin",
-      txHash,
-      amountUsd: WHEEL_USD,
-      wheelReward: `Rare Accessory: ${accessory?.name ?? accessoryId}`,
-      walletAddress: saveWallet ?? undefined,
-    }, saveIdentity);
-
-    setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}!`);
-    setLastAction(`🎡 Spin Wheel: unlocked ${accessory?.name ?? accessoryId}!`);
-    playSfx("unlock");
   }
 
   const line = useMemo(() => {
@@ -3225,15 +2992,6 @@ export default function ClientPage() {
                               <path d="M-5 -8 h10 v4 l-5 11 l-5 -11 z" fill="#5c3d0d" />
                               <text y={12} textAnchor="middle" fontSize={5.5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.5}>FREE</text>
                             </>
-                          ) : seg.type === "accessoryChoice" ? (
-                            <>
-                              <rect x={-7} y={-3} width={14} height={11} rx={1.2} fill="#5c3d0d" />
-                              <rect x={-7} y={-6.5} width={14} height={4} rx={1.2} fill="#5c3d0d" />
-                              <rect x={-1.3} y={-6.5} width={2.6} height={11.5} fill="#8f6a1f" />
-                              <circle cx={-3.5} cy={-6.5} r={2} fill="none" stroke="#5c3d0d" strokeWidth={1.3} />
-                              <circle cx={3.5} cy={-6.5} r={2} fill="none" stroke="#5c3d0d" strokeWidth={1.3} />
-                              <text y={12} textAnchor="middle" fontSize={5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.4}>RARE</text>
-                            </>
                           ) : (
                             <>
                               <path d="M0 -9 L6 -6.5 V-1 C6 4 3 7.5 0 9.5 C-3 7.5 -6 4 -6 -1 V-6.5 Z" fill="#5c3d0d" />
@@ -3262,109 +3020,32 @@ export default function ClientPage() {
               <button
                 type="button"
                 onClick={doWheelSpin}
-                disabled={wheelSpinning || !!wheelAccessoryChoices}
-                title={wheelAccessoryChoices ? "Pick your Rare Accessory below before spinning again" : undefined}
+                disabled={wheelSpinning}
                 style={{
                   width: "100%",
-                  background: wheelSpinning || wheelAccessoryChoices ? "#a78bfa" : "#7c3aed",
+                  background: wheelSpinning ? "#a78bfa" : "#7c3aed",
                   color: "#fff",
                   border: "none",
                   borderRadius: 10,
                   padding: "11px",
                   fontSize: 13,
                   fontWeight: 700,
-                  cursor: wheelSpinning || wheelAccessoryChoices ? "default" : "pointer",
-                  opacity: wheelAccessoryChoices ? 0.6 : 1,
+                  cursor: wheelSpinning ? "default" : "pointer",
                 }}
               >
                 {wheelSpinning ? "🎡 Spinning..." : "🎡 Spin · $0.01"}
               </button>
 
-              {/* ── RARE ACCESSORY PICKER ──────────────────────────────────
-                  Shown only after landing on the Rare Accessory segment.
-                  Payment is already confirmed; picking here is free — it
-                  just decides WHICH item that win unlocks. */}
-              {wheelAccessoryChoices && (
-                <div
-                  style={{
-                    width: "100%",
-                    border: "2px solid #FF3CAC",
-                    borderRadius: 12,
-                    padding: 10,
-                    background: "rgba(255,60,172,0.08)",
-                  }}
-                >
-                  <p style={{ fontSize: "0.8rem", fontWeight: 800, textAlign: "center", marginBottom: 6, color: "#7a1a56" }}>
-                    🌟 Rare Accessory! Pick your item:
-                  </p>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(3, 1fr)",
-                      gap: 10,
-                    }}
-                  >
-                    {wheelAccessoryChoices.map((accessory) => (
-                      <button
-                        key={accessory.id}
-                        type="button"
-                        onClick={() => confirmWheelAccessoryChoice(accessory.id)}
-                        disabled={wheelChoicePending}
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: 4,
-                          border: "1px solid rgba(122,26,86,0.3)",
-                          borderRadius: 12,
-                          padding: 8,
-                          background: "rgba(255,255,255,0.7)",
-                          cursor: wheelChoicePending ? "not-allowed" : "pointer",
-                          opacity: wheelChoicePending ? 0.6 : 1,
-                        }}
-                      >
-                        <img
-                          src={accessory.imageUrl}
-                          alt={accessory.name}
-                          style={{ width: 40, height: 40, objectFit: "contain" }}
-                        />
-                        <span style={{ fontSize: 10, fontWeight: 700, textAlign: "center", lineHeight: 1.2 }}>
-                          {accessory.name}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 9,
-                            fontWeight: 700,
-                            color: "#fff",
-                            background: "#FF3CAC",
-                            borderRadius: 8,
-                            padding: "2px 8px",
-                          }}
-                        >
-                          {wheelChoicePending ? "..." : "Choose"}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {wheelChoiceError && (
-                <small style={{ color: "#b5544f", fontSize: "0.75rem", textAlign: "center" }}>
-                  {wheelChoiceError}
-                </small>
-              )}
-
-              {wheelResultLabel && !wheelSpinning && !wheelAccessoryChoices && (
+              {wheelResultLabel && !wheelSpinning && (
                 <small style={{ color: "#4caf7d", fontSize: "0.8rem", fontWeight: 800 }}>
-                  🎉 {wheelResultLabel}
+                  🎉 You won: {wheelResultLabel}!
                 </small>
               )}
               {wheelError && (
                 <small style={{ color: "#b5544f", fontSize: "0.78rem" }}>{wheelError}</small>
               )}
               <small style={{ color: "#7a6a63", fontSize: "0.72rem", textAlign: "center" }}>
-                XP rewards, a free check-in, a streak save, or a Rare Accessory of your choice — wallet payment on Base.
+                XP rewards, a free check-in, or a streak save — wallet payment on Base.
               </small>
             </div>
           )}
@@ -4142,7 +3823,7 @@ const faqSections = [
   },
   {
     title: "🎡 Spin Wheel",
-    content: "Spin the wheel for $0.01 (USDC on Base) and win a reward:\n\n• +1 XP — 29%\n• +2 XP — 24%\n• +3 XP — 19%\n• +5 XP — 8%\n• +10 XP — 7%\n• Free Check-in — 5% (waives tomorrow's $0.01 check-in)\n• Streak Save — 5% (auto-protects your streak the next time you miss a day)\n• 🌟 Rare Accessory — 3% (pick ANY not-yet-unlocked accessory for your cat's current stage, free — if you already own everything for that stage, you get +10 XP instead)\n\nBanked Free Check-ins and Streak Saves stack up and are used automatically — a Free Check-in is applied the next time you check in, and a Streak Save kicks in automatically if you ever miss a day.",
+    content: "Spin the wheel for $0.01 (USDC on Base) and win a reward:\n\n• +1 XP — 30%\n• +2 XP — 25%\n• +3 XP — 20%\n• +5 XP — 8%\n• +10 XP — 7%\n• Free Check-in — 5% (waives tomorrow's $0.01 check-in)\n• Streak Save — 5% (auto-protects your streak the next time you miss a day)\n\nBanked Free Check-ins and Streak Saves stack up and are used automatically — a Free Check-in is applied the next time you check in, and a Streak Save kicks in automatically if you ever miss a day.",
   },
   {
     title: "⚠️ Going Feral",
