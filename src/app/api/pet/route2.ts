@@ -398,21 +398,7 @@ export async function POST(req: NextRequest) {
       // serverComputed spreads LAST so it always wins over both the client's
       // `state` and the pre-write existingForSpin snapshot for these fields.
       const merged = { ...existingForSpin, ...state, ...serverComputed };
-
-      // Fold serverComputed.accessories into the baseline BEFORE sanitizing —
-      // otherwise sanitizeState strips the very accessory this call just
-      // granted right back out, because its own "existingUnlocked" (read
-      // from KV before this grant happened) doesn't know about it yet. This
-      // is the exact same trap unlock_accessory's comment above already
-      // warns about — that path was patched, this one (rareaccessory via the
-      // wheel) was missed, which silently discarded every wheel-won rare
-      // accessory: the client showed the win, the save reported ok:true, but
-      // the accessory was never actually persisted, so it vanished on the
-      // next load.
-      const existingForSanitize = serverComputed.accessories
-        ? { ...existingForSpin, accessories: serverComputed.accessories }
-        : existingForSpin;
-      const sanitized = sanitizeState(existingForSanitize, merged);
+      const sanitized = sanitizeState(existingForSpin, merged);
       const finalState = await withCreditTruth(key, sanitized);
       await kv.set(key, finalState);
 
