@@ -1973,6 +1973,8 @@ export default function ClientPage() {
     } catch (err: any) {
       console.error("[CHECKIN] payment failed — raw error:", err);
       const msg: string = err?.message ?? String(err);
+      if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
+        setCheckinError("Cancelled. Tap Check In to try again.");
       } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
         setCheckinError("No wallet connected. Open in Farcaster to pay.");
       } else if (msg.toLowerCase().includes("saving failed") || msg.toLowerCase().includes("identity")) {
