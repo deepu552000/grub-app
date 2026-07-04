@@ -22,7 +22,6 @@ import { ACCESSORIES } from "@/lib/accessories";
 import { getAuth } from "@clerk/nextjs/server";
 import { registerReferral } from "@/lib/referral";
 import { grantCredit, revokeCredit, getCredits } from "@/lib/grub-credits";
-import { petKey } from "@/lib/pet-key";
 
 const VALID_ACCESSORY_IDS = new Set(ACCESSORIES.map((a) => a.id));
 
@@ -40,7 +39,7 @@ async function checkAuth(req: NextRequest) {
 }
 
 async function getPetState(fid: string) {
-  return await kv.get<any>(petKey(fid)!);
+  return await kv.get<any>(`grub:pet:${fid}`);
 }
 
 export async function GET(req: NextRequest) {
@@ -60,7 +59,7 @@ export async function GET(req: NextRequest) {
   const referredUsers = (await kv.get<number[]>(`referrer:${fid}:referred`)) ?? [];
   // Read credits from the atomic keys, not the blob — the blob copy is only
   // a mirror and can lag by design (see lib/grub-credits.ts).
-  const credits = await getCredits(petKey(fid)!);
+  const credits = await getCredits(`grub:pet:${fid}`);
 
   return NextResponse.json({
     ok: true,
@@ -96,8 +95,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, reason: "missing fid or action" }, { status: 400 });
     }
 
-    const key = petKey(fid)!;
-
     // ── Revoke a specific accessory ─────────────────────────────────────
     if (action === "revoke_accessory") {
       const { accessoryId } = body;
@@ -126,7 +123,7 @@ export async function POST(req: NextRequest) {
         if (newEquipped[slot] === accessoryId) delete newEquipped[slot];
       }
 
-      await kv.set(key, {
+      await kv.set(`grub:pet:${fid}`, {
         ...state,
         accessories: { unlocked: newUnlocked, equipped: newEquipped },
       });
@@ -159,7 +156,7 @@ export async function POST(req: NextRequest) {
       }
 
       const newUnlocked = [...alreadyUnlocked, accessoryId];
-      await kv.set(key, {
+      await kv.set(`grub:pet:${fid}`, {
         ...state,
         accessories: { ...accessories, unlocked: newUnlocked },
       });
@@ -182,7 +179,7 @@ export async function POST(req: NextRequest) {
         happiness: typeof happiness === "number" ? happiness : state.happiness,
       };
 
-      await kv.set(key, updated);
+      await kv.set(`grub:pet:${fid}`, updated);
 
       return NextResponse.json({
         ok: true,
@@ -217,12 +214,12 @@ export async function POST(req: NextRequest) {
       // manual correction here can never drift out of sync with a
       // concurrent player-triggered grant/spend on the same fid.
       const field = creditType === "freeCheckin" ? "freeCheckinCredits" : "streakSaveCredits";
-      const newValue = await grantCredit(key, creditType, grantAmount);
+      const newValue = await grantCredit(`grub:pet:${fid}`, creditType, grantAmount);
 
       // Mirror into the blob so GET /api/admin/user-control and the
       // debug-kv dashboard stay accurate without extra plumbing — the
       // atomic key remains the real source of truth.
-      await kv.set(key, { ...state, [field]: newValue });
+      await kv.set(`grub:pet:${fid}`, { ...state, [field]: newValue });
 
       return NextResponse.json({ ok: true, fid, action, creditType, granted: grantAmount, newValue });
     }
@@ -248,10 +245,10 @@ export async function POST(req: NextRequest) {
       if (!state) return NextResponse.json({ ok: false, reason: `no pet state for fid ${fid}` });
 
       const field = creditType === "freeCheckin" ? "freeCheckinCredits" : "streakSaveCredits";
-      const newValue = await revokeCredit(key, creditType, revokeAmount);
+      const newValue = await revokeCredit(`grub:pet:${fid}`, creditType, revokeAmount);
 
       // Mirror into the blob, same as grant_credit above.
-      await kv.set(key, { ...state, [field]: newValue });
+      await kv.set(`grub:pet:${fid}`, { ...state, [field]: newValue });
 
       return NextResponse.json({ ok: true, fid, action, creditType, revoked: revokeAmount, newValue });
     }
@@ -261,7 +258,7 @@ export async function POST(req: NextRequest) {
       const state = await getPetState(fid);
       if (!state) return NextResponse.json({ ok: false, reason: `no pet state for fid ${fid}` });
 
-      await kv.set(key, { ...state, banned: action === "ban" });
+      await kv.set(`grub:pet:${fid}`, { ...state, banned: action === "ban" });
 
       return NextResponse.json({ ok: true, fid, action, banned: action === "ban" });
     }

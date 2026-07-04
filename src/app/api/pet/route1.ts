@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { ACCESSORIES } from "@/lib/accessories";
 import { grantCredit, spendCreditIfAvailable, getCredits, type CreditType } from "@/lib/grub-credits";
-import { petKey, identityLabel } from "@/lib/pet-key";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -42,9 +41,24 @@ const ACCESSORY_PRICES: Record<string, number> = Object.fromEntries(
 );
 
 // ── Identity helper ──────────────────────────────────────────────────────────
-// petKey()/identityLabel() now live in lib/pet-key.ts so other routes (e.g.
-// admin/user-control) can import the exact same key format instead of
-// hand-duplicating it. See that file for the fid/wallet key-format rationale.
+// Grub users are identified by EITHER a Farcaster fid (Warpcast/Farcaster
+// clients) OR a wallet address (Base App, which has no fid at all). Existing
+// fid-keyed data keeps its original key format (`grub:pet:<fid>`) untouched,
+// so no migration is needed for current Farcaster users. Wallet users get a
+// new, clearly-namespaced key (`grub:pet:wallet:<address>`) so the two
+// identity spaces can never collide.
+function petKey(fid?: string | number | null, wallet?: string | null): string | null {
+  if (fid) return `grub:pet:${fid}`;
+  if (wallet) return `grub:pet:wallet:${wallet.toLowerCase()}`;
+  return null;
+}
+
+// Short label used only in server logs, e.g. "fid=1234" or "wallet=0xabc...".
+function identityLabel(fid?: string | number | null, wallet?: string | null): string {
+  if (fid) return `fid=${fid}`;
+  if (wallet) return `wallet=${wallet}`;
+  return "unknown";
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
