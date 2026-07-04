@@ -2,54 +2,13 @@
 // Generates a dynamic OG image card for sharing Grub on Farcaster.
 // Usage: /api/share-card?stage=1&mood=content&xp=240&streak=5&bond=42
 // Spin Wheel win card: add &win=<label> (e.g. "Rare Accessory: Gold Glasses"
-// or "+10 XP"), &winId=<segment id> (e.g. "xp10", "freecheckin",
-// "rareaccessory" — must match a key in WIN_STYLES below, drives the emoji/
-// color for that specific reward type) and, for Rare Accessory wins
-// specifically, &rare=1 for the bigger/flashier gold banner treatment.
+// or "+10 XP") and, for Rare Accessory wins specifically, &rare=1 for the
+// bigger/flashier gold banner treatment.
 
 import { ImageResponse } from "next/og";
 import { NextRequest } from "next/server";
 
 export const runtime = "edge";
-
-// Per-reward-type banner styling for Spin Wheel wins. Colors mirror
-// WHEEL_SEGMENTS in Client.tsx exactly, so the share card reads as "the same
-// wheel" rather than inventing a second unrelated palette. rareaccessory
-// isn't listed here — it gets its own dedicated bigger/flashier gold+pink
-// banner further down (see isRareWin), since it's structurally different
-// (bigger box, glow, bracketing emoji) rather than just a recolored pill.
-//
-// `tier` drives size/prominence:
-//   "xp"        — small pill, size step-ups with `scale` (xp1 smallest, xp10 largest)
-//   "highlight" — bigger, bolder banner w/ soft glow (freecheckin, streaksave —
-//                 meaningfully better than a few XP, so they read as a step up
-//                 without stealing the rare-accessory gold-banner treatment)
-const WIN_STYLES: Record<
-  string,
-  { emoji: string; bg: string; border: string; text: string; tier: "xp" | "highlight"; scale: number }
-> = {
-  xp1:         { emoji: "✨", bg: "rgba(245,185,66,0.16)",  border: "rgba(245,185,66,0.4)",  text: "#ffe9b8", tier: "xp", scale: 0 },
-  xp2:         { emoji: "✨", bg: "rgba(242,153,74,0.16)",  border: "rgba(242,153,74,0.4)",  text: "#ffdcb8", tier: "xp", scale: 1 },
-  xp3:         { emoji: "⚡", bg: "rgba(235,87,87,0.16)",   border: "rgba(235,87,87,0.4)",   text: "#ffc9c9", tier: "xp", scale: 2 },
-  xp5:         { emoji: "⚡", bg: "rgba(187,107,217,0.16)", border: "rgba(187,107,217,0.4)", text: "#eccbff", tier: "xp", scale: 3 },
-  xp10:        { emoji: "🔥", bg: "rgba(238,66,102,0.18)",  border: "rgba(238,66,102,0.45)", text: "#ffc7d1", tier: "xp", scale: 4 },
-  freecheckin: { emoji: "🎁", bg: "rgba(46,196,241,0.20)",  border: "rgba(46,196,241,0.5)",  text: "#d8f4ff", tier: "highlight", scale: 0 },
-  streaksave:  { emoji: "🛡️", bg: "rgba(39,174,96,0.20)",  border: "rgba(39,174,96,0.5)",   text: "#d8ffe6", tier: "highlight", scale: 0 },
-};
-const DEFAULT_WIN_STYLE = {
-  emoji: "🎡", bg: "rgba(255,255,255,0.08)", border: "rgba(255,255,255,0.2)", text: "#e8e0f5",
-  tier: "xp" as const, scale: 0,
-};
-
-// xp tier: 5 size steps (scale 0→4) so a +10 XP win visibly outsizes a +1 XP win
-// without touching the highlight/rare tiers.
-const XP_SCALE_STEPS = [
-  { fontSize: 12, emojiSize: 13, padding: "4px 12px" },
-  { fontSize: 12, emojiSize: 13, padding: "5px 13px" },
-  { fontSize: 13, emojiSize: 14, padding: "5px 14px" },
-  { fontSize: 14, emojiSize: 16, padding: "6px 15px" },
-  { fontSize: 15, emojiSize: 18, padding: "7px 17px" },
-];
 
 // IMPORTANT: next/og (Satori) has unreliable WebP decoding in the edge runtime.
 // The live game UI can keep using .webp, but for this OG card we need PNG copies
@@ -112,9 +71,7 @@ export async function GET(req: NextRequest) {
   // `rare` flips on the bigger/flashier gold treatment for Rare Accessory
   // wins specifically, per the "every win, but bigger for rare wins" design.
   const win        = searchParams.get("win");
-  const winId      = searchParams.get("winId");
   const isRareWin  = searchParams.get("rare") === "1";
-  const winStyle   = winId ? (WIN_STYLES[winId] ?? DEFAULT_WIN_STYLE) : DEFAULT_WIN_STYLE;
 
   const stageData  = stages[stageParam - 1];
   const catSrc     = await catImageDataUri(stageParam, mood, origin);
@@ -209,44 +166,17 @@ export async function GET(req: NextRequest) {
               </span>
               <span style={{ fontSize: 20, display: "flex" }}>🎉</span>
             </div>
-          ) : winStyle.tier === "highlight" ? (
-            <div
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                background: winStyle.bg,
-                border: `1.5px solid ${winStyle.border}`,
-                borderRadius: 16,
-                padding: "7px 18px",
-                boxShadow: `0 0 18px ${winStyle.border}`,
-              }}
-            >
-              <span style={{ fontSize: 18, display: "flex" }}>{winStyle.emoji}</span>
-              <span style={{ fontSize: 16, fontWeight: 800, color: winStyle.text, letterSpacing: 0.3 }}>
-                Won: {win}
-              </span>
-            </div>
           ) : (
             <div
               style={{
                 display: "flex", alignItems: "center", gap: 6,
-                background: winStyle.bg,
-                border: `1px solid ${winStyle.border}`,
-                borderRadius: 14,
-                padding: XP_SCALE_STEPS[winStyle.scale]?.padding ?? XP_SCALE_STEPS[0].padding,
+                background: "rgba(46,196,241,0.16)",
+                border: "1px solid rgba(46,196,241,0.35)",
+                borderRadius: 14, padding: "5px 14px",
               }}
             >
-              <span style={{ fontSize: XP_SCALE_STEPS[winStyle.scale]?.emojiSize ?? XP_SCALE_STEPS[0].emojiSize, display: "flex" }}>
-                {winStyle.emoji}
-              </span>
-              <span
-                style={{
-                  fontSize: XP_SCALE_STEPS[winStyle.scale]?.fontSize ?? XP_SCALE_STEPS[0].fontSize,
-                  color: winStyle.text,
-                  fontWeight: 600,
-                }}
-              >
-                Won: {win}
-              </span>
+              <span style={{ fontSize: 13, display: "flex" }}>🎡</span>
+              <span style={{ fontSize: 13, color: "#bdeaff", fontWeight: 600 }}>Won: {win}</span>
             </div>
           )
         )}

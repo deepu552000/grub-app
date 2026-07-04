@@ -2110,7 +2110,7 @@ export default function ClientPage() {
           setLastAction(`🎡 Spin Wheel: already unlocked every Stage ${stageIndex} item — +${consolationXp} XP instead!`);
           playSfx("checkin");
           setWheelSpinning(false);
-          shareWheelWin(`Rare Accessory (+${consolationXp} XP consolation)`, false);
+          shareWheelWin(`Rare Accessory (+${consolationXp} XP consolation)`, false, "xp10");
 
           const saveWallet = normalizeWallet(paidWallet, walletAddress);
           const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
@@ -2188,7 +2188,7 @@ export default function ClientPage() {
       setLastAction(`🎡 Spin Wheel: ${segment.label}!`);
       playSfx(segment.type === "xp" ? "checkin" : "unlock");
       setWheelSpinning(false);
-      shareWheelWin(segment.label, false);
+      shareWheelWin(segment.label, false, segment.id);
 
       // Persist to the server. Reuses the same fid-or-wallet identity
       // resolution as check-in/accessory unlock. Non-blocking beyond this —
@@ -2615,7 +2615,7 @@ export default function ClientPage() {
   // Accessory wins specifically — every other win still gets a share, just
   // with the smaller pill treatment. Fires automatically right when a win
   // is confirmed (no separate "Share" tap), per how this was scoped.
-  function shareWheelWin(rewardLabel: string, isRareWin: boolean) {
+  function shareWheelWin(rewardLabel: string, isRareWin: boolean, winId?: string) {
     const shareParams = new URLSearchParams({
       stage:  String(stageIndex),
       mood:   mood,
@@ -2624,6 +2624,7 @@ export default function ClientPage() {
       bond:   String(clamp(state.bond)),
       win:    rewardLabel,
     });
+    if (winId) shareParams.set("winId", winId);
     if (isRareWin) shareParams.set("rare", "1");
     if (fid) shareParams.set("ref", String(fid));
 

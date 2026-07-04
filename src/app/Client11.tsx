@@ -1406,30 +1406,53 @@ export default function ClientPage() {
         ? await sdk.wallet.getEthereumProvider().catch(() => null)
         : await getFcProviderWithTimeout();
       if (fcProvider) {
-        const accounts = await fcProvider.request({ method: "eth_requestAccounts" }) as string[];
-        if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
-        console.log("[PAYMENT] wallet (Farcaster):", accounts[0]);
+        // Everything below is now wrapped in its own try/catch. In a plain
+        // desktop/mobile browser tab (no real Farcaster/Base App host),
+        // sdk.wallet.getEthereumProvider() can still resolve to a truthy
+        // but non-functional bridge object — there's no host on the other
+        // end to actually answer eth_requestAccounts/eth_sendTransaction.
+        // When that happens the bridge's own internal RPC-response parsing
+        // blows up with something like "RpcResponse.InternalError: Cannot
+        // read properties of undefined (reading 'error')" — previously
+        // uncaught here, which killed the whole payment (including a real
+        // injected wallet like Rabby/MetaMask sitting right there on
+        // window.ethereum, Path 1.5 below) instead of ever reaching it.
+        // Now: a genuine user rejection/cancel still surfaces immediately
+        // (so we don't mask "you said no" as some other error), but any
+        // other failure here just falls through to the injected-wallet /
+        // Base Account paths below instead of throwing.
+        try {
+          const accounts = await fcProvider.request({ method: "eth_requestAccounts" }) as string[];
+          if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
+          console.log("[PAYMENT] wallet (Farcaster):", accounts[0]);
 
-        console.log("[PAYMENT] sending tx, microUsdc:", microUsdc);
-        const txHash: string = await fcProvider.request({
-          method: "eth_sendTransaction",
-          params: [{
-            from: accounts[0] as `0x${string}`,
-            to: USDC_CONTRACT,
-            data,
-          }],
-        });
+          console.log("[PAYMENT] sending tx, microUsdc:", microUsdc);
+          const txHash: string = await fcProvider.request({
+            method: "eth_sendTransaction",
+            params: [{
+              from: accounts[0] as `0x${string}`,
+              to: USDC_CONTRACT,
+              data,
+            }],
+          });
 
-        if (!txHash) throw new Error("No transaction hash returned. Please try again.");
-        console.log("[PAYMENT] confirmed ✅ txHash:", txHash);
-        // eth_sendTransaction returns only after user explicitly confirms in wallet —
-        // that confirmation IS the gate. Receipt polling via FC provider is not supported,
-        // so we trust the hash and unlock immediately. Server-side verify-payment route
-        // provides the on-chain double-check for audit purposes.
-        // .toLowerCase() to match every other return path below — the server
-        // already normalizes case in petKey(), but there's no reason for the
-        // client to be the one inconsistent source.
-        return { txHash, walletAddress: accounts[0].toLowerCase() };
+          if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+          console.log("[PAYMENT] confirmed ✅ txHash:", txHash);
+          // eth_sendTransaction returns only after user explicitly confirms in wallet —
+          // that confirmation IS the gate. Receipt polling via FC provider is not supported,
+          // so we trust the hash and unlock immediately. Server-side verify-payment route
+          // provides the on-chain double-check for audit purposes.
+          // .toLowerCase() to match every other return path below — the server
+          // already normalizes case in petKey(), but there's no reason for the
+          // client to be the one inconsistent source.
+          return { txHash, walletAddress: accounts[0].toLowerCase() };
+        } catch (fcErr) {
+          const fcMsg = (fcErr as any)?.message?.toLowerCase?.() ?? "";
+          if (fcMsg.includes("reject") || fcMsg.includes("denied") || fcMsg.includes("cancel")) {
+            throw fcErr;
+          }
+          console.log("[PAYMENT] Farcaster bridge failed, falling back to injected/Base Account:", fcErr);
+        }
       }
     }
 
@@ -1669,6 +1692,42 @@ export default function ClientPage() {
     const d = new Date();
     d.setDate(d.getDate() - 1);
     return d.toISOString().slice(0, 10);
+  }
+
+  // Add/subtract whole days from a "YYYY-MM-DD" key, staying in UTC to match
+  // todayKey()/dayKey's own toISOString()-based construction.
+  function addDaysToKey(dayKey: string, n: number): string {
+    const d = new Date(dayKey + "T00:00:00.000Z");
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }
+
+  // Always returns exactly 7 date-keys for the streak dot row, oldest to
+  // newest (left to right) — but WHICH 7 dates depends on account age:
+  //
+  // - First 7 days of an account's life: LEFT-ANCHORED. Dot 0 is always the
+  //   account's actual day 1 (its earliest known check-in, or today if it
+  //   hasn't checked in even once yet), and the row fills left → right as
+  //   real days happen. Dates past today haven't been reached yet, so they
+  //   render as grey placeholders on the right — this is what gives a
+  //   brand-new wallet a green dot on the LEFT instead of the right.
+  // - From day 7 onward: RIGHT-ANCHORED / sliding, same as the original
+  //   fixed trailing-7-day view — dot 6 (rightmost) is always today, and
+  //   the oldest day drops off the left as time passes. At the exact moment
+  //   an account turns 7 days old, both formulas produce the identical set
+  //   of 7 dates, so the switch is seamless — no visible jump for anyone.
+  function checkinDotDates(): string[] {
+    const history = state.checkinHistory ?? [];
+    const earliestHistoryDay = history.length > 0 ? history.slice().sort()[0] : null;
+    const anchorDay = earliestHistoryDay ?? todayKey();
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const daysElapsed = Math.floor(
+      (new Date(todayKey()).getTime() - new Date(anchorDay).getTime()) / msPerDay
+    ) + 1;
+    if (daysElapsed < 7) {
+      return Array.from({ length: 7 }, (_, i) => addDaysToKey(anchorDay, i));
+    }
+    return Array.from({ length: 7 }, (_, i) => addDaysToKey(todayKey(), -(6 - i)));
   }
 
   const checkinStreak = state.checkinStreak ?? 0;
@@ -1952,6 +2011,7 @@ export default function ClientPage() {
         amountUsd: CHECKIN_USD,
       }, checkinIdentity);
     } catch (err: any) {
+      console.error("[CHECKIN] payment failed — raw error:", err);
       const msg: string = err?.message ?? String(err);
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
         setCheckinError("Cancelled. Tap Check In to try again.");
@@ -1987,6 +2047,7 @@ export default function ClientPage() {
       paidWallet = paymentResult.walletAddress;
       if (!txHash) throw new Error("Payment returned no transaction hash. Spin aborted.");
     } catch (err: any) {
+      console.error("[WHEEL] payment failed — raw error:", err);
       const msg: string = err?.message ?? String(err);
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
         setWheelError("Cancelled. Tap Spin to try again.");
@@ -2049,6 +2110,7 @@ export default function ClientPage() {
           setLastAction(`🎡 Spin Wheel: already unlocked every Stage ${stageIndex} item — +${consolationXp} XP instead!`);
           playSfx("checkin");
           setWheelSpinning(false);
+          shareWheelWin(`Rare Accessory (+${consolationXp} XP consolation)`, false);
 
           const saveWallet = normalizeWallet(paidWallet, walletAddress);
           const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
@@ -2126,6 +2188,7 @@ export default function ClientPage() {
       setLastAction(`🎡 Spin Wheel: ${segment.label}!`);
       playSfx(segment.type === "xp" ? "checkin" : "unlock");
       setWheelSpinning(false);
+      shareWheelWin(segment.label, false);
 
       // Persist to the server. Reuses the same fid-or-wallet identity
       // resolution as check-in/accessory unlock. Non-blocking beyond this —
@@ -2312,6 +2375,7 @@ export default function ClientPage() {
     setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}!`);
     setLastAction(`🎡 Spin Wheel: unlocked ${accessory?.name ?? accessoryId}!`);
     playSfx("unlock");
+    shareWheelWin(`Rare Accessory: ${accessory?.name ?? accessoryId}`, true);
   }
 
   const line = useMemo(() => {
@@ -2543,6 +2607,42 @@ export default function ClientPage() {
     shareOrCopy(castText, appUrl, "Share text + link copied! Paste it anywhere to share your Grub. 📋");
   }
 
+  // Auto-share for Spin Wheel wins — same embed strategy as shareKitty (the
+  // app URL is embedded, not the raw image, so page.tsx's generateMetadata
+  // can point fc:frame's imageUrl at /api/share-card with matching params
+  // and the whole card stays tappable straight into the app). `isRareWin`
+  // toggles the bigger/flashier gold banner on the card itself for Rare
+  // Accessory wins specifically — every other win still gets a share, just
+  // with the smaller pill treatment. Fires automatically right when a win
+  // is confirmed (no separate "Share" tap), per how this was scoped.
+  function shareWheelWin(rewardLabel: string, isRareWin: boolean) {
+    const shareParams = new URLSearchParams({
+      stage:  String(stageIndex),
+      mood:   mood,
+      xp:     String(Math.round(state.xp)),
+      streak: String(state.streak),
+      bond:   String(clamp(state.bond)),
+      win:    rewardLabel,
+    });
+    if (isRareWin) shareParams.set("rare", "1");
+    if (fid) shareParams.set("ref", String(fid));
+
+    const appUrl = `https://grub-app-eight.vercel.app/?${shareParams.toString()}`;
+
+    const castText = isRareWin
+      ? [
+          `🎉 Just won ${rewardLabel} spinning Grub's Spin Wheel!`,
+          `My Grub is ${stage.name} (${stage.title}) — ${Math.round(state.xp)} XP, ${state.streak}-day streak.`,
+          `Spin your own wheel and raise a tiny white kitty on Farcaster ↓`,
+        ].join("\n")
+      : [
+          `Won ${rewardLabel} on Grub's Spin Wheel! 🎡`,
+          `Raise your own tiny white kitty on Farcaster ↓`,
+        ].join("\n");
+
+    shareOrCopy(castText, appUrl, "Share text + link copied! Paste it anywhere to show off your win. 📋");
+  }
+
   // ── Transaction logger — fire and forget, never blocks the UI ───────────────
   // Accepts the SAME identity (fid or wallet) that was just used to save the
   // /api/pet state, rather than only checking the outer `fid` var. Base App
@@ -2751,7 +2851,7 @@ export default function ClientPage() {
       playSfx("unlock");
       console.log("[UNLOCK] complete ✅");
     } catch (err: any) {
-      console.error("[UNLOCK] error caught:", err?.message ?? err);
+      console.error("[UNLOCK] error caught (raw):", err);
       const msg: string = err?.message ?? String(err);
       playSfx("error");
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
@@ -3369,32 +3469,25 @@ export default function ClientPage() {
               )}
               <p>Check in to unlock today's care actions</p>
               <div style={{ display: "flex", gap: 7, justifyContent: "center", alignItems: "center" }}>
-                {Array.from({ length: 7 }).map((_, i) => {
-                  // These dots are a real calendar record of the last 7
-                  // days — green = checked in that day, red = that day
-                  // passed with no check-in, grey = today/future (not
-                  // reached yet). This is separate from the "X/7 days"
-                  // text below and the reward math, which track your
-                  // current no-miss run length (gateCyclePos) — a miss
-                  // resets that counter but still shows up here as red.
-                  // Rendered oldest → newest, left to right, so today is
-                  // always the rightmost dot (i=0 daysAgo=6 is 6 days ago,
-                  // i=6 daysAgo=0 is today).
-                  const daysAgo = 6 - i;
-                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
+                {checkinDotDates().map((dayKey, i) => {
+                  // Always 7 dots — green = checked in that day, red = that
+                  // day passed with no check-in, grey = today/not-reached-
+                  // yet. This is separate from the "X/7 days" text below,
+                  // which tracks your current no-miss run length
+                  // (gateCyclePos) and resets to 1 the moment a miss breaks
+                  // the chain — the dots themselves keep the real
+                  // day-by-day record and do NOT reset, so a
+                  // green/red/green pattern can sit side by side while the
+                  // text above independently goes back to "Day 1 of 7".
+                  // checkinDotDates() left-anchors day 1 of a brand-new
+                  // wallet to the LEFTMOST dot (with the not-yet-reached
+                  // days 2-7 as grey placeholders to the right), then
+                  // switches to the classic right-anchored sliding window
+                  // (today always rightmost) once the account passes 7
+                  // days old.
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
-                  // A day only counts as "missed" if it falls AFTER the
-                  // account's actual earliest known check-in. Day-keys are
-                  // "YYYY-MM-DD" strings, so lexicographic min == earliest
-                  // date. Without this, gating on e.g. "has checked in at
-                  // least once" still breaks the moment a brand-new wallet
-                  // does its very first check-in: totalCheckIns flips to 1,
-                  // but the 6 days before that first-ever check-in would
-                  // still show red, as if they'd been neglected, when the
-                  // account simply didn't exist yet on those days.
-                  const earliestHistoryDay = history.length > 0 ? history.slice().sort()[0] : null;
-                  const missed = earliestHistoryDay !== null && dayKey >= earliestHistoryDay && dayKey < todayKey() && !hit;
+                  const missed = dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 13, height: 13, borderRadius: "50%",
@@ -3452,18 +3545,17 @@ export default function ClientPage() {
                   : `Day ${cyclePos} of 7 → keep it going for ${7 - cyclePos} more day${7 - cyclePos === 1 ? "" : "s"} to get +5 XP`}
               </small>
               <div style={{ display: "flex", gap: 7 }}>
-                {Array.from({ length: 7 }).map((_, i) => {
-                  // Same real-calendar record as the gate view — green =
-                  // checked in, red = missed, grey = today/future.
-                  // Oldest → newest, left to right (today is rightmost).
-                  const daysAgo = 6 - i;
-                  const dayKey = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().slice(0, 10); })();
+                {checkinDotDates().map((dayKey, i) => {
+                  // Same fixed-7-slot model as the gate view above —
+                  // left-anchored to account day 1 during the first week,
+                  // then the classic right-anchored sliding window (today
+                  // always rightmost) once the account passes 7 days old.
+                  // This row does NOT reset on a miss — only the "Day X of
+                  // 7" text above (driven by cyclePos) resets to 1; the
+                  // dots keep the real history.
                   const history = state.checkinHistory ?? [];
                   const hit = history.includes(dayKey);
-                  // See the gate view above — don't mark days before the
-                  // account's actual earliest known check-in as "missed".
-                  const earliestHistoryDay = history.length > 0 ? history.slice().sort()[0] : null;
-                  const missed = earliestHistoryDay !== null && dayKey >= earliestHistoryDay && dayKey < todayKey() && !hit;
+                  const missed = dayKey < todayKey() && !hit;
                   return (
                     <span key={i} title={dayKey} style={{
                       width: 14, height: 14, borderRadius: "50%",
