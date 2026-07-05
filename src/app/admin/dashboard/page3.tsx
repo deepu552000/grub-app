@@ -1028,8 +1028,10 @@ function AdminDashboardInner() {
           <KpiCard label="Referrers"      value={String(referrers.length)}    sub="with ≥1 referred user"     accent={C.amberDim} dark={dark} />
         </div>
 
-        {/* ── Player progress (full width) ── */}
-        <div style={{ marginTop: "1rem" }}>
+        {/* ── Charts row ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1.8fr 1fr", gap: 16, marginTop: "1rem" }}>
+
+          {/* Player progress */}
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
               <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: 0 }}>Player Progress</p>
@@ -1084,7 +1086,7 @@ function AdminDashboardInner() {
                       const bothOff = !u.hasAddedApp && !u.hasNotifToken;
                       return (
                       <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{ minWidth: 72, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                        <div style={{ width: 72, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
                           <button
                             onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
                             style={{
@@ -1093,12 +1095,12 @@ function AdminDashboardInner() {
                               fontWeight: bothOff ? 700 : 400,
                               background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0,
                               textShadow: bothOff ? "none" : (dark ? `0 0 8px ${C.amberGlow}66` : "none"),
-                              display: "inline-flex", alignItems: "center", gap: 3, whiteSpace: "nowrap",
+                              display: "inline-flex", alignItems: "center", gap: 3,
                             }}
                             title="Open in user panel"
                           >
                             {bothOff && <span>🔕</span>}
-                            {String(u.fid).startsWith("wallet:") ? u.fid : `#${u.fid}`}
+                            #{displayFid(u.fid)}
                           </button>
                           {profile?.username ? (
                             <a
@@ -1155,12 +1157,12 @@ function AdminDashboardInner() {
                               color: bothOff ? C.red : (dark ? C.amberGlow : "#7c3aed"),
                               fontWeight: bothOff ? 700 : 600,
                               background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0,
-                              display: "inline-flex", alignItems: "center", gap: 3, whiteSpace: "nowrap", flexShrink: 0,
+                              display: "inline-flex", alignItems: "center", gap: 3,
                             }}
                             title="Open in user panel"
                           >
                             {bothOff && <span>🔕</span>}
-                            {String(u.fid).startsWith("wallet:") ? u.fid : `#${u.fid}`}
+                            #{displayFid(u.fid)}
                           </button>
                           {profile?.username ? (
                             <a
@@ -1184,30 +1186,32 @@ function AdminDashboardInner() {
               </>
             )}
           </div>
-        </div>
 
-        {/* ── Transactions by type (full width, compact — mirrors the Spin Wheel Results card style below) ── */}
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem", marginTop: "1rem" }}>
-          <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 14px" }}>Transactions by Type</p>
-          {Object.keys(byType).length === 0 ? (
-            <p style={{ fontSize: 13, color: T.textMute }}>No transactions yet.</p>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
-              {Object.entries(byType).map(([type, count]) => {
-                const meta = TYPE_META[type] ?? { color: T.textSub, bg: T.surfaceAlt, label: type };
-                const pct = Math.round((count / txns.length) * 100);
-                return (
-                  <div key={type} style={{ background: T.surfaceAlt, border: `1px solid ${T.borderSub}`, borderRadius: 10, padding: "12px 14px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                      <Badge color={meta.color} bg={meta.bg}>{meta.label}</Badge>
-                      <span style={{ fontSize: 11, color: T.textMute }}>{pct}%</span>
+          {/* Txn type breakdown */}
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "1.25rem" }}>
+            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 14px" }}>Transactions by Type</p>
+            {Object.keys(byType).length === 0 ? (
+              <p style={{ fontSize: 13, color: T.textMute }}>No transactions yet.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: "calc(100% - 30px)", gap: 0 }}>
+                {Object.entries(byType).map(([type, count]) => {
+                  const meta = TYPE_META[type] ?? { color: T.textSub, bg: T.surfaceAlt, label: type };
+                  const pct = Math.round((count / txns.length) * 100);
+                  return (
+                    <div key={type} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "10px 0", borderBottom: `1px solid ${T.borderSub}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <Badge color={meta.color} bg={meta.bg}>{meta.label}</Badge>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: T.cream, fontVariantNumeric: "tabular-nums" }}>{count} <span style={{ fontSize: 11, fontWeight: 400, color: T.textMute }}>({pct}%)</span></span>
+                      </div>
+                      <div style={{ height: 6, background: T.borderSub, borderRadius: 3 }}>
+                        <div style={{ height: 6, background: meta.color, borderRadius: 3, width: `${pct}%`, boxShadow: `0 0 8px ${meta.color}66` }} />
+                      </div>
                     </div>
-                    <p style={{ fontSize: 22, fontWeight: 800, color: meta.color, margin: 0, fontVariantNumeric: "tabular-nums" }}>{count}</p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ── Missing txn-log backfill ── */}
@@ -1825,11 +1829,7 @@ function AdminDashboardInner() {
                         Also trigger real DEGEN payout (test mode)
                       </label>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <Input
-                          value={newReferrerFid}
-                          onChange={setNewReferrerFid}
-                          placeholder={String(controlState.fid).startsWith("wallet:") ? "Sponsor wallet — full 0x address" : "Sponsor FID"}
-                        />
+                        <Input value={newReferrerFid} onChange={setNewReferrerFid} placeholder="Sponsor FID" />
                         <Btn
                           onClick={() => runAction("edit_referral", { newReferrerFid, triggerPayout: triggerRealPayout })}
                           disabled={!newReferrerFid}
@@ -1838,11 +1838,6 @@ function AdminDashboardInner() {
                           Set
                         </Btn>
                       </div>
-                      {String(controlState.fid).startsWith("wallet:") && (
-                        <p style={{ fontSize: 10, color: T.textMute, margin: "6px 0 0" }}>
-                          Paste the full address (42 chars) — not the shortened wallet:0x1233....89893 label shown elsewhere on the dashboard.
-                        </p>
-                      )}
                     </div>
 
                     {/* Remove referral */}

@@ -318,18 +318,6 @@ export async function POST(req: NextRequest) {
             referrerRaw.startsWith("wallet:") ? referrerRaw.slice("wallet:".length) : referrerRaw
           ).toLowerCase();
 
-          // Guard against pasting the dashboard's shortened display label
-          // (e.g. "wallet:0x1233....89893") instead of the real address —
-          // that truncated form isn't a real key and would silently create
-          // a referral pointing at a wallet that doesn't exist. A real
-          // address is always exactly 0x + 40 hex chars, no "....".
-          if (!/^0x[0-9a-f]{40}$/.test(referrerAddr)) {
-            return NextResponse.json({
-              ok: false,
-              reason: `"${referrerRaw}" isn't a full wallet address. Paste the complete 0x address (42 characters), not the shortened label shown in the dashboard — e.g. 0x6619456623736bAF129D7C091026938443370f11.`,
-            }, { status: 400 });
-          }
-
           if (triggerPayout) {
             // Runs the SAME registerReferralBase() flow a real Base
             // referral link click triggers — KV writes and an actual
