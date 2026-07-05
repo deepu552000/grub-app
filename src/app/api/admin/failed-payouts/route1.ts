@@ -17,13 +17,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { verifyToken } from "@clerk/nextjs/server";
-import {
-  sendDegen,
-  acquireLock,
-  releaseLock,
-  logDegenTxn,
-  type FailedPayout,
-} from "@/lib/referral";
+import { sendDegen, acquireLock, releaseLock, type FailedPayout } from "@/lib/referral";
 
 const FAILED_PAYOUTS_KEY = "failed-payouts";
 
@@ -38,13 +32,31 @@ async function requireAuth(req: NextRequest) {
   }
 }
 
-// NOTE: logDegenTxn now comes from @/lib/referral instead of a local copy.
-// The local copy was typed with fid/toFid as plain `number`, which broke the
-// build once FailedPayout.fid/.toFid became `number | string` (to support
-// Base App's "wallet:0x..." identity). lib/referral.ts's exported version is
-// already correctly typed as `number | string` and is the same function the
-// checkin/register routes use — importing it here keeps there from being two
-// copies that can drift out of sync again.
+async function logDegenTxn(entry: {
+  fid: number;
+  toFid: number;
+  type: "referral_join" | "referral_checkin";
+  txHash: string;
+  amountDegen: number;
+  toWallet: string;
+}) {
+  try {
+    await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? "https://grub-app-eight.vercel.app"}/api/txn-log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fid: entry.fid,
+        type: entry.type,
+        txHash: entry.txHash,
+        amountUsd: 0,
+        amountDegen: entry.amountDegen,
+        toFid: entry.toFid,
+        toWallet: entry.toWallet,
+        ts: Date.now(),
+      }),
+    });
+  } catch { /* non-blocking */ }
+}
 
 export async function GET(req: NextRequest) {
   if (!(await requireAuth(req))) {

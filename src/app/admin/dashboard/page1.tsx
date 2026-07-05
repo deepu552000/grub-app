@@ -37,8 +37,8 @@ type WebhookLogEntry = {
 
 type FailedPayout = {
   id: string;
-  fid: number | string;   // fid, or "wallet:0x..." for Base App — see lib/referral.ts
-  toFid: number | string; // same
+  fid: number;
+  toFid: number;
   toWallet: string;
   amountDegen: number;
   type: "referral_join" | "referral_checkin";
@@ -54,7 +54,7 @@ type TxnEntry = {
   txHash: string;
   amountUsd: number;
   amountDegen?: number;
-  toFid?: number | string; // same as fid — Base App referral payouts use "wallet:0x..." here too
+  toFid?: number;
   toWallet?: string;
   accessoryId?: string;
   accessoryName?: string;

@@ -4,17 +4,12 @@ import { kv } from "@vercel/kv";
 import { verifyToken } from "@clerk/nextjs/server";
 
 export type TxnLogEntry = {
-  // fid, or "wallet:0x..." for Base App identities — same convention as
-  // FailedPayout in lib/referral.ts. The client (Client.tsx logTransaction)
-  // and lib/referral.ts's logDegenTxn already send the wallet-string form
-  // for Base users; this type was just never updated to match, which is
-  // exactly the kind of drift that broke the admin/failed-payouts build.
-  fid: number | string;
+  fid: number;
   type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin";
   txHash: string;
   amountUsd: number;
   amountDegen?: number;
-  toFid?: number | string;
+  toFid?: number;
   toWallet?: string;
   accessoryId?: string;
   accessoryName?: string;
