@@ -2,7 +2,7 @@
 
 import sdk from "@farcaster/miniapp-sdk";
 import type { CSSProperties } from "react";
-import { useEffect, useMemo, useState, useRef } from "react";
+import { Component, useEffect, useMemo, useState, useRef } from "react";
 import { connect, getAccount, reconnect, sendTransaction, switchChain, watchAccount } from "wagmi/actions";
 import { base } from "wagmi/chains";
 import { wagmiConfig } from "@/lib/wagmi";
@@ -178,6 +178,9 @@ type PetState = {
                                // paid ($0.01) check-in, one per credit
   streakSaveCredits: number;  // banked from Spin Wheel wins — auto-consumed to
                                // protect checkinStreak the next time a day is missed
+  lastShareXpDay: string;     // date key of the last "Share My Grub" tap that paid
+                               // out the +1 XP share bonus — caps it at once/day so
+                               // spamming the share button can't farm infinite XP
 };
 
 type FloatingNumber = {
@@ -475,6 +478,7 @@ const defaultState: PetState = {
   lastAccessoryXpAt: Date.now(),
   freeCheckinCredits: 0,
   streakSaveCredits: 0,
+  lastShareXpDay: "",
 };
 
 // Equip XP is checked on a rolling window, not a calendar day — someone who
@@ -743,7 +747,7 @@ function shadeColor(hex: string, amt: number): string {
 
 let floatId = 0;
 
-export default function ClientPage() {
+function ClientPageInner() {
   // Server and first client render both use defaultState - no mismatch possible.
   const [state, setState] = useState<PetState>(defaultState);
   const [hydrated, setHydrated] = useState(false);
@@ -951,6 +955,43 @@ export default function ClientPage() {
     return () => { cancelled = true; };
   }, [isBaseAppIdentity, walletAddress]);
 
+  // Base App referral registration — the FC equivalent (?ref=<fid>) only
+  // runs inside the `ctx?.user?.fid` branch above and never fires for
+  // wallet-only users, so Base App referral links were silently a no-op.
+  // Mirrors the same request shape via newUserWallet/referrerWallet fields
+  // (see app/api/referral/register/route.ts) — completely separate KV keys
+  // and code path from the fid version, same split as everywhere else Base
+  // support was added. Guarded by a ref so it only ever attempts once per
+  // session, same intent as the fid path's "already registered" check being
+  // the actual source of truth, this just avoids a redundant call on every
+  // walletAddress-triggered re-render.
+  const referralAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (!isBaseAppIdentity || !walletAddress || referralAttemptedRef.current) return;
+    const refParam = new URL(window.location.href).searchParams.get("ref");
+    if (!refParam || refParam.toLowerCase() === walletAddress.toLowerCase()) return;
+
+    referralAttemptedRef.current = true;
+    fetch("/api/referral/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        newUserWallet: walletAddress,
+        referrerWallet: refParam,
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        // Server only sends isNewJoiner:true the first time this wallet is
+        // ever registered — safe even if localStorage gets cleared.
+        if (data?.isNewJoiner) {
+          setState((cur) => ({ ...cur, xp: cur.xp + 20 }));
+          showActionBubble("+20 XP — Welcome new member! 🎉");
+        }
+      })
+      .catch(() => {}); // fire and forget — never block app load on this
+  }, [isBaseAppIdentity, walletAddress]);
+
   useEffect(() => {
     // Call ready() immediately, before anything else. The host's splash-screen
     // watchdog flags the app ("Ready not called") if this doesn't fire within
@@ -1115,8 +1156,17 @@ export default function ClientPage() {
 
     // Always keep localStorage as offline fallback — scoped per identity so
     // this can never leak into a different account's cache (see
-    // scopedStorageKey doc comment above).
-    window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(state));
+    // scopedStorageKey doc comment above). Wrapped in try/catch: some
+    // WebView hosts (Base App's in-app browser in particular) can throw here
+    // — quota limits, storage partitioning, private-mode-like restrictions —
+    // and an uncaught exception in this effect used to take down the whole
+    // React tree with no error boundary to catch it (see ClientErrorBoundary
+    // below). The DB save right after this is unaffected either way.
+    try {
+      window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(state));
+    } catch (err) {
+      console.error("[autosave] localStorage.setItem failed:", err);
+    }
 
     // Save to DB if we have an identity (fid or wallet) — debounced 800ms
     // to avoid hammering on rapid taps.
@@ -1177,6 +1227,9 @@ export default function ClientPage() {
   const mood = useMemo(() => moodFor(state), [state]);
   const stage = getStage(state.xp);
   const stageIndex = stages.findIndex((item) => item.name === stage.name) + 1;
+  // The "Share My Grub" +1 XP bonus is capped at once per day — this just
+  // reflects that in the button label, the actual cap lives in shareKitty().
+  const sharedToday = state.lastShareXpDay === todayKey();
   const nextStage = getNextStage(state.xp);
   const progress = nextStage
     ? Math.min(100, ((state.xp - stage.minXp) / (nextStage.minXp - stage.minXp)) * 100)
@@ -1339,7 +1392,7 @@ export default function ClientPage() {
   const [poolDegen, setPoolDegen] = useState<number | null>(null);
   const [referralData, setReferralData] = useState<{
     referralLink: string;
-    friends: { fid: number; checkins: number; status: string; username: string; pfp: string }[];
+    friends: { fid?: number; wallet?: string; checkins: number; status: string; username: string; pfp?: string }[];
     totalEarned: number;
   } | null>(null);
   const [referralLoading, setReferralLoading] = useState(false);
@@ -2006,6 +2059,12 @@ export default function ClientPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userFID: fid }),
+      }).catch(() => {});
+    } else if (isBaseAppIdentity && walletAddress) {
+      fetch("/api/referral/checkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userWallet: walletAddress }),
       }).catch(() => {});
     }
 
@@ -2722,30 +2781,48 @@ export default function ClientPage() {
   }
 
   function shareKitty() {
+    // +1 XP for sharing, capped at once per day (via lastShareXpDay) so the
+    // button can't be tapped on repeat for free infinite XP. Applied to
+    // local state the same way other small awards are (e.g. the referral
+    // +20 XP above) — picked up by the existing debounced autosave, no new
+    // server action needed.
+    const alreadyPaidToday = state.lastShareXpDay === todayKey();
+    const xpForCard = alreadyPaidToday ? Math.round(state.xp) : Math.round(state.xp) + 1;
+    if (!alreadyPaidToday) {
+      setState((cur) => ({ ...cur, xp: cur.xp + 1, lastShareXpDay: todayKey() }));
+    }
+
     // Single embed strategy: we embed the APP URL (not the raw /api/share-card
     // image). The app's own page.tsx reads these same query params server-side
     // (generateMetadata) and points its fc:frame imageUrl at /api/share-card
-    // with matching stats. That means Farcaster's crawler renders our custom
+    // with matching stats. That means the host's crawler renders our custom
     // stat card as the preview AND the whole card is tappable straight into
     // the app — one rich, clickable embed instead of a dead image plus a
     // separate plain-link preview.
     const shareParams = new URLSearchParams({
       stage:  String(stageIndex),
       mood:   mood,
-      xp:     String(Math.round(state.xp)),
+      xp:     String(xpForCard),
       streak: String(state.streak),
       bond:   String(clamp(state.bond)),
     });
     if (fid) {
       shareParams.set("ref", String(fid));
     }
+    // Only show the "+1 XP" banner on the card when this share actually
+    // paid it out — otherwise a second share the same day would falsely
+    // advertise a bonus the user won't get.
+    if (!alreadyPaidToday) {
+      shareParams.set("win", "+1 XP");
+      shareParams.set("winId", "share");
+    }
 
     const appUrl = `https://grub-app-eight.vercel.app/?${shareParams.toString()}`;
 
     const castText = [
       `My Grub is ${stage.name} (${stage.title}) with a ${state.streak}-day streak! 🐾`,
-      `XP: ${Math.round(state.xp)} · Bond: ${clamp(state.bond)}%`,
-      `Raise your own tiny white kitty on Farcaster ↓`,
+      `XP: ${xpForCard} · Bond: ${clamp(state.bond)}%`,
+      `Raise your own tiny white kitty ↓`,
     ].join("\n");
 
     shareOrCopy(castText, appUrl, "Share text + link copied! Paste it anywhere to share your Grub. 📋");
@@ -2778,11 +2855,11 @@ export default function ClientPage() {
       ? [
           `🎉 Just won ${rewardLabel} spinning Grub's Spin Wheel!`,
           `My Grub is ${stage.name} (${stage.title}) — ${Math.round(state.xp)} XP, ${state.streak}-day streak.`,
-          `Spin your own wheel and raise a tiny white kitty on Farcaster ↓`,
+          `Spin your own wheel and raise a tiny white kitty ↓`,
         ].join("\n")
       : [
           `Won ${rewardLabel} on Grub's Spin Wheel! 🎡`,
-          `Raise your own tiny white kitty on Farcaster ↓`,
+          `Raise your own tiny white kitty ↓`,
         ].join("\n");
 
     shareOrCopy(castText, appUrl, "Share text + link copied! Paste it anywhere to show off your win. 📋");
@@ -3759,7 +3836,7 @@ export default function ClientPage() {
             }}
             onClick={shareKitty}
           >
-            🐱 Share My Grub on Farcaster
+            🐱 Share My Grub {sharedToday ? "(shared today)" : "(+1 XP)"}
           </button>
         </section>
 
@@ -4371,14 +4448,16 @@ export default function ClientPage() {
         </section>
 
         {/* ── REFERRAL ──
-            Hidden entirely when there's no fid. The referral system is
-            still FID-only under the hood (join bonus, checkin payout, the
-            /?ref= link) — showing this to a Base App / wallet-only user
-            would just be a permanently-stuck "Loading..." box with a dead
-            copy-link button, so we hide it rather than show something
-            broken. Re-enable for wallet users once referral.ts, register,
-            and checkin routes get a wallet-keyed path. */}
-        {fid && (
+            Now shown for BOTH fid and Base App wallet identities. Previously
+            gated on `fid` alone from back when referral.ts/register/checkin
+            were FID-only — that gate was never lifted after registerReferralBase,
+            the wallet-keyed /register and /checkin paths, and the wallet
+            branch of /status were added, so Base App users never saw this
+            section even though the backend has fully supported them for a
+            while. FC behavior below is unchanged for fid users — every
+            existing `fid ? ... : ...` branch still resolves exactly the same
+            way it always did; only the wallet fallback is new. */}
+        {(fid || (isBaseAppIdentity && walletAddress)) && (
         <section className="stats-collapsible" style={{ marginTop: 8 }}>
           <button
             type="button"
@@ -4386,7 +4465,7 @@ export default function ClientPage() {
             onClick={async () => {
               const next = !referralOpen;
               setReferralOpen(next);
-              if (next && fid && !referralData) {
+              if (next && (fid || walletAddress) && !referralData) {
                 setReferralLoading(true);
                 // Fetch pool balance in parallel
                 fetch("/api/referral/pool")
@@ -4394,7 +4473,13 @@ export default function ClientPage() {
                   .then((d) => { if (d.ok) setPoolDegen(d.poolDegen); })
                   .catch(() => {});
                 try {
-                  const res = await fetch(`/api/referral/status?fid=${fid}`);
+                  // fid path unchanged; wallet path only used when there's no fid
+                  // (Base App identity) — mirrors the same fid-first convention
+                  // used everywhere else in this file (isBaseAppIdentity, etc.)
+                  const statusUrl = fid
+                    ? `/api/referral/status?fid=${fid}`
+                    : `/api/referral/status?wallet=${walletAddress}`;
+                  const res = await fetch(statusUrl);
                   const data = await res.json();
                   if (data.ok) setReferralData(data);
                 } catch {}
@@ -4414,7 +4499,11 @@ export default function ClientPage() {
                 <p style={{ fontSize: 12, color: "#888", margin: "0 0 4px" }}>Your referral link</p>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <code style={{ fontSize: 11, flex: 1, wordBreak: "break-all", color: "#444" }}>
-                    {fid ? `https://grub-app-eight.vercel.app/?ref=${fid}` : "Loading..."}
+                    {fid
+                      ? `https://grub-app-eight.vercel.app/?ref=${fid}`
+                      : walletAddress
+                        ? `https://grub-app-eight.vercel.app/?ref=${walletAddress}`
+                        : "Loading..."}
                   </code>
                   <button
                     type="button"
@@ -4424,7 +4513,10 @@ export default function ClientPage() {
                       cursor: "pointer", whiteSpace: "nowrap"
                     }}
                     onClick={() => {
-                      navigator.clipboard.writeText(`https://grub-app-eight.vercel.app/?ref=${fid}`);
+                      const link = fid
+                        ? `https://grub-app-eight.vercel.app/?ref=${fid}`
+                        : `https://grub-app-eight.vercel.app/?ref=${walletAddress}`;
+                      navigator.clipboard.writeText(link);
                     }}
                   >
                     Copy
@@ -4432,7 +4524,10 @@ export default function ClientPage() {
                 </div>
               </div>
 
-              {/* Share on Farcaster */}
+              {/* Share link — composeCast on Farcaster, native share sheet /
+                  clipboard fallback everywhere else (Base App included), see
+                  shareOrCopy(). Label kept generic (no "Farcaster" wording)
+                  since the same button/flow serves Base App users too. */}
               <button
                 type="button"
                 style={{
@@ -4441,12 +4536,14 @@ export default function ClientPage() {
                   fontWeight: 700, cursor: "pointer", width: "100%"
                 }}
                 onClick={() => {
-                  const refLink = `https://grub-app-eight.vercel.app/?ref=${fid}`;
-                  const text = `I'm raising Grub 🐱✨ — a tiny white kitty on Farcaster!\nJoin me and help me earn DEGEN 🎁`;
+                  const refLink = fid
+                    ? `https://grub-app-eight.vercel.app/?ref=${fid}`
+                    : `https://grub-app-eight.vercel.app/?ref=${walletAddress}`;
+                  const text = `I'm raising Grub 🐱✨ — a tiny white kitty!\nJoin me and help me earn DEGEN 🎁`;
                   shareOrCopy(text, refLink, "Referral link copied! Paste it anywhere to share. 📋");
                 }}
               >
-                🟣 Share on Farcaster
+                📤 Share Your Link
               </button>
 
               {/* Rewards info */}
@@ -4483,7 +4580,7 @@ export default function ClientPage() {
                   {referralData.friends.length > 0 && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {referralData.friends.map((f) => (
-                        <div key={f.fid} style={{
+                        <div key={f.fid ?? f.wallet} style={{
                           background: "#f5f0e8", borderRadius: 8,
                           padding: "8px 12px", display: "flex",
                           justifyContent: "space-between", alignItems: "center", fontSize: 12
@@ -4524,6 +4621,91 @@ export default function ClientPage() {
       </section>
       {showFaq && <FaqModal onClose={() => setShowFaq(false)} debugInfo={fid ? `fid:${fid}` : walletAddress ? `wallet:${walletAddress}` : "no identity yet"} />}
     </main>
+  );
+}
+
+// Catches any render-time exception below it and shows a recoverable "tap to
+// reload" screen instead of a blank page. Without this, ANY uncaught error
+// anywhere in ClientPageInner (a storage exception, a bad host response, a
+// null-reference from an unexpected sdk.context shape, etc.) unmounts the
+// entire React tree with nothing left on screen and no way back in short of
+// a manual browser refresh — which is exactly the "goes blank, need to
+// refresh" symptom reported in Base App. Base App's in-app browser is a
+// WebView and more prone to storage/permission quirks (private-mode-like
+// restrictions, storage partitioning, quota limits) than a full Farcaster
+// client, making this class of crash more likely to surface there, but this
+// boundary protects every host equally — it's a general robustness fix, not
+// a Base-specific one. React error boundaries must be class components;
+// there's no hook equivalent.
+class ClientErrorBoundary extends Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown, info: unknown) {
+    console.error("[ClientErrorBoundary] caught render error:", error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          style={{
+            minHeight: "100vh",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 14,
+            padding: 24,
+            textAlign: "center",
+            background: "#fff8ef",
+            fontFamily: "inherit",
+          }}
+        >
+          <div style={{ fontSize: "2rem" }}>🐱💤</div>
+          <div style={{ fontWeight: 800, fontSize: "1rem", color: "#49332d" }}>
+            Grub took a little nap.
+          </div>
+          <div style={{ fontSize: "0.85rem", color: "#7a5c4f", maxWidth: 280 }}>
+            Something went wrong loading the app. Your progress is safe — just tap below to wake her back up.
+          </div>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{
+              background: "#49332d",
+              color: "#fff8ef",
+              border: "none",
+              borderRadius: 10,
+              padding: "10px 20px",
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function ClientPage() {
+  return (
+    <ClientErrorBoundary>
+      <ClientPageInner />
+    </ClientErrorBoundary>
   );
 }
 

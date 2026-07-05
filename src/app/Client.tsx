@@ -2264,6 +2264,7 @@ function ClientPageInner() {
 
     // Payment confirmed on-chain — roll the reward and animate the wheel.
     setWheelSpinning(true);
+    playSfx("spin");
     const { segment, index } = pickWheelSegment();
     const segAngle = 360 / WHEEL_SEGMENTS.length;
     // Angle (from 12 o'clock, clockwise) of this segment's center.

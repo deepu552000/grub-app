@@ -35,7 +35,6 @@ export type SfxName =
   | "unlock"
   | "equip"
   | "evolve"
-  | "spin"
   | "error";
 
 export type MusicTrack = {
@@ -309,29 +308,6 @@ class SoundEngine {
         [0, 2, 4, 7].forEach((i, idx) =>
           this.tone(SCALE[i], { start: idx * 0.1, duration: 0.4, gain: 0.45, type: "sine" })
         );
-        break;
-      }
-      case "spin": {
-        // Decelerating "ratchet" ticks — dense at the start, spreading out
-        // near the end — mirroring the wheel's own CSS easing curve
-        // (cubic-bezier(0.12, 0.67, 0.1, 1)) over the same 4.2s spin.
-        const totalDuration = 4.2;
-        const tickCount = 46;
-        for (let i = 1; i <= tickCount; i++) {
-          const tNorm = i / tickCount;
-          // Quadratic time-position easing: ticks bunch up early, spread
-          // out later, just like a wheel slowing down.
-          const start = totalDuration * tNorm * tNorm;
-          const gain = 0.24 * (1 - tNorm * 0.45);
-          this.tone(1150 + Math.random() * 90, {
-            start,
-            duration: 0.045,
-            gain,
-            type: "square",
-          });
-        }
-        // Soft low whoosh underneath the ticks for body, fading out with the spin.
-        this.tone(170, { start: 0, duration: totalDuration * 0.65, gain: 0.05, type: "sine", detune: -8, bus: this.sfxBus });
         break;
       }
       case "error": {

@@ -1,25 +1,24 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import type { ReactNode } from "react";
 
-// wagmi's Base Account connector pulls in Coinbase Wallet SDK, which touches
-// browser-only APIs (window, telemetry) at module-load time. Next.js still
-// server-renders "use client" components once during build/SSG, so a plain
-// static import of that config was being evaluated on the server for every
-// page — which is what threw "Telemetry is not supported in non-browser
-// environments" and slowed the build down across all pages.
+// Client.tsx only calls wagmi's imperative action functions (connect,
+// getAccount, reconnect, sendTransaction, switchChain, watchAccount — all
+// from "wagmi/actions"), passing `wagmiConfig` directly as an argument each
+// time. None of that needs React context — <WagmiProvider> and
+// <QueryClientProvider> only matter for wagmi's HOOK-based API (useAccount,
+// useConnect, etc.) and react-query hooks, and this app uses neither.
 //
-// Loading it with ssr:false keeps the wagmi module out of the server pass
-// entirely; it only loads in the browser, which is the only place it was
-// ever actually used anyway (Base App payment fallback). This does not
-// change behavior for Farcaster, Base App, or normal browser wallet
-// connections (Rabby, Coinbase, etc.) — only *when* the module loads.
-const WagmiProviders = dynamic(
-  () => import("./wagmi-providers").then((m) => m.WagmiProviders),
-  { ssr: false }
-);
-
+// Wrapping children in <WagmiProvider> was what triggered the "Telemetry is
+// not supported in non-browser environments" build error in the first place
+// (it does some synchronous browser-only work on mount). Deferring it with
+// dynamic(..., { ssr: false }) fixed the build, but it also meant the whole
+// app (children) didn't render until that separate chunk finished loading —
+// which is what caused the black screen in Base App's in-app browser.
+//
+// Since nothing actually needs the context, the correct fix is to just not
+// provide it. wagmiConfig itself still works exactly the same for
+// connect/getAccount/etc. because Client.tsx imports it directly.
 export function Providers({ children }: { children: ReactNode }) {
-  return <WagmiProviders>{children}</WagmiProviders>;
+  return <>{children}</>;
 }
