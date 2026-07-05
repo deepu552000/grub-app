@@ -1084,45 +1084,59 @@ function AdminDashboardInner() {
                       const bothOff = !u.hasAddedApp && !u.hasNotifToken;
                       const isWallet = String(u.fid).startsWith("wallet:");
                       return (
-                        <div key={u.fid} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <div style={{ width: isWallet ? "auto" : 110, flexShrink: isWallet ? 1 : 0, minWidth: 0 }}>
-                            <button
-                              onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
-                              style={{
-                                fontSize: 13,
-                                color: bothOff ? C.red : (dark ? C.amberGlow : "#7c3aed"),
-                                fontWeight: bothOff ? 700 : 600,
-                                background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0,
-                                textShadow: bothOff ? "none" : (dark ? `0 0 8px ${C.amberGlow}66` : "none"),
-                                display: "inline-flex", alignItems: "center", gap: 3,
-                                whiteSpace: isWallet ? "normal" : "nowrap",
-                                wordBreak: isWallet ? "break-all" : "normal",
-                              }}
-                              title="Open in user panel"
-                            >
-                              {bothOff && <span>🔕</span>}
-                              {isWallet ? u.fid : `#${u.fid}`}
-                            </button>
-                          </div>
+                      <div key={u.fid} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <button
+                            onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
+                            style={{
+                              fontSize: 11,
+                              color: bothOff ? C.red : (dark ? C.amberGlow : "#7c3aed"),
+                              fontWeight: bothOff ? 700 : 400,
+                              background: "transparent", border: "none", cursor: "pointer", fontFamily: "monospace", textAlign: "left", padding: 0,
+                              textShadow: bothOff ? "none" : (dark ? `0 0 8px ${C.amberGlow}66` : "none"),
+                              display: "inline-flex", alignItems: "center", gap: 3,
+                              whiteSpace: isWallet ? "normal" : "nowrap",
+                              wordBreak: isWallet ? "break-all" : "normal",
+                              flexShrink: isWallet ? 1 : 0,
+                            }}
+                            title="Open in user panel"
+                          >
+                            {bothOff && <span>🔕</span>}
+                            {isWallet ? u.fid : `#${u.fid}`}
+                          </button>
                           {!isWallet && (
                             profile?.username ? (
                               <a
                                 href={`https://farcaster.xyz/${profile.username}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textSub, textDecoration: "none" }}
+                                style={{ fontSize: 10, color: dark ? "#e5e7eb" : T.textSub, textDecoration: "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
                                 title={profile.displayName ?? profile.username}
                               >
                                 @{profile.username}
                               </a>
                             ) : profile === undefined ? (
-                              <span style={{ fontSize: 12, color: T.textMute }}>…</span>
+                              <span style={{ fontSize: 10, color: T.textMute }}>…</span>
                             ) : (
-                              <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textSub }}>—</span>
+                              <span style={{ fontSize: 10, color: T.textMute }}>—</span>
                             )
                           )}
-                          <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textMute, marginLeft: "auto", flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp · {u.totalCheckIns || 0} checkin</span>
                         </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+                            <div style={{ flex: 1, height: 5, background: T.borderSub, borderRadius: 3, minWidth: 0 }}>
+                              <div style={{ height: 5, background: C.blue, borderRadius: 3, width: `${((u.xp || 0) / maxXp) * 100}%`, boxShadow: `0 0 6px ${C.blue}88` }} />
+                            </div>
+                            <span style={{ fontSize: 10, color: dark ? "#f1f5f9" : T.textSub, flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp</span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+                            <div style={{ flex: 1, height: 5, background: T.borderSub, borderRadius: 3, minWidth: 0 }}>
+                              <div style={{ height: 5, background: C.green, borderRadius: 3, width: `${((u.totalCheckIns || 0) / maxCheckins) * 100}%`, boxShadow: `0 0 6px ${C.green}88` }} />
+                            </div>
+                            <span style={{ fontSize: 10, color: dark ? "#f1f5f9" : T.textSub, flexShrink: 0 }}>{u.totalCheckIns || 0} ci</span>
+                          </div>
+                        </div>
+                      </div>
                       );
                     })}
                   </div>
@@ -1174,7 +1188,7 @@ function AdminDashboardInner() {
                               <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textSub }}>—</span>
                             )
                           )}
-                          <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textMute, marginLeft: "auto", flexShrink: 0 }}>0 xp · 0 checkin</span>
+                          <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textMute, marginLeft: "auto", flexShrink: 0 }}>0 xp · 0 ci</span>
                         </div>
                       );
                     })}
