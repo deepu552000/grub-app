@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
-import { getAccessoryPriceUsd } from "@/lib/accessories";
+import { ACCESSORIES } from "@/lib/accessories";
 import { grantCredit, spendCreditIfAvailable, getCredits, type CreditType } from "@/lib/grub-credits";
 import { petKey, identityLabel } from "@/lib/pet-key";
 
@@ -29,27 +29,17 @@ const CHECKIN_MICRO_USDC = 10_000; // $0.01
 // silently affecting each other.
 const SPIN_MICRO_USDC = 10_000; // $0.01
 
-// Accessory prices are now looked up LIVE per-request via
-// getAccessoryPriceUsd() (lib/accessories.ts) rather than a map built once
-// at module load. Two reasons this matters, not just one:
-//   1. (original reason) A hardcoded copy here previously only covered the
-//      6 Stage 1 items — every Stage 2/3/4 accessory (24 of 30) fell through
-//      to "Unknown accessory" even after a verified payment. Deriving from
-//      the catalog fixed that.
-//   2. (Accessory Festival) getAccessoryPriceUsd() also applies the
-//      time-gated 50%-off festival discount. A map computed once at cold
-//      start would keep serving whatever price was true at that moment —
-//      full or discounted — straight through the festival's start/end
-//      boundary for as long as the function instance stays warm. Calling
-//      the helper fresh on every request means the boundary is exact
-//      regardless of server warmth, and the client (Client.tsx's
-//      accessoryUnlockUsd, which calls the same helper) can never end up
-//      charging a different price than this route expects.
-function accessoryPriceMicroUsdc(accessoryId: string): number | null {
-  const priceUsd = getAccessoryPriceUsd(accessoryId);
-  if (priceUsd === null) return null;
-  return Math.round(priceUsd * 1_000_000);
-}
+// Accessory prices in micro-USDC (6 decimals), derived from lib/accessories.ts
+// (the single source of truth for the catalog) instead of a hand-maintained
+// duplicate list. A hardcoded copy here previously only covered the 6 Stage 1
+// items — every Stage 2/3/4 accessory (24 of 30) fell through to "Unknown
+// accessory" even after a verified payment, since this map is checked BEFORE
+// verifyUsdcTransfer ever runs. Deriving it from ACCESSORIES means a newly
+// added accessory is priced correctly here automatically, with no separate
+// edit required.
+const ACCESSORY_PRICES: Record<string, number> = Object.fromEntries(
+  ACCESSORIES.map((a) => [a.id, Math.round(a.costUsd * 1_000_000)]),
+);
 
 // ── Identity helper ──────────────────────────────────────────────────────────
 // petKey()/identityLabel() now live in lib/pet-key.ts so other routes (e.g.
@@ -255,8 +245,8 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const expectedPrice = accessoryPriceMicroUsdc(accessoryId);
-      if (expectedPrice === null) {
+      const expectedPrice = ACCESSORY_PRICES[accessoryId];
+      if (!expectedPrice) {
         return NextResponse.json({ error: "Unknown accessory" }, { status: 400 });
       }
 

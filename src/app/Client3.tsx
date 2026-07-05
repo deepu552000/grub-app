@@ -130,7 +130,7 @@ async function getFcProviderWithTimeout(ms = 1200) {
 }
 
 
-import { ACCESSORIES, getAccessory, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage, groupEquippedByLayer, getAccessoryPriceUsd, isAccessoryFestivalLive, isAccessoryFestivalTeaser, ACCESSORY_FESTIVAL_DISCOUNT_PERCENT, type Accessory, type AccessorySlot } from "@/lib/accessories";
+import { ACCESSORIES, getAccessory, getAccessoriesForStage, getPosition, accessoriesAllowedFor, canEquipForStage, groupEquippedByLayer, type Accessory, type AccessorySlot } from "@/lib/accessories";
 import {
   type AccessoryState,
   createEmptyAccessoryState,
@@ -1330,25 +1330,6 @@ function ClientPageInner() {
 
   function dismissAccessoryBanner() {
     setAccessoryBannerDismissed(true);
-  }
-
-  // ── Accessory Festival Banner (50% off, all stages, 7–10 Jul) ─────────────
-  // Unlike the referral festival above (fid-only, since DEGEN payouts are a
-  // Farcaster-specific mechanic), this shows for BOTH Farcaster and Base App
-  // identities — accessories are unlocked by both platforms via the same
-  // sendUsdcPayment path, so there's no reason to withhold the discount
-  // banner from Base App users. Dates/discount % come from lib/accessories.ts
-  // (isAccessoryFestivalLive / ACCESSORY_FESTIVAL_DISCOUNT_PERCENT) — the
-  // exact same source the actual price computation uses, so this banner can
-  // never advertise a discount that isn't really being applied.
-  const [accessoryFestivalDismissed, setAccessoryFestivalDismissed] = useState(false);
-  const isAccFestivalLive   = isAccessoryFestivalLive();
-  const isAccFestivalTeaser = isAccessoryFestivalTeaser();
-  const showAccessoryFestivalBanner =
-    (isAccFestivalTeaser || isAccFestivalLive) && !accessoryFestivalDismissed && (!!fid || !!walletAddress);
-
-  function dismissAccessoryFestival() {
-    setAccessoryFestivalDismissed(true); // session-only — reappears next app open while festival is live
   }
 
   // ── Notification Nudge Banner ─────────────────────────────────────────────
@@ -2909,14 +2890,10 @@ function ClientPageInner() {
     }).catch(() => {}); // never block on logging failure
   }
 
-  // Accessory unlock cost — stage-aware pricing on Base. Routed through the
-  // same getAccessoryPriceUsd() helper the server's payment verification
-  // uses (see lib/accessories.ts + app/api/pet/route.ts), so this always
-  // charges exactly what the server will accept — including the Accessory
-  // Festival's 50% discount while it's live, with no separate copy of that
-  // logic to drift out of sync.
+  // Accessory unlock cost — stage-aware pricing on Base
   function accessoryUnlockUsd(accessoryId: string): number {
-    return getAccessoryPriceUsd(accessoryId) ?? 0.10;
+    const acc = ACCESSORIES.find((a) => a.id === accessoryId);
+    return acc?.costUsd ?? 0.10;
   }
 
   async function handleUnlockAccessory(accessoryId: string) {
@@ -3341,55 +3318,6 @@ function ClientPageInner() {
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); dismissFestival(); }}
-                style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
-                  flexShrink: 0,
-                }}
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ── ACCESSORY FESTIVAL BANNER ── */}
-        {showAccessoryFestivalBanner && (
-          <div
-            style={{
-              margin: "8px 8px 0",
-              padding: "9px 12px",
-              background: isAccFestivalLive
-                ? "linear-gradient(135deg, rgba(240,168,189,0.28), rgba(168,120,255,0.20))"
-                : "linear-gradient(135deg, rgba(200,180,255,0.28), rgba(160,120,255,0.20))",
-              border: isAccFestivalLive
-                ? "1.5px solid rgba(200,120,180,0.40)"
-                : "1.5px solid rgba(160,120,255,0.35)",
-              borderRadius: 12,
-              position: "relative",
-              overflow: "hidden",
-              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: "1.3rem", lineHeight: 1, flexShrink: 0 }}>
-                {isAccFestivalLive ? "👗" : "✨"}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#49332d", marginBottom: 1 }}>
-                  {isAccFestivalLive
-                    ? `Accessory Festival — ${ACCESSORY_FESTIVAL_DISCOUNT_PERCENT}% OFF everything! 🎊`
-                    : `Accessory Festival tomorrow — ${ACCESSORY_FESTIVAL_DISCOUNT_PERCENT}% off everything!`}
-                </div>
-                <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
-                  {isAccFestivalLive
-                    ? "All stages, 3 days only. Dress Grub up while it lasts!"
-                    : "Starts tomorrow. Save up now — all stages, all accessories!"}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={dismissAccessoryFestival}
                 style={{
                   background: "none", border: "none", cursor: "pointer",
                   color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
@@ -4377,31 +4305,12 @@ function ClientPageInner() {
                 </p>
               )}
 
-              {/* Price hint — shows the live festival-discounted price (via
-                  getAccessoryPriceUsd, same helper the buttons below and the
-                  server verification both use) instead of the old
-                  hardcoded per-stage string, so this can never drift out of
-                  sync with what unlocking actually charges. */}
+              {/* Price hint */}
               <p style={{ fontSize: "0.72rem", color: "#8a7a70", textAlign: "center", marginBottom: 4 }}>
-                {(() => {
-                  const stageAccessory = getAccessoriesForStage(closetStageView)[0];
-                  if (!stageAccessory) return null;
-                  const fullPrice = stageAccessory.costUsd;
-                  const livePrice = getAccessoryPriceUsd(stageAccessory.id) ?? fullPrice;
-                  if (isAccessoryFestivalLive()) {
-                    return (
-                      <>
-                        Stage {closetStageView} accessories ·{" "}
-                        <span style={{ textDecoration: "line-through", opacity: 0.6 }}>
-                          ${fullPrice.toFixed(2)}
-                        </span>{" "}
-                        <strong style={{ color: "#c47a3e" }}>${livePrice.toFixed(2)} each</strong> on Base
-                        {" 🎉 "}Festival price!
-                      </>
-                    );
-                  }
-                  return `Stage ${closetStageView} accessories · $${fullPrice.toFixed(2)} each on Base`;
-                })()}
+                {closetStageView === 1 && "Stage 1 accessories · $0.10 each on Base"}
+                {closetStageView === 2 && "Stage 2 accessories · $0.20 each on Base"}
+                {closetStageView === 3 && "Stage 3 accessories · $0.30 each on Base"}
+                {closetStageView === 4 && "Stage 4 accessories · $0.40 each on Base"}
               </p>
 
               {/* XP hint — unlock XP is one-time; equip XP is recurring, per
@@ -4476,19 +4385,7 @@ function ClientPageInner() {
                             opacity: unlockPending && unlockPending !== accessory.id ? 0.5 : 1,
                           }}
                         >
-                          {unlockPending === accessory.id ? (
-                            "⏳ Confirming..."
-                          ) : isAccessoryFestivalLive() ? (
-                            <>
-                              Unlock ·{" "}
-                              <span style={{ textDecoration: "line-through", opacity: 0.65 }}>
-                                ${accessory.costUsd.toFixed(2)}
-                              </span>{" "}
-                              ${(getAccessoryPriceUsd(accessory.id) ?? accessory.costUsd).toFixed(2)}
-                            </>
-                          ) : (
-                            `Unlock · $${accessory.costUsd.toFixed(2)}`
-                          )}
+                          {unlockPending === accessory.id ? "⏳ Confirming..." : `Unlock · $${accessory.costUsd.toFixed(2)}`}
                         </button>
                       )}
 
