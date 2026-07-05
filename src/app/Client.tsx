@@ -75,9 +75,11 @@ function normalizeWallet(...candidates: (string | null | undefined)[]): string |
 //
 // reconnect() only restores a connector wagmi already knows was previously
 // connected (it does not prompt) — safe to call unconditionally on mount.
-async function silentlyDetectWallet(): Promise<string | null> {
+type WalletDetectResult = { address: string | null; source: "injected" | "wagmi" | null };
+
+async function silentlyDetectWallet(): Promise<WalletDetectResult> {
   const injected = await detectInjectedWallet();
-  if (injected) return injected;
+  if (injected) return { address: injected, source: "injected" };
   try {
     // Hard timeout — wagmi.ts's ssr:true makes <WagmiProvider> ALSO attempt
     // its own automatic reconnect the moment it mounts on the client (that's
@@ -99,7 +101,7 @@ async function silentlyDetectWallet(): Promise<string | null> {
       new Promise((_, reject) => setTimeout(() => reject(new Error("reconnect timed out")), 2500)),
     ]);
     const account = getAccount(wagmiConfig);
-    return account.address ? account.address.toLowerCase() : null;
+    return { address: account.address ? account.address.toLowerCase() : null, source: "wagmi" };
   } catch {
     // Timed out, or a genuine reconnect failure — either way, fall through.
     // getAccount() still reflects whatever WagmiProvider's OWN reconnect
@@ -111,9 +113,9 @@ async function silentlyDetectWallet(): Promise<string | null> {
     // being discarded.
     try {
       const account = getAccount(wagmiConfig);
-      return account.address ? account.address.toLowerCase() : null;
+      return { address: account.address ? account.address.toLowerCase() : null, source: "wagmi" };
     } catch {
-      return null;
+      return { address: null, source: null };
     }
   }
 }
@@ -124,18 +126,28 @@ async function silentlyDetectWallet(): Promise<string | null> {
 // new wallet can never be picked up silently — this is the one path that
 // requires an explicit user gesture, same as on the standard web.
 //
-// Goes through wagmi's Base Account connector rather than window.ethereum:
-// Base App no longer injects a provider in its post-April-9-2026 mode, so
-// window.ethereum-based connect (the old requestInjectedWallet(), now
-// removed) had silently stopped doing anything in Base App.
-async function connectBaseWallet(): Promise<string | null> {
+// Tries a real injected provider (window.ethereum — Rabby, MetaMask, a
+// Coinbase extension, etc.) FIRST, same priority order as
+// silentlyDetectWallet above, and only falls through to wagmi's Base
+// Account connector if no injected provider exists. Base App itself no
+// longer injects window.ethereum at all (post-April-9-2026), so inside
+// Base App this always falls straight through to Base Account with no
+// extra prompt — identical to before. This priority is what actually
+// restores the old "asks for Rabby" behavior in a plain browser: a
+// previous version of this function went straight to the Base Account
+// connector unconditionally, which meant a plain-browser user with Rabby
+// installed got sent straight to a Coinbase/Base Account passkey prompt
+// with no way to pick their actual injected wallet.
+async function connectBaseWallet(): Promise<WalletDetectResult> {
+  const injected = await detectInjectedWallet();
+  if (injected) return { address: injected, source: "injected" };
   try {
     const result = await connect(wagmiConfig, { connector: wagmiConfig.connectors[0] });
     const account = getAccount(wagmiConfig);
     const address = account.address ?? result?.accounts?.[0];
-    return address ? address.toLowerCase() : null;
+    return { address: address ? address.toLowerCase() : null, source: "wagmi" };
   } catch {
-    return null;
+    return { address: null, source: null };
   }
 }
 
@@ -849,6 +861,19 @@ function ClientPageInner() {
   // popup, just `eth_accounts` — and use that address as the identity
   // instead. This never runs, and never overrides, the fid path above.
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  // True once this session's walletAddress has been established from a real
+  // injected provider (window.ethereum — Rabby, MetaMask, a Coinbase
+  // extension, etc.), as opposed to wagmi's Base Account connector. Once
+  // true, wagmi's OWN connection state (watched via watchAccount below)
+  // must never be allowed to overwrite walletAddress — wagmi has no idea an
+  // injected wallet is even in use (that path never touches the wagmi
+  // connector at all), so wagmi's account state independently settling to
+  // "disconnected" (no persisted Base Account session) would otherwise wipe
+  // out a perfectly good, already-loaded injected-wallet identity the
+  // instant wagmi's own reconnect resolves. This was causing a real wallet
+  // address to load data successfully and then have the UI revert to
+  // "Connect Wallet" moments later.
+  const injectedWalletLockRef = useRef(false);
   // True once the mount-time silent wallet check (silentlyDetectWallet) has
   // resolved either way. Gates the "Connect Wallet" button below so it
   // doesn't flash on screen for the ~instant it takes to find out a wallet
@@ -1164,10 +1189,11 @@ function ClientPageInner() {
           // localStorage-only. If nothing is connected yet, the "Connect
           // Wallet" affordance in the UI below still gives Base App users a
           // way in.
-          silentlyDetectWallet().then((addr) => {
-            console.log("[MOUNT] silentlyDetectWallet resolved (no-fid branch):", addr);
+          silentlyDetectWallet().then(({ address: addr, source }) => {
+            console.log("[MOUNT] silentlyDetectWallet resolved (no-fid branch):", addr, "source:", source);
             setWalletCheckDone(true);
             if (addr) {
+              if (source === "injected") injectedWalletLockRef.current = true;
               setWalletAddress(addr);
               // DB load useEffect (keyed on identityParam) takes over from here.
             } else {
@@ -1185,10 +1211,11 @@ function ClientPageInner() {
         // this effect. Just try the same silent wallet check before
         // falling back to localStorage.
         clearTimeout(fallbackTimer);
-        silentlyDetectWallet().then((addr) => {
-          console.log("[MOUNT] silentlyDetectWallet resolved (catch branch):", addr);
+        silentlyDetectWallet().then(({ address: addr, source }) => {
+          console.log("[MOUNT] silentlyDetectWallet resolved (catch branch):", addr, "source:", source);
           setWalletCheckDone(true);
           if (addr) {
+            if (source === "injected") injectedWalletLockRef.current = true;
             setWalletAddress(addr);
           } else {
             hydrateWith(loadState());
@@ -1213,7 +1240,14 @@ function ClientPageInner() {
     if (!eth?.on) return;
     const onAccountsChanged = (accounts: string[]) => {
       if (fid) return; // fid always wins — never let this override a Farcaster identity
-      setWalletAddress(accounts && accounts.length > 0 ? accounts[0].toLowerCase() : null);
+      const next = accounts && accounts.length > 0 ? accounts[0].toLowerCase() : null;
+      // A real accountsChanged event from window.ethereum is itself
+      // injected-sourced — keep the lock in sync so a subsequent
+      // disconnect (accounts: []) correctly releases it and lets
+      // wagmi/Base Account state take back over, while a genuine account
+      // switch keeps it held.
+      injectedWalletLockRef.current = !!next;
+      setWalletAddress(next);
     };
     eth.on("accountsChanged", onAccountsChanged);
     return () => eth.removeListener?.("accountsChanged", onAccountsChanged);
@@ -1223,10 +1257,21 @@ function ClientPageInner() {
   // now that Base App no longer injects window.ethereum at all, so the
   // listener above never fires there. watchAccount covers both an account
   // switch and a disconnect through the Base Account connector itself.
+  //
+  // Guarded by injectedWalletLockRef: wagmi has no idea an injected wallet
+  // (Rabby, MetaMask, etc.) is even in use — that path never touches the
+  // wagmi connector — so wagmi's own account state independently settling
+  // (e.g. to "disconnected" because there's no persisted Base Account
+  // session) must never be allowed to overwrite an injected-sourced
+  // walletAddress. Without this guard, a correctly detected injected wallet
+  // would load its data successfully and then have wagmi's own reconnect
+  // silently wipe it back to null moments later, reverting the UI to
+  // "Connect Wallet" even though a real wallet was already connected.
   useEffect(() => {
     const unwatch = watchAccount(wagmiConfig, {
       onChange(account) {
         if (fid) return; // fid always wins — never let this override a Farcaster identity
+        if (injectedWalletLockRef.current) return; // injected wallet wins — wagmi's own state is irrelevant
         setWalletAddress(account.address ? account.address.toLowerCase() : null);
       },
     });
@@ -1744,7 +1789,10 @@ function ClientPageInner() {
 
       if (accounts && accounts.length > 0) {
         console.log("[PAYMENT] wallet (injected):", accounts[0]);
-        if (!fid && !walletAddress) setWalletAddress(accounts[0].toLowerCase());
+        if (!fid && !walletAddress) {
+          injectedWalletLockRef.current = true;
+          setWalletAddress(accounts[0].toLowerCase());
+        }
 
         // ── Ensure the wallet is actually on Base before doing anything else.
         // Unlike Path 1 (Farcaster bridge, always Base-scoped) and Path 2
@@ -3367,8 +3415,11 @@ function ClientPageInner() {
                 onClick={async () => {
                   setConnectingWallet(true);
                   try {
-                    const addr = await connectBaseWallet();
-                    if (addr) setWalletAddress(addr);
+                    const { address: addr, source } = await connectBaseWallet();
+                    if (addr) {
+                      if (source === "injected") injectedWalletLockRef.current = true;
+                      setWalletAddress(addr);
+                    }
                   } finally {
                     setConnectingWallet(false);
                   }
