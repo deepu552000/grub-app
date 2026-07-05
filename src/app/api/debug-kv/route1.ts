@@ -39,17 +39,9 @@ export async function GET(req: NextRequest) {
     // which (having no real pet state) landed straight in Unconverted Opens.
     // A genuine pet key is always either a plain numeric fid or a
     // "wallet:0x..." key (see lib/pet-key.ts) — nothing else qualifies.
-    //
-    // The wallet check below used to be a bare startsWith("wallet:"), which
-    // only rejects the fid-shaped credit keys above — a wallet-shaped credit
-    // key like "wallet:0x7f35...:credit:free" still STARTS WITH "wallet:",
-    // so it slipped through the same way the fid case originally did. The
-    // fid check requires the ENTIRE remainder to be digits; the wallet check
-    // now requires the entire remainder to match wallet:0x<40 hex chars> —
-    // same precision, both identity types.
     const petFids = keys
       .map((key) => key.replace("grub:pet:", ""))
-      .filter((rest) => /^\d+$/.test(rest) || /^wallet:0x[a-fA-F0-9]{40}$/.test(rest));
+      .filter((rest) => /^\d+$/.test(rest) || rest.startsWith("wallet:"));
 
     // Fids that have a stored Farcaster notification token (i.e. notifs
     // are currently ON for them).
