@@ -1,10 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { headers } from "next/headers";
-import { cookieToInitialState } from "wagmi";
 import "./globals.css";
 import { Providers } from "./providers";
-import { wagmiConfig } from "@/lib/wagmi";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,22 +21,11 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // Reads the request's cookie header server-side and turns it into wagmi's
-  // initial connection state — this is what lets wagmi render the SAME
-  // state on the server as the client will hydrate to, now that wagmi.ts
-  // uses `ssr: true` + cookieStorage. Without this, ssr:true alone has
-  // nothing to read and every request still starts from a blank/disconnected
-  // state on the server, which defeats the point of the wagmi.ts change.
-  const initialState = cookieToInitialState(
-    wagmiConfig,
-    (await headers()).get("cookie"),
-  );
-
   return (
     <html
       lang="en"
@@ -47,7 +33,7 @@ export default async function RootLayout({
     >
       <head />
       <body className="min-h-full flex flex-col">
-        <Providers initialState={initialState}>{children}</Providers>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
