@@ -79,42 +79,11 @@ async function silentlyDetectWallet(): Promise<string | null> {
   const injected = await detectInjectedWallet();
   if (injected) return injected;
   try {
-    // Hard timeout — wagmi.ts's ssr:true makes <WagmiProvider> ALSO attempt
-    // its own automatic reconnect the moment it mounts on the client (that's
-    // the point of ssr:true: reconcile real connection state right after
-    // hydration). This call here is a SEPARATE, independent reconnect()
-    // against the same connector, which can now land at the same moment as
-    // that one — a race that didn't exist before ssr:true was added. If one
-    // ends up waiting on the other (a connector-level lock, or just an
-    // unresolved promise somewhere in Base Account's internals), this
-    // reconnect() can hang forever with no error — nothing rejects, it just
-    // never resolves — which permanently stalls hydration (walletCheckDone /
-    // hydrateWith below never run) with the app stuck on "Loading Grub..."
-    // until a manual refresh happens to land after wagmi's own reconnect has
-    // already settled. Racing against a timeout here, same pattern as
-    // getFcProviderWithTimeout above, guarantees this can never block
-    // hydration for more than 2.5s even in the worst case.
-    await Promise.race([
-      reconnect(wagmiConfig),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("reconnect timed out")), 2500)),
-    ]);
+    await reconnect(wagmiConfig);
     const account = getAccount(wagmiConfig);
     return account.address ? account.address.toLowerCase() : null;
   } catch {
-    // Timed out, or a genuine reconnect failure — either way, fall through.
-    // getAccount() still reflects whatever WagmiProvider's OWN reconnect
-    // attempt has managed to establish by now (it runs independently of
-    // this function and isn't cancelled by the timeout above), so this
-    // isn't necessarily "no wallet" — just "this call didn't confirm one
-    // within budget." Checking it here means a slow-but-real connection
-    // from the other reconnect attempt still gets picked up instead of
-    // being discarded.
-    try {
-      const account = getAccount(wagmiConfig);
-      return account.address ? account.address.toLowerCase() : null;
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -1032,23 +1001,6 @@ function ClientPageInner() {
     // Calling this here — synchronously at effect start — instead of after
     // sdk.context resolves is what was causing the intermittent warning.
     sdk.actions.ready().catch(() => {});
-    console.log("[MOUNT] ready() called");
-
-    // Fallback timer moved to the TOP of the effect, before anything else
-    // that could throw. Previously this was set up AFTER the
-    // sdk.wallet.getEthereumProvider() call below — if sdk.wallet itself is
-    // undefined (plain browser / Base App, no Farcaster host at all),
-    // calling .getEthereumProvider() on it throws SYNCHRONOUSLY, not as a
-    // promise rejection .catch() could absorb. That aborts the rest of this
-    // effect immediately, so fallbackTimer never got created, and nothing
-    // was ever left to call hydrateWith() — a permanent hang with no
-    // promise rejection to catch anywhere. Setting this up first means a
-    // fallback fires within 3s no matter what happens afterward, even if
-    // something later in this effect throws synchronously.
-    const fallbackTimer = setTimeout(() => {
-      console.log("[MOUNT] fallbackTimer fired — forcing hydrateWith(loadState())");
-      hydrateWith(loadState());
-    }, 3000);
 
     // Probe once, in parallel with everything else below, whether a
     // Farcaster wallet provider exists. Feeds fcWalletAvailable so
@@ -1061,28 +1013,20 @@ function ClientPageInner() {
     // set the fcWalletAvailable UI/state flag promptly — it does not affect
     // which promise a payment click ultimately awaits, so a slow-but-real
     // cold-start bridge response is never discarded.
-    //
-    // Wrapped in try/catch: sdk.wallet can be undefined entirely outside a
-    // Farcaster host (plain browser / Base App), in which case calling
-    // .getEthereumProvider() on it throws synchronously rather than
-    // returning a rejecting promise — see comment above fallbackTimer.
-    try {
-      const rawFcProviderPromise = Promise.resolve(sdk.wallet.getEthereumProvider()).catch(() => null);
-      fcProviderPromiseRef.current = rawFcProviderPromise;
-      Promise.race([
-        rawFcProviderPromise,
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200)),
-      ]).then((p) => setFcWalletAvailable(!!p));
-    } catch (err) {
-      console.log("[MOUNT] sdk.wallet.getEthereumProvider() threw synchronously:", err);
-      fcProviderPromiseRef.current = Promise.resolve(null);
-      setFcWalletAvailable(false);
-    }
+    const rawFcProviderPromise = sdk.wallet.getEthereumProvider().catch(() => null);
+    fcProviderPromiseRef.current = rawFcProviderPromise;
+    Promise.race([
+      rawFcProviderPromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200)),
+    ]).then((p) => setFcWalletAvailable(!!p));
 
-    console.log("[MOUNT] awaiting sdk.context...");
+    // Timeout fallback for local dev / plain browser where SDK context never resolves
+    const fallbackTimer = setTimeout(() => {
+      hydrateWith(loadState());
+    }, 3000);
+
     sdk.context
       .then((ctx) => {
-        console.log("[MOUNT] sdk.context resolved:", ctx);
         clearTimeout(fallbackTimer);
 
         // Live signal from Farcaster client — non-null only when the user
@@ -1126,7 +1070,6 @@ function ClientPageInner() {
           // Wallet" affordance in the UI below still gives Base App users a
           // way in.
           silentlyDetectWallet().then((addr) => {
-            console.log("[MOUNT] silentlyDetectWallet resolved (no-fid branch):", addr);
             setWalletCheckDone(true);
             if (addr) {
               setWalletAddress(addr);
@@ -1139,15 +1082,13 @@ function ClientPageInner() {
           });
         }
       })
-      .catch((err) => {
-        console.log("[MOUNT] sdk.context rejected:", err);
+      .catch(() => {
         // SDK failed entirely (e.g. Base App, which doesn't run the
         // Farcaster bridge at all) — ready() already fired at the top of
         // this effect. Just try the same silent wallet check before
         // falling back to localStorage.
         clearTimeout(fallbackTimer);
         silentlyDetectWallet().then((addr) => {
-          console.log("[MOUNT] silentlyDetectWallet resolved (catch branch):", addr);
           setWalletCheckDone(true);
           if (addr) {
             setWalletAddress(addr);
