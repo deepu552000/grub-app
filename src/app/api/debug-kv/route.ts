@@ -8,8 +8,10 @@ import { kv } from "@vercel/kv";
 import { verifyToken } from "@clerk/nextjs/server";
 import { getAllFidsForApp, getAllAddedFids, getWebhookEventLog } from "@/lib/notification-tokens";
 import { getCredits } from "@/lib/grub-credits";
+import { getOptedInWalletsCached } from "@/lib/send-notification-base";
 
 const APP_FID = 9152;
+const APP_URL = "https://grub-app-eight.vercel.app";
 
 export async function GET(req: NextRequest) {
   const token = req.headers.get("Authorization")?.replace("Bearer ", "");
@@ -48,6 +50,20 @@ export async function GET(req: NextRequest) {
     // Tracked independently of notifFids — see lib/notification-tokens.ts.
     const addedFids = new Set(await getAllAddedFids(APP_FID));
 
+    // Base App wallets currently opted in to notifications — Base doesn't
+    // hand us a token to store (see lib/send-notification-base.ts), so
+    // unlike the Farcaster side above, this is a live read of Base's own
+    // API rather than anything in our KV. Wrapped in try/catch: if Base's
+    // API is down or slow, the whole dashboard shouldn't fail to load —
+    // wallet notif status just falls back to "off" for this load.
+    let optedInBaseWallets = new Set<string>();
+    try {
+      const wallets = await getOptedInWalletsCached(APP_URL);
+      optedInBaseWallets = new Set(wallets.map((w) => w.toLowerCase()));
+    } catch (err) {
+      console.error("[debug-kv] Base opted-in wallets fetch failed:", err);
+    }
+
     // Raw webhook event log — last 500, newest first. Our paper trail
     // since we don't have Vercel log drains (Pro-only).
     const webhookEvents = await getWebhookEventLog(500);
@@ -65,9 +81,6 @@ export async function GET(req: NextRequest) {
       [...allFids].map(async (fid) => {
         const state = await kv.get<any>(`grub:pet:${fid}`);
 
-        const hasNotifToken = notifFids.has(Number(fid));
-        const hasAddedApp = addedFids.has(Number(fid));
-
         // Base App wallet identities (fid === "wallet:0x...") use a completely
         // separate KV keyspace for referrals — "refbase:"/"referrerbase:" —
         // written by registerReferralBase() in lib/referral.ts (see comment
@@ -78,6 +91,18 @@ export async function GET(req: NextRequest) {
         // keyspace actually matches this fid.
         const isWallet = fid.startsWith("wallet:");
         const walletAddr = isWallet ? fid.slice("wallet:".length).toLowerCase() : null;
+
+        // Farcaster users: whether we're holding a stored notif token for
+        // their fid. Base App users have no token to store (see
+        // lib/send-notification-base.ts) — their notif status instead comes
+        // from the live optedInBaseWallets set fetched from Base's API above.
+        // Number("wallet:0x...") is NaN, so notifFids.has() could never have
+        // matched a wallet identity anyway — this replaces that permanent
+        // false with the real status.
+        const hasNotifToken = isWallet
+          ? walletAddr !== null && optedInBaseWallets.has(walletAddr)
+          : notifFids.has(Number(fid));
+        const hasAddedApp = addedFids.has(Number(fid));
 
         const referredUsers: (number | string)[] = isWallet
           ? await kv.get<string[]>(`referrerbase:${walletAddr}:referred`) ?? []

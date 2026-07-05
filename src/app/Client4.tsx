@@ -178,9 +178,6 @@ type PetState = {
                                // paid ($0.01) check-in, one per credit
   streakSaveCredits: number;  // banked from Spin Wheel wins — auto-consumed to
                                // protect checkinStreak the next time a day is missed
-  lastShareXpDay: string;     // date key of the last "Share My Grub" tap that paid
-                               // out the +1 XP share bonus — caps it at once/day so
-                               // spamming the share button can't farm infinite XP
 };
 
 type FloatingNumber = {
@@ -478,7 +475,6 @@ const defaultState: PetState = {
   lastAccessoryXpAt: Date.now(),
   freeCheckinCredits: 0,
   streakSaveCredits: 0,
-  lastShareXpDay: "",
 };
 
 // Equip XP is checked on a rolling window, not a calendar day — someone who
@@ -1227,9 +1223,6 @@ function ClientPageInner() {
   const mood = useMemo(() => moodFor(state), [state]);
   const stage = getStage(state.xp);
   const stageIndex = stages.findIndex((item) => item.name === stage.name) + 1;
-  // The "Share My Grub" +1 XP bonus is capped at once per day — this just
-  // reflects that in the button label, the actual cap lives in shareKitty().
-  const sharedToday = state.lastShareXpDay === todayKey();
   const nextStage = getNextStage(state.xp);
   const progress = nextStage
     ? Math.min(100, ((state.xp - stage.minXp) / (nextStage.minXp - stage.minXp)) * 100)
@@ -2781,48 +2774,30 @@ function ClientPageInner() {
   }
 
   function shareKitty() {
-    // +1 XP for sharing, capped at once per day (via lastShareXpDay) so the
-    // button can't be tapped on repeat for free infinite XP. Applied to
-    // local state the same way other small awards are (e.g. the referral
-    // +20 XP above) — picked up by the existing debounced autosave, no new
-    // server action needed.
-    const alreadyPaidToday = state.lastShareXpDay === todayKey();
-    const xpForCard = alreadyPaidToday ? Math.round(state.xp) : Math.round(state.xp) + 1;
-    if (!alreadyPaidToday) {
-      setState((cur) => ({ ...cur, xp: cur.xp + 1, lastShareXpDay: todayKey() }));
-    }
-
     // Single embed strategy: we embed the APP URL (not the raw /api/share-card
     // image). The app's own page.tsx reads these same query params server-side
     // (generateMetadata) and points its fc:frame imageUrl at /api/share-card
-    // with matching stats. That means the host's crawler renders our custom
+    // with matching stats. That means Farcaster's crawler renders our custom
     // stat card as the preview AND the whole card is tappable straight into
     // the app — one rich, clickable embed instead of a dead image plus a
     // separate plain-link preview.
     const shareParams = new URLSearchParams({
       stage:  String(stageIndex),
       mood:   mood,
-      xp:     String(xpForCard),
+      xp:     String(Math.round(state.xp)),
       streak: String(state.streak),
       bond:   String(clamp(state.bond)),
     });
     if (fid) {
       shareParams.set("ref", String(fid));
     }
-    // Only show the "+1 XP" banner on the card when this share actually
-    // paid it out — otherwise a second share the same day would falsely
-    // advertise a bonus the user won't get.
-    if (!alreadyPaidToday) {
-      shareParams.set("win", "+1 XP");
-      shareParams.set("winId", "share");
-    }
 
     const appUrl = `https://grub-app-eight.vercel.app/?${shareParams.toString()}`;
 
     const castText = [
       `My Grub is ${stage.name} (${stage.title}) with a ${state.streak}-day streak! 🐾`,
-      `XP: ${xpForCard} · Bond: ${clamp(state.bond)}%`,
-      `Raise your own tiny white kitty ↓`,
+      `XP: ${Math.round(state.xp)} · Bond: ${clamp(state.bond)}%`,
+      `Raise your own tiny white kitty on Farcaster ↓`,
     ].join("\n");
 
     shareOrCopy(castText, appUrl, "Share text + link copied! Paste it anywhere to share your Grub. 📋");
@@ -2855,11 +2830,11 @@ function ClientPageInner() {
       ? [
           `🎉 Just won ${rewardLabel} spinning Grub's Spin Wheel!`,
           `My Grub is ${stage.name} (${stage.title}) — ${Math.round(state.xp)} XP, ${state.streak}-day streak.`,
-          `Spin your own wheel and raise a tiny white kitty ↓`,
+          `Spin your own wheel and raise a tiny white kitty on Farcaster ↓`,
         ].join("\n")
       : [
           `Won ${rewardLabel} on Grub's Spin Wheel! 🎡`,
-          `Raise your own tiny white kitty ↓`,
+          `Raise your own tiny white kitty on Farcaster ↓`,
         ].join("\n");
 
     shareOrCopy(castText, appUrl, "Share text + link copied! Paste it anywhere to show off your win. 📋");
@@ -3836,7 +3811,7 @@ function ClientPageInner() {
             }}
             onClick={shareKitty}
           >
-            🐱 Share My Grub {sharedToday ? "(shared today)" : "(+1 XP)"}
+            🐱 Share My Grub on Farcaster
           </button>
         </section>
 
@@ -4526,8 +4501,9 @@ function ClientPageInner() {
 
               {/* Share link — composeCast on Farcaster, native share sheet /
                   clipboard fallback everywhere else (Base App included), see
-                  shareOrCopy(). Label kept generic (no "Farcaster" wording)
-                  since the same button/flow serves Base App users too. */}
+                  shareOrCopy(). Label reflects whichever surface actually
+                  applies instead of always saying "Farcaster" for Base App
+                  users who'll never see a cast composer. */}
               <button
                 type="button"
                 style={{
@@ -4543,7 +4519,7 @@ function ClientPageInner() {
                   shareOrCopy(text, refLink, "Referral link copied! Paste it anywhere to share. 📋");
                 }}
               >
-                📤 Share Your Link
+                {fid ? "🟣 Share on Farcaster" : "📤 Share Your Link"}
               </button>
 
               {/* Rewards info */}

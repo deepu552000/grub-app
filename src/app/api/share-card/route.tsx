@@ -1,5 +1,6 @@
 // Save as: src/app/api/share-card/route.tsx
-// Generates a dynamic OG image card for sharing Grub on Farcaster.
+// Generates a dynamic OG image card for sharing Grub — used from both
+// Farcaster clients and Base App, so card copy stays platform-generic.
 // Usage: /api/share-card?stage=1&mood=content&xp=240&streak=5&bond=42
 // Rendered at 1200x800 (3:2) — Farcaster Mini App embeds require a 3:2 image;
 // anything else (e.g. the old 480x480 square) gets center-cropped by the
@@ -42,6 +43,9 @@ const WIN_STYLES: Record<
   xp10:        { emoji: "🔥", bg: "rgba(238,66,102,0.18)",  border: "rgba(238,66,102,0.45)", text: "#ffc7d1", tier: "xp", scale: 4 },
   freecheckin: { emoji: "🎁", bg: "rgba(46,196,241,0.20)",  border: "rgba(46,196,241,0.5)",  text: "#d8f4ff", tier: "highlight", scale: 0 },
   streaksave:  { emoji: "🛡️", bg: "rgba(39,174,96,0.20)",  border: "rgba(39,174,96,0.5)",   text: "#d8ffe6", tier: "highlight", scale: 0 },
+  // Plain "Share My Grub" bonus (not a Spin Wheel win) — reuses the small xp
+  // pill treatment at the smallest size, since it's a flat +1 XP every time.
+  share:       { emoji: "📤", bg: "rgba(245,185,66,0.16)",  border: "rgba(245,185,66,0.4)",  text: "#ffe9b8", tier: "xp", scale: 0 },
 };
 const DEFAULT_WIN_STYLE = {
   emoji: "🎡", bg: "rgba(255,255,255,0.08)", border: "rgba(255,255,255,0.2)", text: "#e8e0f5",
@@ -59,6 +63,7 @@ const WIN_COPY: Record<string, string> = {
   xp10:        "Grub hit the jackpot bowl!",
   freecheckin: "Grub says thanks for stopping by!",
   streaksave:  "Grub's got your back — streak saved!",
+  share:       "Thanks for sharing Grub!",
 };
 
 // Bare RGB triples (no alpha) for the ring-glow and confetti effects below,
@@ -73,6 +78,7 @@ const WIN_RGB: Record<string, string> = {
   xp10: "238,66,102",
   freecheckin: "46,196,241",
   streaksave: "39,174,96",
+  share: "245,185,66",
 };
 const RARE_RGB = "255,120,170";
 const DEFAULT_RGB = "170,130,255";
@@ -294,7 +300,7 @@ export async function GET(req: NextRequest) {
           <div style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 9 }}>
               <span style={{ fontSize: 26, fontWeight: 800, color: "#e8d8ff", letterSpacing: 2 }}>GRUB</span>
-              <span style={{ fontSize: 14, color: "#7a6a9a", letterSpacing: 1 }}>Virtual Cat · Farcaster</span>
+              <span style={{ fontSize: 14, color: "#7a6a9a", letterSpacing: 1 }}>Virtual Cat Companion</span>
             </div>
             <div
               style={{

@@ -13,6 +13,8 @@
 // (Farcaster/fid). Nothing in this file touches those, their KV keys, or
 // their APP_FID scoping — Base identifies users by wallet address, not fid.
 
+import { kv } from "@vercel/kv";
+
 const BASE_API = "https://dashboard.base.org/api/v1/notifications";
 
 const MAX_ADDRESSES_PER_BATCH = 1000; // Base's documented max per /send request
@@ -111,6 +113,57 @@ export async function getWalletNotificationStatus(
   }
 
   return res.json();
+}
+
+// Cached wrapper around getWalletNotificationStatus, for the client-facing
+// status route below. This is what powers the in-app "are notifications on"
+// check that used to only work for Farcaster (via sdk.context) — Base App
+// never populates that context, so Base users need their own check.
+//
+// IMPORTANT: this gets called once per app open, per Base user — unlike
+// server-triggered sends, this is client-triggered and its volume scales
+// with your user count, not with how often you broadcast. Base's docs state
+// the /users and /send endpoints share a 20 req/min per-IP limit; a status
+// check on every page load would blow through that almost immediately once
+// you have more than a couple dozen concurrent Base users. Caching each
+// wallet's result briefly keeps this endpoint's traffic low against that
+// budget regardless of how many people open the app.
+//
+// Kept short (not the original 5 minutes) because a stale "enabled" cache
+// entry masks the user having just turned notifications OFF in Base App —
+// they'd see the banner incorrectly stay hidden until the cache expired.
+// A short TTL bounds how long that staleness window can last for the
+// passive per-open check; the explicit recheck (force=true) below skips
+// the cache entirely so the "I did it" button always reflects reality.
+const STATUS_CACHE_TTL_SECONDS = 45;
+
+function statusCacheKey(appUrl: string, walletAddress: string) {
+  return `grub:base-status:${appUrl}:${walletAddress.toLowerCase()}`;
+}
+
+export async function getWalletNotificationStatusCached(
+  appUrl: string,
+  walletAddress: string,
+  force = false,
+): Promise<{ appPinned: boolean; notificationsEnabled: boolean }> {
+  const key = statusCacheKey(appUrl, walletAddress);
+
+  if (!force) {
+    try {
+      const cached = await kv.get<{ appPinned: boolean; notificationsEnabled: boolean }>(key);
+      if (cached) return cached;
+    } catch {
+      // Cache miss/error — fall through to a live check rather than failing.
+    }
+  }
+
+  const fresh = await getWalletNotificationStatus(appUrl, walletAddress);
+  try {
+    await kv.set(key, fresh, { ex: STATUS_CACHE_TTL_SECONDS });
+  } catch {
+    // Non-fatal — worst case this wallet's next request re-hits the API.
+  }
+  return fresh;
 }
 
 async function sendBatch(

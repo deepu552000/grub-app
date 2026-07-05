@@ -166,6 +166,47 @@ export async function getWalletNotificationStatusCached(
   return fresh;
 }
 
+// Cached wrapper around getOptedInWallets(), for the admin dashboard
+// (debug-kv route). That route can get reloaded/refreshed a lot for a
+// single admin, and getOptedInWallets() pages through Base's /users
+// endpoint at MAX_USERS_PAGE_SIZE (500) per page, pacing each page
+// RATE_LIMIT_DELAY_MS (3.5s) apart to stay under Base's shared 20 req/min
+// per-IP limit — the same budget real notification sends draw from. Without
+// caching, every dashboard load would burn through that budget and could
+// start colliding with (or getting throttled behind) actual sends.
+//
+// 5 minutes is a deliberately loose TTL: this is admin-only, low-stakes
+// (worst case the dashboard shows a wallet's notif toggle as slightly
+// stale for a few minutes), and nowhere near as time-sensitive as the
+// per-user, per-open check that getWalletNotificationStatusCached above
+// guards with a much shorter 45s TTL.
+const OPTED_IN_CACHE_TTL_SECONDS = 300;
+
+function optedInCacheKey(appUrl: string) {
+  return `grub:base-optedin:${appUrl}`;
+}
+
+export async function getOptedInWalletsCached(appUrl: string, force = false): Promise<string[]> {
+  const key = optedInCacheKey(appUrl);
+
+  if (!force) {
+    try {
+      const cached = await kv.get<string[]>(key);
+      if (cached) return cached;
+    } catch {
+      // Cache miss/error — fall through to a live fetch rather than failing.
+    }
+  }
+
+  const fresh = await getOptedInWallets(appUrl);
+  try {
+    await kv.set(key, fresh, { ex: OPTED_IN_CACHE_TTL_SECONDS });
+  } catch {
+    // Non-fatal — worst case the next dashboard load re-hits the API.
+  }
+  return fresh;
+}
+
 async function sendBatch(
   appUrl: string,
   walletAddresses: string[],

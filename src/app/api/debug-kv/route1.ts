@@ -27,7 +27,19 @@ export async function GET(req: NextRequest) {
 
     // ── Scan all grub pet keys ────────────────────────────────────────────
     const keys = await kv.keys("grub:pet:*");
-    const petFids = keys.map((key) => key.replace("grub:pet:", ""));
+    // kv.keys() is a prefix glob, not exact-segment aware — it also matches
+    // lib/grub-credits.ts's atomic per-user credit keys, which are stored as
+    // "grub:pet:<fid>:credit:free" / "...:credit:streak" (so the atomic
+    // kv.incrby/decrby never touches the same key as the main state blob).
+    // Those aren't pet records at all, but before this filter every match
+    // got treated as its own fid — stripping the "grub:pet:" prefix off
+    // "grub:pet:3325017:credit:free" left the bogus "fid" 3325017:credit:free,
+    // which (having no real pet state) landed straight in Unconverted Opens.
+    // A genuine pet key is always either a plain numeric fid or a
+    // "wallet:0x..." key (see lib/pet-key.ts) — nothing else qualifies.
+    const petFids = keys
+      .map((key) => key.replace("grub:pet:", ""))
+      .filter((rest) => /^\d+$/.test(rest) || rest.startsWith("wallet:"));
 
     // Fids that have a stored Farcaster notification token (i.e. notifs
     // are currently ON for them).
@@ -56,14 +68,43 @@ export async function GET(req: NextRequest) {
         const hasNotifToken = notifFids.has(Number(fid));
         const hasAddedApp = addedFids.has(Number(fid));
 
-        const referredUsers: number[] = await kv.get<number[]>(`referrer:${fid}:referred`) ?? [];
-        const referredByFid = await kv.get<string>(`ref:${fid}`) ?? null;
+        // Base App wallet identities (fid === "wallet:0x...") use a completely
+        // separate KV keyspace for referrals — "refbase:"/"referrerbase:" —
+        // written by registerReferralBase() in lib/referral.ts (see comment
+        // there: kept distinct on purpose, never shares a code path with the
+        // FC fid-based "ref:"/"referrer:" keys). Reading only the FC keys
+        // here meant every Base referral silently vanished from this
+        // dashboard, so we branch on identity type and read whichever
+        // keyspace actually matches this fid.
+        const isWallet = fid.startsWith("wallet:");
+        const walletAddr = isWallet ? fid.slice("wallet:".length).toLowerCase() : null;
+
+        const referredUsers: (number | string)[] = isWallet
+          ? await kv.get<string[]>(`referrerbase:${walletAddr}:referred`) ?? []
+          : await kv.get<number[]>(`referrer:${fid}:referred`) ?? [];
+
+        const referredByRaw = isWallet
+          ? await kv.get<string>(`refbase:${walletAddr}`)
+          : await kv.get<string>(`ref:${fid}`);
+        // Base referrers are stored as bare lowercase addresses (no "wallet:"
+        // prefix — see registerReferralBase); re-add the prefix here so this
+        // matches the same fid convention used everywhere else in the app.
+        const referredByFid = referredByRaw
+          ? (isWallet ? `wallet:${referredByRaw}` : referredByRaw)
+          : null;
 
         const referralDetails = await Promise.all(
           referredUsers.map(async (refFid) => {
-            const checkins = await kv.get<number>(`ref:${refFid}:checkins`) ?? 0;
-            const status = await kv.get<string>(`ref:${refFid}:status`) ?? "joined";
-            return { fid: refFid, checkins, status };
+            const checkins = isWallet
+              ? await kv.get<number>(`refbase:${refFid}:checkins`) ?? 0
+              : await kv.get<number>(`ref:${refFid}:checkins`) ?? 0;
+            const status = isWallet
+              ? await kv.get<string>(`refbase:${refFid}:status`) ?? "joined"
+              : await kv.get<string>(`ref:${refFid}:status`) ?? "joined";
+            // Same re-prefixing as above, so referred-user fids in the
+            // response are always either a numeric fid or "wallet:0x...".
+            const displayFid = isWallet ? `wallet:${refFid}` : refFid;
+            return { fid: displayFid, checkins, status };
           })
         );
 
@@ -104,7 +145,7 @@ export async function GET(req: NextRequest) {
             hasNotifToken,
             hasAddedApp,
             referrals: {
-              referredBy: referredByFid ? Number(referredByFid) : null,
+              referredBy: referredByFid && !isWallet ? Number(referredByFid) : referredByFid,
               referredCount: referredUsers.length,
               referredUsers: referralDetails,
               degenEarned,
@@ -148,7 +189,7 @@ export async function GET(req: NextRequest) {
           hasNotifToken,
           hasAddedApp,
           referrals: {
-            referredBy: referredByFid ? Number(referredByFid) : null,
+            referredBy: referredByFid && !isWallet ? Number(referredByFid) : referredByFid,
             referredCount: referredUsers.length,
             referredUsers: referralDetails,
             degenEarned,
