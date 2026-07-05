@@ -155,24 +155,6 @@ function sanitizeState(existingRaw: any, incomingState: any) {
     );
     safeXp = existingXp + MAX_XP_GAIN_PER_SAVE;
   }
-  // Floor: this save path (checkin/unlock/wheel_spin/generic) should never
-  // be the thing that DECREASES xp — the only legitimate way xp goes down is
-  // admin/user-control's adjust_stats action, which writes directly via
-  // kv.set and never touches sanitizeState. Without this floor, a stale
-  // autosave (e.g. one queued from just before a referral join bonus or a
-  // wheel-spin xp reward applied client-side) can land AFTER the newer save
-  // and silently overwrite the higher xp with its older, lower snapshot —
-  // same shape of race that used to wipe freeCheckinCredits/streakSaveCredits
-  // before those got their own atomic kv.incrby/decrby keys (see
-  // lib/grub-credits.ts). XP doesn't have an atomic counter to fall back on
-  // the same way, so a floor is the minimal fix: whichever save lands last,
-  // xp can only ever go up or stay the same, never regress.
-  if (safeXp < existingXp) {
-    console.warn(
-      `[pet] xp decrease blocked — incoming ${incomingXp} < existing ${existingXp}, keeping ${existingXp}`,
-    );
-    safeXp = existingXp;
-  }
 
   return {
     ...incomingState,
