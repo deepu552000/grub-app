@@ -233,42 +233,18 @@ async function sendBatch(
 
 // Send to one specific wallet address (the Base-side equivalent of
 // sendNotificationToUser in lib/send-notification.ts).
-//
-// DEBUG INSTRUMENTATION (temporary): returns matchedWallet + rawResults so
-// we can confirm to Base dev support exactly which wallet(s) their /send
-// response actually matched against the address we sent. Once the delivery
-// issue is resolved, this can be trimmed back down to { sent, reason }.
 export async function sendNotificationToWalletBase(
   appUrl: string,
   walletAddress: string,
   params: BaseNotificationParams,
-): Promise<{
-  sent: boolean;
-  reason?: string;
-  matchedWallet?: string;
-  rawResults?: BaseSendResult[];
-}> {
+): Promise<{ sent: boolean; reason?: string }> {
   try {
     const result = await sendBatch(appUrl, [walletAddress], params);
     const entry = result.results?.find(
       (r) => r.walletAddress.toLowerCase() === walletAddress.toLowerCase(),
     );
-
-    // Always log the full raw response server-side too — this is the
-    // artifact Base support asked for ("check response had ur wallet").
-    console.log(
-      `[send-notification-base] sent to ${walletAddress} → raw response: ${JSON.stringify(result)}`,
-    );
-
-    if (!entry) {
-      return { sent: false, reason: "no_result", rawResults: result.results };
-    }
-    return {
-      sent: entry.sent,
-      reason: entry.failureReason,
-      matchedWallet: entry.walletAddress,
-      rawResults: result.results,
-    };
+    if (!entry) return { sent: false, reason: "no_result" };
+    return { sent: entry.sent, reason: entry.failureReason };
   } catch (err: any) {
     return { sent: false, reason: err?.message ?? "send_failed" };
   }
