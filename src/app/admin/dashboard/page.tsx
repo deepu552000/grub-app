@@ -75,7 +75,7 @@ const C = {
   amberGlow2:"#ede9fe",
   cream:     "#f5f0ff",
   creamDim:  "#c4b5fd",
-  creamMute: "#7c6fa0",
+  creamMute: "#a89bd0",
   green:     "#34d399",
   greenDim:  "#064e3b",
   blue:      "#60a5fa",
@@ -84,8 +84,8 @@ const C = {
   red:       "#f87171",
   redDim:    "#450a0a",
   text:      "#ede9fe",
-  textSub:   "#a89bc8",
-  textMute:  "#5c5478",
+  textSub:   "#c9bfe6",
+  textMute:  "#948bb8",
 };
 
 const TYPE_META: Record<string, { color: string; bg: string; label: string }> = {
@@ -1078,7 +1078,7 @@ function AdminDashboardInner() {
                 {filteredRealUsers.length === 0 ? (
                   <p style={{ fontSize: 12, color: T.textMute, margin: "0 0 14px" }}>{(playerSearchQuery || globalSearchQuery || playerNotifFilter !== "all") ? "No matches." : "None yet."}</p>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 16 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 28 }}>
                     {[...filteredRealUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
                       const profile = profiles[String(u.fid)];
                       const bothOff = !u.hasAddedApp && !u.hasNotifToken;
@@ -1128,7 +1128,7 @@ function AdminDashboardInner() {
                   </div>
                 )}
 
-                <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: dark ? "#cbd5e1" : T.textMute, margin: "0 0 8px" }}>
+                <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: dark ? "#e2e8f0" : T.textMute, margin: "0 0 8px", paddingTop: 14, borderTop: `1px solid ${T.borderSub}` }}>
                   Unconverted Opens · {(playerSearchQuery || globalSearchQuery || playerNotifFilter !== "all") ? `${filteredGhostUsers.length}/${ghostUsers.length}` : ghostUsers.length}
                 </p>
                 {filteredGhostUsers.length === 0 ? (
