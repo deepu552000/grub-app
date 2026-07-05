@@ -126,16 +126,9 @@ export async function getWalletNotificationStatus(
 // the /users and /send endpoints share a 20 req/min per-IP limit; a status
 // check on every page load would blow through that almost immediately once
 // you have more than a couple dozen concurrent Base users. Caching each
-// wallet's result briefly keeps this endpoint's traffic low against that
-// budget regardless of how many people open the app.
-//
-// Kept short (not the original 5 minutes) because a stale "enabled" cache
-// entry masks the user having just turned notifications OFF in Base App —
-// they'd see the banner incorrectly stay hidden until the cache expired.
-// A short TTL bounds how long that staleness window can last for the
-// passive per-open check; the explicit recheck (force=true) below skips
-// the cache entirely so the "I did it" button always reflects reality.
-const STATUS_CACHE_TTL_SECONDS = 45;
+// wallet's result for a few minutes keeps this endpoint's traffic near-zero
+// against that budget regardless of how many people open the app.
+const STATUS_CACHE_TTL_SECONDS = 300; // 5 minutes
 
 function statusCacheKey(appUrl: string, walletAddress: string) {
   return `grub:base-status:${appUrl}:${walletAddress.toLowerCase()}`;
@@ -144,17 +137,14 @@ function statusCacheKey(appUrl: string, walletAddress: string) {
 export async function getWalletNotificationStatusCached(
   appUrl: string,
   walletAddress: string,
-  force = false,
 ): Promise<{ appPinned: boolean; notificationsEnabled: boolean }> {
   const key = statusCacheKey(appUrl, walletAddress);
 
-  if (!force) {
-    try {
-      const cached = await kv.get<{ appPinned: boolean; notificationsEnabled: boolean }>(key);
-      if (cached) return cached;
-    } catch {
-      // Cache miss/error — fall through to a live check rather than failing.
-    }
+  try {
+    const cached = await kv.get<{ appPinned: boolean; notificationsEnabled: boolean }>(key);
+    if (cached) return cached;
+  } catch {
+    // Cache miss/error — fall through to a live check rather than failing.
   }
 
   const fresh = await getWalletNotificationStatus(appUrl, walletAddress);

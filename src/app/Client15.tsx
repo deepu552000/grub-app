@@ -530,16 +530,6 @@ function clamp(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-// Glimmer has its own cap (48), completely separate from the 0-100 range
-// used by Hunger/Happiness/Care/Energy/Bond — using the generic clamp()
-// above on Glimmer was a bug (see loadState, loadStateFromSaved, and the
-// daily-event effect handler, all updated to use this instead).
-const GLIMMER_MAX = 48;
-function clampGlimmer(value: number) {
-  if (Number.isNaN(value)) return 0;
-  return Math.max(0, Math.min(GLIMMER_MAX, Math.floor(value)));
-}
-
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -569,6 +559,7 @@ function loadState(storageKey: string = STORAGE_KEY): PetState {
 
     const parsed = JSON.parse(saved) as PetState;
     const hoursAway = Math.max(0, (Date.now() - parsed.lastVisit) / 36e5);
+    const mined = Math.min(48, Math.floor(hoursAway * 1));
     const isNewCareDay = parsed.lastCareDay !== todayKey();
     const isNewTapDay = (parsed.lastTapDay ?? "") !== todayKey();
 
@@ -591,7 +582,7 @@ function loadState(storageKey: string = STORAGE_KEY): PetState {
       ...defaultState,
       ...parsed,
       bond: bondAfterDecay,
-      glimmer: clampGlimmer(parsed.glimmer + hoursAway * 2),
+      glimmer: parsed.glimmer + mined,
       hunger: decayedHunger,
       happiness: decayedHappiness,
       energy: clamp(parsed.energy + hoursAway * 5),
@@ -620,6 +611,7 @@ function loadState(storageKey: string = STORAGE_KEY): PetState {
 // instead of reading from localStorage — used when loading from the DB.
 function loadStateFromSaved(parsed: PetState): PetState {
   const hoursAway = Math.max(0, (Date.now() - parsed.lastVisit) / 36e5);
+  const mined = Math.min(48, Math.floor(hoursAway * 1));
   const isNewCareDay = parsed.lastCareDay !== todayKey();
   const isNewTapDay = (parsed.lastTapDay ?? "") !== todayKey();
 
@@ -641,7 +633,7 @@ function loadStateFromSaved(parsed: PetState): PetState {
     ...defaultState,
     ...parsed,
     bond: bondAfterDecay,
-    glimmer: clampGlimmer(parsed.glimmer + hoursAway * 2),
+    glimmer: parsed.glimmer + mined,
     hunger: decayedHunger,
     happiness: decayedHappiness,
     energy: clamp(parsed.energy + hoursAway * 5),
@@ -1304,7 +1296,7 @@ export default function ClientPage() {
     // they've done it, and let the banner clear itself once it's true.
     if (isBaseAppIdentity && walletAddress) {
       try {
-        const r = await fetch(`/api/base-notification-status?wallet=${walletAddress}&force=true`);
+        const r = await fetch(`/api/base-notification-status?wallet=${walletAddress}`);
         const data = r.ok ? await r.json() : null;
         if (data) {
           setNotificationsEnabled(!!data.notificationsEnabled);
@@ -1389,7 +1381,7 @@ export default function ClientPage() {
             return {
               ...cur,
               lastEventDay: todayKey(),
-              glimmer: fx.glimmer ? clampGlimmer(cur.glimmer + fx.glimmer) : cur.glimmer,
+              glimmer: fx.glimmer ? clamp(cur.glimmer + fx.glimmer) : cur.glimmer,
               xp: fx.xp ? cur.xp + fx.xp : cur.xp,
               energy: fx.energy ? clamp(cur.energy + fx.energy) : cur.energy,
               hunger: fx.hunger ? clamp(cur.hunger + fx.hunger) : cur.hunger,
@@ -4830,7 +4822,7 @@ const faqSections = [
   },
   {
     title: "✨ Glimmer",
-    content: "Glimmer is the resource used to feed Grub. It mines passively while you are away — 2 Glimmer per hour, up to a 48 max stored balance (about a day to fill from empty). You do not need to do anything — just come back and it is waiting. Each feed costs 8 Glimmer, so 3 feeds per day costs 24 total.",
+    content: "Glimmer is the resource used to feed Grub. It mines passively while you are away — about 1 Glimmer per hour, up to 48 hours stored (48 max). You do not need to do anything — just come back and it is waiting. Each feed costs 8 Glimmer, so 3 feeds per day costs 24 total.",
   },
   {
     title: "🎮 Care Actions",

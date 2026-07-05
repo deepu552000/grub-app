@@ -19,14 +19,13 @@ const APP_URL = "https://grub-app-eight.vercel.app";
 
 export async function GET(request: NextRequest) {
   const wallet = request.nextUrl.searchParams.get("wallet");
-  const force = request.nextUrl.searchParams.get("force") === "true";
 
   if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
     return NextResponse.json({ error: "valid wallet address is required" }, { status: 400 });
   }
 
   try {
-    const status = await getWalletNotificationStatusCached(APP_URL, wallet, force);
+    const status = await getWalletNotificationStatusCached(APP_URL, wallet);
     return NextResponse.json(status);
   } catch (err: any) {
     // Fail closed to "not enabled" rather than erroring the whole page —
