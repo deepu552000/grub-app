@@ -1385,7 +1385,7 @@ function ClientPageInner() {
   const [poolDegen, setPoolDegen] = useState<number | null>(null);
   const [referralData, setReferralData] = useState<{
     referralLink: string;
-    friends: { fid?: number; wallet?: string; checkins: number; status: string; username: string; pfp?: string }[];
+    friends: { fid: number; checkins: number; status: string; username: string; pfp: string }[];
     totalEarned: number;
   } | null>(null);
   const [referralLoading, setReferralLoading] = useState(false);
@@ -4423,16 +4423,14 @@ function ClientPageInner() {
         </section>
 
         {/* ── REFERRAL ──
-            Now shown for BOTH fid and Base App wallet identities. Previously
-            gated on `fid` alone from back when referral.ts/register/checkin
-            were FID-only — that gate was never lifted after registerReferralBase,
-            the wallet-keyed /register and /checkin paths, and the wallet
-            branch of /status were added, so Base App users never saw this
-            section even though the backend has fully supported them for a
-            while. FC behavior below is unchanged for fid users — every
-            existing `fid ? ... : ...` branch still resolves exactly the same
-            way it always did; only the wallet fallback is new. */}
-        {(fid || (isBaseAppIdentity && walletAddress)) && (
+            Hidden entirely when there's no fid. The referral system is
+            still FID-only under the hood (join bonus, checkin payout, the
+            /?ref= link) — showing this to a Base App / wallet-only user
+            would just be a permanently-stuck "Loading..." box with a dead
+            copy-link button, so we hide it rather than show something
+            broken. Re-enable for wallet users once referral.ts, register,
+            and checkin routes get a wallet-keyed path. */}
+        {fid && (
         <section className="stats-collapsible" style={{ marginTop: 8 }}>
           <button
             type="button"
@@ -4440,7 +4438,7 @@ function ClientPageInner() {
             onClick={async () => {
               const next = !referralOpen;
               setReferralOpen(next);
-              if (next && (fid || walletAddress) && !referralData) {
+              if (next && fid && !referralData) {
                 setReferralLoading(true);
                 // Fetch pool balance in parallel
                 fetch("/api/referral/pool")
@@ -4448,13 +4446,7 @@ function ClientPageInner() {
                   .then((d) => { if (d.ok) setPoolDegen(d.poolDegen); })
                   .catch(() => {});
                 try {
-                  // fid path unchanged; wallet path only used when there's no fid
-                  // (Base App identity) — mirrors the same fid-first convention
-                  // used everywhere else in this file (isBaseAppIdentity, etc.)
-                  const statusUrl = fid
-                    ? `/api/referral/status?fid=${fid}`
-                    : `/api/referral/status?wallet=${walletAddress}`;
-                  const res = await fetch(statusUrl);
+                  const res = await fetch(`/api/referral/status?fid=${fid}`);
                   const data = await res.json();
                   if (data.ok) setReferralData(data);
                 } catch {}
@@ -4474,11 +4466,7 @@ function ClientPageInner() {
                 <p style={{ fontSize: 12, color: "#888", margin: "0 0 4px" }}>Your referral link</p>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <code style={{ fontSize: 11, flex: 1, wordBreak: "break-all", color: "#444" }}>
-                    {fid
-                      ? `https://grub-app-eight.vercel.app/?ref=${fid}`
-                      : walletAddress
-                        ? `https://grub-app-eight.vercel.app/?ref=${walletAddress}`
-                        : "Loading..."}
+                    {fid ? `https://grub-app-eight.vercel.app/?ref=${fid}` : "Loading..."}
                   </code>
                   <button
                     type="button"
@@ -4488,10 +4476,7 @@ function ClientPageInner() {
                       cursor: "pointer", whiteSpace: "nowrap"
                     }}
                     onClick={() => {
-                      const link = fid
-                        ? `https://grub-app-eight.vercel.app/?ref=${fid}`
-                        : `https://grub-app-eight.vercel.app/?ref=${walletAddress}`;
-                      navigator.clipboard.writeText(link);
+                      navigator.clipboard.writeText(`https://grub-app-eight.vercel.app/?ref=${fid}`);
                     }}
                   >
                     Copy
@@ -4499,11 +4484,7 @@ function ClientPageInner() {
                 </div>
               </div>
 
-              {/* Share link — composeCast on Farcaster, native share sheet /
-                  clipboard fallback everywhere else (Base App included), see
-                  shareOrCopy(). Label reflects whichever surface actually
-                  applies instead of always saying "Farcaster" for Base App
-                  users who'll never see a cast composer. */}
+              {/* Share on Farcaster */}
               <button
                 type="button"
                 style={{
@@ -4512,14 +4493,12 @@ function ClientPageInner() {
                   fontWeight: 700, cursor: "pointer", width: "100%"
                 }}
                 onClick={() => {
-                  const refLink = fid
-                    ? `https://grub-app-eight.vercel.app/?ref=${fid}`
-                    : `https://grub-app-eight.vercel.app/?ref=${walletAddress}`;
-                  const text = `I'm raising Grub 🐱✨ — a tiny white kitty!\nJoin me and help me earn DEGEN 🎁`;
+                  const refLink = `https://grub-app-eight.vercel.app/?ref=${fid}`;
+                  const text = `I'm raising Grub 🐱✨ — a tiny white kitty on Farcaster!\nJoin me and help me earn DEGEN 🎁`;
                   shareOrCopy(text, refLink, "Referral link copied! Paste it anywhere to share. 📋");
                 }}
               >
-                {fid ? "🟣 Share on Farcaster" : "📤 Share Your Link"}
+                🟣 Share on Farcaster
               </button>
 
               {/* Rewards info */}
@@ -4556,7 +4535,7 @@ function ClientPageInner() {
                   {referralData.friends.length > 0 && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {referralData.friends.map((f) => (
-                        <div key={f.fid ?? f.wallet} style={{
+                        <div key={f.fid} style={{
                           background: "#f5f0e8", borderRadius: 8,
                           padding: "8px 12px", display: "flex",
                           justifyContent: "space-between", alignItems: "center", fontSize: 12
