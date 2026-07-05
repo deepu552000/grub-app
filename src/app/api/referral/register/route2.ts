@@ -1,20 +1,13 @@
 // app/api/referral/register/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { registerReferral, registerReferralBase } from "@/lib/referral";
+import { registerReferral } from "@/lib/referral";
 
 export async function POST(req: NextRequest) {
   try {
-    const { newUserFID, referrerFID, newUserWallet, referrerWallet } = await req.json();
-
-    // Base App (wallet-based) — new, completely separate from the fid path
-    // below. Only runs if wallet fields are present instead of fid fields.
-    if (newUserWallet && referrerWallet) {
-      const result = await registerReferralBase(newUserWallet, referrerWallet);
-      return NextResponse.json(result);
-    }
+    const { newUserFID, referrerFID } = await req.json();
 
     if (!newUserFID || !referrerFID) {
-      return NextResponse.json({ ok: false, reason: "missing fids or wallets" }, { status: 400 });
+      return NextResponse.json({ ok: false, reason: "missing fids" }, { status: 400 });
     }
 
     // All the actual logic (self-referral check, already-registered check,

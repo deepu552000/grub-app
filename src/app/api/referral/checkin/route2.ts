@@ -4,8 +4,8 @@ import { kv } from "@vercel/kv";
 import { sendDegen, recordFailedPayout, acquireLock, releaseLock } from "@/lib/referral";
 
 async function logDegenTxn(entry: {
-  fid: number | string; // fid, or "wallet:0x..." for Base — see lib/referral.ts's logDegenTxn
-  toFid: number | string;
+  fid: number;
+  toFid: number;
   type: "referral_join" | "referral_checkin";
   txHash: string;
   amountDegen: number;
@@ -31,88 +31,10 @@ async function logDegenTxn(entry: {
 
 export async function POST(req: NextRequest) {
   try {
-    const { userFID, userWallet } = await req.json();
-
-    // Base App (wallet-based) — new, completely separate KV keys (refbase:)
-    // from the fid path below. No wallet-lookup step needed here: the
-    // referrer's own wallet address (stored directly under refbase:{user})
-    // IS the payout address on Base.
-    if (userWallet) {
-      const user = String(userWallet).toLowerCase();
-
-      const referrerWallet = await kv.get<string>(`refbase:${user}`);
-      if (!referrerWallet) {
-        return NextResponse.json({ ok: false, reason: "not a referred wallet" });
-      }
-
-      const status = await kv.get(`refbase:${user}:status`);
-      if (status === "paid") {
-        return NextResponse.json({ ok: false, reason: "already paid" });
-      }
-
-      const count = await kv.incr(`refbase:${user}:checkins`);
-      console.log(`[referral/checkin] wallet ${user} checkin count: ${count}`);
-
-      if (count < 5) {
-        return NextResponse.json({ ok: true, checkins: count, paid: false });
-      }
-
-      const lockKey = `refbase:${user}:paylock`;
-      const gotLock = await acquireLock(lockKey, 30);
-      if (!gotLock) {
-        console.warn(`[referral/checkin] payout for wallet ${user} already in progress, skipping duplicate attempt`);
-        return NextResponse.json({
-          ok: true,
-          checkins: count,
-          paid: false,
-          reason: "payout already in progress elsewhere — try again shortly",
-        });
-      }
-
-      try {
-        let txHash: string;
-        try {
-          txHash = await sendDegen(referrerWallet, 2);
-        } catch (err: any) {
-          console.error("[referral/checkin] base sendDegen failed:", err);
-          await recordFailedPayout({
-            fid: `wallet:${referrerWallet}`,
-            toFid: `wallet:${user}`,
-            toWallet: referrerWallet,
-            amountDegen: 2,
-            type: "referral_checkin",
-            reason: err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error",
-            broadcastTxHash: err?.broadcastTxHash ?? null,
-            sideEffect: { kvKey: `refbase:${user}:status`, kvValue: "paid" },
-          });
-          return NextResponse.json({
-            ok: false,
-            reason: "DEGEN payout failed — logged for retry in dashboard",
-            checkins: count,
-            paid: false,
-          });
-        }
-
-        await kv.set(`refbase:${user}:status`, "paid");
-
-        await logDegenTxn({
-          fid: `wallet:${referrerWallet}`,
-          toFid: `wallet:${user}`,
-          type: "referral_checkin",
-          txHash,
-          amountDegen: 2,
-          toWallet: referrerWallet,
-        });
-
-        console.log(`[referral/checkin] paid 2 DEGEN to ${referrerWallet} for referring wallet ${user}`);
-        return NextResponse.json({ ok: true, checkins: count, paid: true, txHash });
-      } finally {
-        await releaseLock(lockKey);
-      }
-    }
+    const { userFID } = await req.json();
 
     if (!userFID) {
-      return NextResponse.json({ ok: false, reason: "missing fid or wallet" }, { status: 400 });
+      return NextResponse.json({ ok: false, reason: "missing fid" }, { status: 400 });
     }
 
     const referrerFID = await kv.get(`ref:${userFID}`);

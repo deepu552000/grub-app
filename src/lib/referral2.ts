@@ -6,9 +6,6 @@
 import { ethers } from "ethers";
 import { kv } from "@vercel/kv";
 import { Attribution } from "ox/erc8021";
-import { petKey } from "@/lib/pet-key";
-import { getNames } from "@coinbase/onchainkit/identity";
-import { base } from "viem/chains";
 
 const DEGEN_CONTRACT = "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed";
 const DEGEN_ABI = [
@@ -30,8 +27,8 @@ const FAILED_PAYOUTS_KEY = "failed-payouts";
 // dashboard once the underlying issue (usually: refill the treasury) is fixed.
 export type FailedPayout = {
   id: string;
-  fid: number | string;        // fid, or "wallet:0x..." for Base — see logDegenTxn
-  toFid: number | string;      // fid, or "wallet:0x..." for Base
+  fid: number;               // the fid whose wallet was supposed to receive DEGEN
+  toFid: number;              // the fid whose action triggered the payout
   toWallet: string;
   amountDegen: number;
   type: "referral_join" | "referral_checkin";
@@ -179,8 +176,8 @@ export async function getWalletFromNeynar(
 // Logs a completed DEGEN payout to the shared txn log. Used by both the
 // real referral join flow and the checkin bonus flow.
 export async function logDegenTxn(entry: {
-  fid: number | string;
-  toFid: number | string;
+  fid: number;
+  toFid: number;
   type: "referral_join" | "referral_checkin";
   txHash: string;
   amountDegen: number;
@@ -319,106 +316,7 @@ export async function registerReferral(
   }
 }
 
-// The Base App (wallet-based) equivalent of registerReferral above. Kept as
-// a separate function rather than branching inside registerReferral so the
-// two identity models never share a code path that could accidentally cross
-// fid and wallet semantics — same reasoning as the notifications split.
-//
-// KV keys use a distinct "refbase:" / "referrerbase:" prefix throughout so
-// there's no possibility of a Base entry colliding with (or being mistaken
-// for) an fid-keyed entry, even though in practice fid (numeric) and wallet
-// (0x-prefixed hex) strings would never collide anyway.
-//
-// One simplification vs the FC path: there's no Neynar wallet lookup step.
-// On Base, the referrer's own wallet address already IS their payout
-// address — nothing to resolve.
-export async function registerReferralBase(
-  newUserWallet: string,
-  referrerWallet: string,
-): Promise<RegisterReferralResult> {
-  const newUser = newUserWallet.toLowerCase();
-  const referrer = referrerWallet.toLowerCase();
-
-  if (newUser === referrer) {
-    return { ok: false, reason: "self-referral" };
-  }
-
-  const existing = await kv.get(`refbase:${newUser}`);
-  if (existing) {
-    return { ok: false, reason: "already registered" };
-  }
-
-  // Same "not eligible if this identity already has real activity" guard as
-  // the FC path — uses the shared petKey() so this reads the actual wallet
-  // pet-state key format instead of a hand-guessed one.
-  const existingPetState = await kv.get<any>(petKey(null, newUser));
-  if (existingPetState && (existingPetState.totalCheckIns ?? 0) > 0) {
-    return {
-      ok: false,
-      reason: "wallet already has existing game activity — not eligible as a new referral",
-    };
-  }
-
-  await kv.set(`refbase:${newUser}`, referrer);
-  await kv.set(`refbase:${newUser}:checkins`, 0);
-  await kv.set(`refbase:${newUser}:status`, "joined");
-
-  const REFERRAL_DEGEN = getReferralJoinAmount();
-
-  const referred = (await kv.get<string[]>(`referrerbase:${referrer}:referred`)) ?? [];
-  await kv.set(`referrerbase:${referrer}:referred`, [...referred, newUser]);
-
-  const lockKey = `refbase:${newUser}:joinlock`;
-  const gotLock = await acquireLock(lockKey, 30);
-  if (!gotLock) {
-    return {
-      ok: true,
-      rewarded: false,
-      reason: "payout already in progress elsewhere — try again shortly",
-      isNewJoiner: true,
-    };
-  }
-
-  try {
-    let txHash: string;
-    try {
-      txHash = await sendDegen(referrer, REFERRAL_DEGEN);
-    } catch (err: any) {
-      console.error("[referral] registerReferralBase sendDegen failed:", err);
-      await recordFailedPayout({
-        fid: `wallet:${referrer}`,
-        toFid: `wallet:${newUser}`,
-        toWallet: referrer,
-        amountDegen: REFERRAL_DEGEN,
-        type: "referral_join",
-        reason: err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error",
-        broadcastTxHash: err?.broadcastTxHash ?? null,
-        sideEffect: null,
-      });
-      return {
-        ok: true,
-        rewarded: false,
-        reason: "DEGEN payout failed — logged for retry in dashboard",
-        isNewJoiner: true,
-      };
-    }
-
-    await logDegenTxn({
-      fid: `wallet:${referrer}`,
-      toFid: `wallet:${newUser}`,
-      type: "referral_join",
-      txHash,
-      amountDegen: REFERRAL_DEGEN,
-      toWallet: referrer,
-    });
-
-    return { ok: true, rewarded: true, txHash, isNewJoiner: true };
-  } finally {
-    await releaseLock(lockKey);
-  }
-}
-
-
+// Bulk lookup usernames for multiple FIDs in one Neynar call.
 // Returns a map of fid → { username, pfp }
 export async function getUsernamesFromNeynar(
   fids: number[]
@@ -448,38 +346,4 @@ export async function getUsernamesFromNeynar(
     console.error("[referral] getUsernamesFromNeynar failed:", err);
     return {};
   }
-}
-
-// Bulk-resolve Basenames for multiple wallet addresses in one call — the
-// Base-side equivalent of getUsernamesFromNeynar above. Uses OnchainKit's
-// getNames(), which does the same single-call-per-list-load bulk lookup
-// shape as the Neynar call (not a per-user-per-pageview hit). Falls back to
-// a shortened address (0xabcd...wxyz) per-wallet if it has no Basename, or
-// if the resolution call fails entirely — never leaves a wallet unlabeled.
-function shortenAddress(address: string): string {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-export async function getBasenamesForWallets(
-  wallets: string[],
-): Promise<Record<string, string>> {
-  const map: Record<string, string> = {};
-  if (wallets.length === 0) return map;
-
-  try {
-    const names = await getNames({
-      addresses: wallets as `0x${string}`[],
-      chain: base,
-    });
-    wallets.forEach((w, i) => {
-      map[w] = names[i] || shortenAddress(w);
-    });
-  } catch (err) {
-    console.error("[referral] getBasenamesForWallets failed:", err);
-    wallets.forEach((w) => {
-      map[w] = shortenAddress(w);
-    });
-  }
-
-  return map;
 }

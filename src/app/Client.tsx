@@ -951,6 +951,43 @@ export default function ClientPage() {
     return () => { cancelled = true; };
   }, [isBaseAppIdentity, walletAddress]);
 
+  // Base App referral registration — the FC equivalent (?ref=<fid>) only
+  // runs inside the `ctx?.user?.fid` branch above and never fires for
+  // wallet-only users, so Base App referral links were silently a no-op.
+  // Mirrors the same request shape via newUserWallet/referrerWallet fields
+  // (see app/api/referral/register/route.ts) — completely separate KV keys
+  // and code path from the fid version, same split as everywhere else Base
+  // support was added. Guarded by a ref so it only ever attempts once per
+  // session, same intent as the fid path's "already registered" check being
+  // the actual source of truth, this just avoids a redundant call on every
+  // walletAddress-triggered re-render.
+  const referralAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (!isBaseAppIdentity || !walletAddress || referralAttemptedRef.current) return;
+    const refParam = new URL(window.location.href).searchParams.get("ref");
+    if (!refParam || refParam.toLowerCase() === walletAddress.toLowerCase()) return;
+
+    referralAttemptedRef.current = true;
+    fetch("/api/referral/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        newUserWallet: walletAddress,
+        referrerWallet: refParam,
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        // Server only sends isNewJoiner:true the first time this wallet is
+        // ever registered — safe even if localStorage gets cleared.
+        if (data?.isNewJoiner) {
+          setState((cur) => ({ ...cur, xp: cur.xp + 20 }));
+          showActionBubble("+20 XP — Welcome new member! 🎉");
+        }
+      })
+      .catch(() => {}); // fire and forget — never block app load on this
+  }, [isBaseAppIdentity, walletAddress]);
+
   useEffect(() => {
     // Call ready() immediately, before anything else. The host's splash-screen
     // watchdog flags the app ("Ready not called") if this doesn't fire within
@@ -2006,6 +2043,12 @@ export default function ClientPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userFID: fid }),
+      }).catch(() => {});
+    } else if (isBaseAppIdentity && walletAddress) {
+      fetch("/api/referral/checkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userWallet: walletAddress }),
       }).catch(() => {});
     }
 
