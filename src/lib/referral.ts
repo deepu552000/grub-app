@@ -351,7 +351,7 @@ export async function registerReferralBase(
   // Same "not eligible if this identity already has real activity" guard as
   // the FC path — uses the shared petKey() so this reads the actual wallet
   // pet-state key format instead of a hand-guessed one.
-  const existingPetState = await kv.get<any>(petKey(null, newUser));
+  const existingPetState = await kv.get<any>(petKey(null, newUser)!);
   if (existingPetState && (existingPetState.totalCheckIns ?? 0) > 0) {
     return {
       ok: false,
