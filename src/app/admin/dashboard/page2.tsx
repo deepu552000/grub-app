@@ -20,9 +20,9 @@ type DebugUser = {
   lastVisit: string;
   lastCheckInDay?: string;
   referrals?: {
-    referredBy: number | string | null;
+    referredBy: number | null;
     referredCount: number;
-    referredUsers: { fid: number | string; checkins: number; status: string }[];
+    referredUsers: { fid: number; checkins: number; status: string }[];
     degenEarned: number;
   };
 };
@@ -666,19 +666,24 @@ function AdminDashboardInner() {
 
   // Base App wallet-only users have fid values like "wallet:0xabc..." which are
   // full addresses and blow out the fixed-width layout in Player Progress.
-  // Shorten to "wallet:0x1233....89893" for display only — lookups/manage-user
-  // actions still use the untouched full u.fid value.
+  // Give each one a short stable label ("base1", "base2", ...) for display only —
+  // lookups/manage-user actions still use the untouched full u.fid value.
+  const walletLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    let counter = 1;
+    for (const u of users) {
+      const fidStr = String(u.fid);
+      if (fidStr.startsWith("wallet:") && !map.has(fidStr)) {
+        map.set(fidStr, `base${counter++}`);
+      }
+    }
+    return map;
+  }, [users]);
+
   const displayFid = useCallback((fid: number | string): string => {
     const fidStr = String(fid);
-    if (fidStr.startsWith("wallet:")) {
-      const addr = fidStr.slice("wallet:".length);
-      if (addr.length > 15) {
-        return `wallet:${addr.slice(0, 6)}....${addr.slice(-5)}`;
-      }
-      return fidStr;
-    }
-    return fidStr;
-  }, []);
+    return walletLabelMap.get(fidStr) ?? fidStr;
+  }, [walletLabelMap]);
 
   // Global dashboard-wide search (fid or username) — combines with each panel's own search below
   const globalMatchesFid = useCallback((fid: number | string) => {
@@ -1646,7 +1651,7 @@ function AdminDashboardInner() {
                     onClick={() => { setLookupFid(u.fid); loadUserControl(u.fid); }}
                     style={{ fontSize: 13, fontWeight: 700, color: dark ? C.amberGlow : "#7c3aed", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0, textShadow: dark ? `0 0 10px ${C.amberGlow}66` : "none" }}
                   >
-                    {String(u.fid).startsWith("wallet:") ? displayFid(u.fid) : `FID ${u.fid}`}
+                    FID {u.fid}
                   </button>
                   <span style={{ fontSize: 12, fontWeight: 700, color: dark ? C.amberGlow2 : "#92400e" }}>+{u.referrals?.degenEarned} DEGEN</span>
                 </div>
@@ -1659,7 +1664,7 @@ function AdminDashboardInner() {
                       border: `1px solid ${r.status === "paid" ? C.green + "66" : C.creamDim + "77"}`,
                       whiteSpace: "nowrap",
                     }}>
-                      {String(r.fid).startsWith("wallet:") ? displayFid(r.fid) : `#${r.fid}`} · {r.checkins} {r.checkins === 1 ? "Check In" : "Check Ins"}
+                      #{r.fid} · {r.checkins} {r.checkins === 1 ? "Check In" : "Check Ins"}
                     </span>
                   ))}
                 </div>
@@ -1703,7 +1708,7 @@ function AdminDashboardInner() {
                 padding: "10px 14px", background: T.surfaceAlt, borderRadius: 8,
                 border: `1px solid ${T.border}`,
               }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: T.cream, fontFamily: "monospace" }}>{String(controlState.fid).startsWith("wallet:") ? displayFid(controlState.fid) : `FID ${controlState.fid}`}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: T.cream, fontFamily: "monospace" }}>FID {controlState.fid}</span>
                 <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4,
                   background: controlState.state.banned ? "#3d0000" : C.greenDim,
                   color: controlState.state.banned ? C.red : C.green,
@@ -1712,9 +1717,7 @@ function AdminDashboardInner() {
                   {controlState.state.banned ? "BANNED" : "Active"}
                 </span>
                 {controlState.referral?.referredByFid && (
-                  <span style={{ fontSize: 11, fontWeight: 600, color: dark ? C.amberGlow2 : "#92400e" }}>
-                    sponsored by {String(controlState.referral.referredByFid).startsWith("wallet:") ? displayFid(controlState.referral.referredByFid) : `FID ${controlState.referral.referredByFid}`}
-                  </span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: dark ? C.amberGlow2 : "#92400e" }}>sponsored by FID {controlState.referral.referredByFid}</span>
                 )}
                 <div style={{ marginLeft: "auto", display: "flex", gap: 16 }}>
                   {[
@@ -1758,7 +1761,7 @@ function AdminDashboardInner() {
                           }}
                           title="Open in user panel"
                         >
-                          {String(r.fid).startsWith("wallet:") ? displayFid(r.fid) : `#${r.fid}`} · {r.checkins} {r.checkins === 1 ? "Check In" : "Check Ins"}
+                          #{r.fid} · {r.checkins} {r.checkins === 1 ? "Check In" : "Check Ins"}
                         </button>
                       ))}
                     </div>

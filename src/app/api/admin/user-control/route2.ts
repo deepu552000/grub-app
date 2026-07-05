@@ -20,7 +20,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { ACCESSORIES } from "@/lib/accessories";
 import { getAuth } from "@clerk/nextjs/server";
-import { registerReferral, registerReferralBase } from "@/lib/referral";
+import { registerReferral } from "@/lib/referral";
 import { grantCredit, revokeCredit, getCredits } from "@/lib/grub-credits";
 import { petKey } from "@/lib/pet-key";
 
@@ -56,26 +56,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, reason: `no pet state found for fid ${fid}` });
   }
 
-  // Base App wallet identities (fid === "wallet:0x...") use a separate
-  // "refbase:"/"referrerbase:" keyspace — see the matching comment in
-  // /api/debug-kv. Without this branch, looking up a Base user here would
-  // silently return no referral info even when one exists.
-  const isWallet = fid.startsWith("wallet:");
-  const walletAddr = isWallet ? fid.slice("wallet:".length).toLowerCase() : null;
-
-  const referredByRaw = isWallet
-    ? await kv.get<string>(`refbase:${walletAddr}`)
-    : await kv.get<string>(`ref:${fid}`);
-  const referredByFid = referredByRaw
-    ? (isWallet ? `wallet:${referredByRaw}` : referredByRaw)
-    : null;
-
-  const referredUsersRaw = isWallet
-    ? (await kv.get<string[]>(`referrerbase:${walletAddr}:referred`)) ?? []
-    : (await kv.get<number[]>(`referrer:${fid}:referred`)) ?? [];
-  const referredUsers = isWallet
-    ? referredUsersRaw.map((w) => `wallet:${w}`)
-    : referredUsersRaw;
+  const referredByFid = await kv.get<string>(`ref:${fid}`);
+  const referredUsers = (await kv.get<number[]>(`referrer:${fid}:referred`)) ?? [];
   // Read credits from the atomic keys, not the blob — the blob copy is only
   // a mirror and can lag by design (see lib/grub-credits.ts).
   const credits = await getCredits(petKey(fid)!);
@@ -97,7 +79,7 @@ export async function GET(req: NextRequest) {
       accessoriesEquipped: state.accessories?.equipped ?? {},
     },
     referral: {
-      referredByFid,
+      referredByFid: referredByFid ?? null,
       referredUsers,
     },
   });
@@ -288,58 +270,14 @@ export async function POST(req: NextRequest) {
     if (action === "edit_referral") {
       const { newReferrerFid, removeReferral, triggerPayout } = body;
 
-      // Base wallet identities (fid === "wallet:0x...") live in a separate
-      // "refbase:"/"referrerbase:" keyspace — same split as debug-kv and
-      // registerReferralBase() in lib/referral.ts. Everything below just
-      // mirrors the FC branch one-for-one against that keyspace instead.
-      const isWallet = typeof fid === "string" && fid.startsWith("wallet:");
-      const walletAddr = isWallet ? fid.slice("wallet:".length).toLowerCase() : null;
-
       if (removeReferral) {
-        if (isWallet) {
-          await kv.del(`refbase:${walletAddr}`);
-          await kv.del(`refbase:${walletAddr}:checkins`);
-          await kv.del(`refbase:${walletAddr}:status`);
-        } else {
-          await kv.del(`ref:${fid}`);
-          await kv.del(`ref:${fid}:checkins`);
-          await kv.del(`ref:${fid}:status`);
-        }
+        await kv.del(`ref:${fid}`);
+        await kv.del(`ref:${fid}:checkins`);
+        await kv.del(`ref:${fid}:status`);
         return NextResponse.json({ ok: true, fid, action, removed: true });
       }
 
       if (newReferrerFid) {
-        if (isWallet) {
-          // The referrer must also be a Base wallet — the two identity
-          // spaces never cross, same as the real join flow. Accept either
-          // "wallet:0xabc..." or a bare address typed into the admin field.
-          const referrerRaw = String(newReferrerFid);
-          const referrerAddr = (
-            referrerRaw.startsWith("wallet:") ? referrerRaw.slice("wallet:".length) : referrerRaw
-          ).toLowerCase();
-
-          if (triggerPayout) {
-            // Runs the SAME registerReferralBase() flow a real Base
-            // referral link click triggers — KV writes and an actual
-            // sendDegen payout. Mirrors the FC triggerPayout path below;
-            // rejects the same way a real join would (self-referral,
-            // already registered, existing activity) — use "Remove
-            // Sponsor" first if you need to re-test this wallet.
-            const result = await registerReferralBase(walletAddr!, referrerAddr);
-            return NextResponse.json({ ...result, fid, action });
-          }
-
-          // Plain data edit — just repoints the sponsor relationship, no
-          // payout. Use this to fix a wrong sponsor on a real user without
-          // re-paying them.
-          await kv.set(`refbase:${walletAddr}`, referrerAddr);
-          const referredBase = (await kv.get<string[]>(`referrerbase:${referrerAddr}:referred`)) ?? [];
-          if (!referredBase.includes(walletAddr!)) {
-            await kv.set(`referrerbase:${referrerAddr}:referred`, [...referredBase, walletAddr]);
-          }
-          return NextResponse.json({ ok: true, fid, action, newReferrerFid: `wallet:${referrerAddr}` });
-        }
-
         // triggerPayout=true runs the SAME registerReferral() flow a real
         // ?ref=<fid> link click triggers — KV writes, wallet lookup via
         // Neynar, and an actual sendDegen payout with attribution. This
