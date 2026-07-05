@@ -2,7 +2,7 @@
 
 import sdk from "@farcaster/miniapp-sdk";
 import type { CSSProperties } from "react";
-import { Component, useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { connect, getAccount, reconnect, sendTransaction, switchChain, watchAccount } from "wagmi/actions";
 import { base } from "wagmi/chains";
 import { wagmiConfig } from "@/lib/wagmi";
@@ -743,7 +743,7 @@ function shadeColor(hex: string, amt: number): string {
 
 let floatId = 0;
 
-function ClientPageInner() {
+export default function ClientPage() {
   // Server and first client render both use defaultState - no mismatch possible.
   const [state, setState] = useState<PetState>(defaultState);
   const [hydrated, setHydrated] = useState(false);
@@ -1152,17 +1152,8 @@ function ClientPageInner() {
 
     // Always keep localStorage as offline fallback — scoped per identity so
     // this can never leak into a different account's cache (see
-    // scopedStorageKey doc comment above). Wrapped in try/catch: some
-    // WebView hosts (Base App's in-app browser in particular) can throw here
-    // — quota limits, storage partitioning, private-mode-like restrictions —
-    // and an uncaught exception in this effect used to take down the whole
-    // React tree with no error boundary to catch it (see ClientErrorBoundary
-    // below). The DB save right after this is unaffected either way.
-    try {
-      window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(state));
-    } catch (err) {
-      console.error("[autosave] localStorage.setItem failed:", err);
-    }
+    // scopedStorageKey doc comment above).
+    window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(state));
 
     // Save to DB if we have an identity (fid or wallet) — debounced 800ms
     // to avoid hammering on rapid taps.
@@ -4576,91 +4567,6 @@ function ClientPageInner() {
       </section>
       {showFaq && <FaqModal onClose={() => setShowFaq(false)} debugInfo={fid ? `fid:${fid}` : walletAddress ? `wallet:${walletAddress}` : "no identity yet"} />}
     </main>
-  );
-}
-
-// Catches any render-time exception below it and shows a recoverable "tap to
-// reload" screen instead of a blank page. Without this, ANY uncaught error
-// anywhere in ClientPageInner (a storage exception, a bad host response, a
-// null-reference from an unexpected sdk.context shape, etc.) unmounts the
-// entire React tree with nothing left on screen and no way back in short of
-// a manual browser refresh — which is exactly the "goes blank, need to
-// refresh" symptom reported in Base App. Base App's in-app browser is a
-// WebView and more prone to storage/permission quirks (private-mode-like
-// restrictions, storage partitioning, quota limits) than a full Farcaster
-// client, making this class of crash more likely to surface there, but this
-// boundary protects every host equally — it's a general robustness fix, not
-// a Base-specific one. React error boundaries must be class components;
-// there's no hook equivalent.
-class ClientErrorBoundary extends Component<
-  { children: React.ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: unknown, info: unknown) {
-    console.error("[ClientErrorBoundary] caught render error:", error, info);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div
-          style={{
-            minHeight: "100vh",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 14,
-            padding: 24,
-            textAlign: "center",
-            background: "#fff8ef",
-            fontFamily: "inherit",
-          }}
-        >
-          <div style={{ fontSize: "2rem" }}>🐱💤</div>
-          <div style={{ fontWeight: 800, fontSize: "1rem", color: "#49332d" }}>
-            Grub took a little nap.
-          </div>
-          <div style={{ fontSize: "0.85rem", color: "#7a5c4f", maxWidth: 280 }}>
-            Something went wrong loading the app. Your progress is safe — just tap below to wake her back up.
-          </div>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            style={{
-              background: "#49332d",
-              color: "#fff8ef",
-              border: "none",
-              borderRadius: 10,
-              padding: "10px 20px",
-              fontSize: "0.85rem",
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            Reload
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-export default function ClientPage() {
-  return (
-    <ClientErrorBoundary>
-      <ClientPageInner />
-    </ClientErrorBoundary>
   );
 }
 
