@@ -1528,10 +1528,11 @@ function ClientPageInner() {
   const hasUnreadTicketReply = myTickets.some((t) => t.unread);
 
   const fetchMyTickets = useCallback(async () => {
-    const identity = fid ? { fid: String(fid) } : walletAddress ? { wallet: walletAddress } : null;
-    if (!identity) return;
+    if (!fid && !walletAddress) return;
     try {
-      const params = new URLSearchParams(identity as Record<string, string>);
+      const params = new URLSearchParams();
+      if (fid) params.set("fid", String(fid));
+      else if (walletAddress) params.set("wallet", walletAddress);
       const res = await fetch(`/api/suggestion?${params.toString()}`);
       const data = await res.json().catch(() => null);
       if (data?.ok) setMyTickets(data.tickets ?? []);
@@ -1547,15 +1548,17 @@ function ClientPageInner() {
   }, [fetchMyTickets]);
 
   const submitTicketReply = useCallback(async (ticketId: string, text: string) => {
-    const identity = fid ? { fid: String(fid) } : walletAddress ? { wallet: walletAddress } : null;
     const trimmed = text.trim();
-    if (!identity || !trimmed) return;
+    if ((!fid && !walletAddress) || !trimmed) return;
     setTicketReplySubmittingId(ticketId);
     try {
+      const body: Record<string, string> = { id: ticketId, text: trimmed };
+      if (fid) body.fid = String(fid);
+      else if (walletAddress) body.wallet = walletAddress;
       const res = await fetch("/api/suggestion", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: ticketId, ...identity, text: trimmed }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => null);
       if (data?.ok && data.ticket) {
@@ -1570,14 +1573,16 @@ function ClientPageInner() {
   }, [fid, walletAddress]);
 
   const markTicketRead = useCallback(async (ticketId: string) => {
-    const identity = fid ? { fid: String(fid) } : walletAddress ? { wallet: walletAddress } : null;
-    if (!identity) return;
+    if (!fid && !walletAddress) return;
     setMyTickets((prev) => prev.map((t) => (t.id === ticketId ? { ...t, unread: false } : t)));
     try {
+      const body: Record<string, string> = { id: ticketId, text: "" };
+      if (fid) body.fid = String(fid);
+      else if (walletAddress) body.wallet = walletAddress;
       await fetch("/api/suggestion", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: ticketId, ...identity, text: "" }),
+        body: JSON.stringify(body),
       });
     } catch {
       // best effort — worst case the dot reappears next load
