@@ -1497,6 +1497,62 @@ function ClientPageInner() {
   const [closetOpen, setClosetOpen] = useState(false);
   const [referralOpen, setReferralOpen] = useState(false);
 
+  // ── Suggest / Report Issue ──────────────────────────────────────────────
+  const [showSuggest, setShowSuggest] = useState(false);
+  const [suggestType, setSuggestType] = useState<"suggestion" | "issue">("suggestion");
+  const [suggestText, setSuggestText] = useState("");
+  const [suggestSubmitting, setSuggestSubmitting] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+  // Client-side cache of "you're on cooldown until X" per type, just for
+  // disabling the button pre-emptively — the server (/api/suggestion) is
+  // still the real source of truth and will reject with the same reason
+  // even if this local cache is stale (e.g. after a page reload).
+  const [suggestCooldown, setSuggestCooldown] = useState<{ suggestion?: number; issue?: number }>({});
+  // Shown instead of the suggest/report modal when the 💬 button is tapped
+  // with no identity yet (no fid, no connected wallet) — catches it up front
+  // rather than letting them fill out the form and only finding out on submit.
+  const [showIdentityRequired, setShowIdentityRequired] = useState(false);
+
+  const submitSuggestion = async () => {
+    const identity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
+    if (!identity) {
+      setSuggestError("Connect your wallet (or open inside Farcaster/Base App) first.");
+      return;
+    }
+    const trimmed = suggestText.trim();
+    if (trimmed.length < 3) {
+      setSuggestError("Please write a bit more detail.");
+      return;
+    }
+    if (trimmed.length > 500) {
+      setSuggestError("Keep it under 500 characters.");
+      return;
+    }
+    setSuggestSubmitting(true);
+    setSuggestError(null);
+    try {
+      const res = await fetch("/api/suggestion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...identity, type: suggestType, text: trimmed }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        setSuggestError(data?.error ?? "Could not submit — please try again.");
+        if (data?.retryAt) {
+          setSuggestCooldown((prev) => ({ ...prev, [suggestType]: data.retryAt }));
+        }
+        return;
+      }
+      setSuggestText("");
+      setShowSuggest(false);
+    } catch {
+      setSuggestError("Network error — please try again.");
+    } finally {
+      setSuggestSubmitting(false);
+    }
+  };
+
   // ── Spin Wheel state ───────────────────────────────────────────────────
   const [wheelOpen, setWheelOpen] = useState(false);
   const wheelSectionRef = useRef<HTMLElement>(null);
@@ -3757,6 +3813,21 @@ function ClientPageInner() {
             <button className="ghost-button" type="button" onClick={() => setShowFaq(true)}>
               ?
             </button>
+            <button
+              className="ghost-button"
+              type="button"
+              title="Suggest an idea or report an issue"
+              onClick={() => {
+                if (!fid && !walletAddress) {
+                  setShowIdentityRequired(true);
+                  return;
+                }
+                setSuggestError(null);
+                setShowSuggest(true);
+              }}
+            >
+              💬
+            </button>
           </div>
         </header>
 
@@ -5202,6 +5273,40 @@ function ClientPageInner() {
 
       </section>
       {showFaq && <FaqModal onClose={() => setShowFaq(false)} debugInfo={fid ? `fid:${fid}` : walletAddress ? `wallet:${walletAddress}` : "no identity yet"} />}
+      {showSuggest && (
+        <SuggestModal
+          onClose={() => setShowSuggest(false)}
+          type={suggestType}
+          onTypeChange={(t) => { setSuggestType(t); setSuggestError(null); }}
+          text={suggestText}
+          onTextChange={setSuggestText}
+          onSubmit={submitSuggestion}
+          submitting={suggestSubmitting}
+          error={suggestError}
+          cooldownUntil={suggestCooldown[suggestType] ?? 0}
+        />
+      )}
+      {showIdentityRequired && (
+        <IdentityRequiredModal
+          onClose={() => setShowIdentityRequired(false)}
+          connecting={connectingWallet}
+          onConnect={async () => {
+            setConnectingWallet(true);
+            try {
+              const { address: addr, source } = await connectBaseWallet();
+              if (addr) {
+                if (source === "injected") injectedWalletLockRef.current = true;
+                setWalletAddress(addr);
+                setShowIdentityRequired(false);
+                setSuggestError(null);
+                setShowSuggest(true);
+              }
+            } finally {
+              setConnectingWallet(false);
+            }
+          }}
+        />
+      )}
     </main>
   );
 }
@@ -5671,6 +5776,186 @@ function FaqModal({ onClose, debugInfo }: { onClose: () => void; debugInfo?: str
             {debugInfo}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function SuggestModal({
+  onClose,
+  type,
+  onTypeChange,
+  text,
+  onTextChange,
+  onSubmit,
+  submitting,
+  error,
+  cooldownUntil,
+}: {
+  onClose: () => void;
+  type: "suggestion" | "issue";
+  onTypeChange: (t: "suggestion" | "issue") => void;
+  text: string;
+  onTextChange: (t: string) => void;
+  onSubmit: () => void;
+  submitting: boolean;
+  error: string | null;
+  cooldownUntil: number;
+}) {
+  const onCooldown = cooldownUntil > Date.now();
+  const cooldownMins = onCooldown ? Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 60000)) : 0;
+  const cooldownLabel =
+    cooldownMins >= 60
+      ? `${Math.ceil(cooldownMins / 60)} hr${Math.ceil(cooldownMins / 60) === 1 ? "" : "s"}`
+      : `${cooldownMins} min`;
+
+  return (
+    <div className="faq-backdrop" onClick={onClose}>
+      <div className="faq-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="faq-header">
+          <h2>Suggest an idea / Report an issue</h2>
+          <button className="faq-close" type="button" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ padding: "4px 20px 20px" }}>
+          <div style={{ display: "flex", gap: 8, margin: "10px 0 14px" }}>
+            <button
+              type="button"
+              onClick={() => onTypeChange("suggestion")}
+              style={{
+                flex: 1,
+                padding: "9px 10px",
+                borderRadius: 8,
+                cursor: "pointer",
+                border: type === "suggestion" ? "2px solid #a78bfa" : "1px solid rgba(255,255,255,0.18)",
+                background: type === "suggestion" ? "#2e1f5e" : "transparent",
+                color: "inherit",
+                fontWeight: 700,
+                fontSize: 13,
+              }}
+            >
+              💡 Suggestion
+            </button>
+            <button
+              type="button"
+              onClick={() => onTypeChange("issue")}
+              style={{
+                flex: 1,
+                padding: "9px 10px",
+                borderRadius: 8,
+                cursor: "pointer",
+                border: type === "issue" ? "2px solid #f87171" : "1px solid rgba(255,255,255,0.18)",
+                background: type === "issue" ? "#450a0a" : "transparent",
+                color: "inherit",
+                fontWeight: 700,
+                fontSize: 13,
+              }}
+            >
+              🐛 Report Issue
+            </button>
+          </div>
+
+          <textarea
+            value={text}
+            onChange={(e) => onTextChange(e.target.value.slice(0, 500))}
+            placeholder={
+              type === "issue"
+                ? "What went wrong? What were you doing when it happened?"
+                : "What would make Grub better?"
+            }
+            rows={5}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              borderRadius: 8,
+              padding: 10,
+              fontSize: 13,
+              fontFamily: "inherit",
+              resize: "vertical",
+              border: "1px solid rgba(255,255,255,0.18)",
+              background: "rgba(255,255,255,0.04)",
+              color: "inherit",
+            }}
+          />
+          <div style={{ textAlign: "right", fontSize: 11, opacity: 0.5, marginTop: 4 }}>
+            {text.length}/500
+          </div>
+
+          {error && (
+            <div style={{ color: "#f87171", fontSize: 12, marginTop: 8, lineHeight: 1.4 }}>{error}</div>
+          )}
+          {onCooldown && !error && (
+            <div style={{ color: "#fbbf24", fontSize: 12, marginTop: 8, lineHeight: 1.4 }}>
+              {type === "issue"
+                ? `You can report another issue in about ${cooldownLabel}.`
+                : `You've used today's suggestion limit — try again in about ${cooldownLabel}.`}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={submitting || onCooldown || text.trim().length < 3}
+            style={{
+              marginTop: 14,
+              width: "100%",
+              padding: "11px 0",
+              borderRadius: 8,
+              border: "none",
+              cursor: submitting || onCooldown || text.trim().length < 3 ? "default" : "pointer",
+              background: submitting || onCooldown ? "rgba(255,255,255,0.12)" : "#a78bfa",
+              color: submitting || onCooldown ? "rgba(255,255,255,0.4)" : "#1a0033",
+              fontWeight: 700,
+              fontSize: 14,
+            }}
+          >
+            {submitting ? "Sending…" : "Submit"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IdentityRequiredModal({
+  onClose,
+  onConnect,
+  connecting,
+}: {
+  onClose: () => void;
+  onConnect: () => void;
+  connecting: boolean;
+}) {
+  return (
+    <div className="faq-backdrop" onClick={onClose}>
+      <div className="faq-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="faq-header">
+          <h2>Wallet connection required</h2>
+          <button className="faq-close" type="button" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ padding: "4px 20px 24px", textAlign: "center" }}>
+          <p style={{ fontSize: 13, lineHeight: 1.6, opacity: 0.85, margin: "8px 0 18px" }}>
+            To send a suggestion or report an issue, connect your wallet first —
+            this is how we tie your feedback back to you.
+          </p>
+          <button
+            type="button"
+            disabled={connecting}
+            onClick={onConnect}
+            style={{
+              width: "100%",
+              padding: "11px 0",
+              borderRadius: 8,
+              border: "none",
+              cursor: connecting ? "default" : "pointer",
+              background: connecting ? "rgba(255,255,255,0.12)" : "#a78bfa",
+              color: connecting ? "rgba(255,255,255,0.4)" : "#1a0033",
+              fontWeight: 700,
+              fontSize: 14,
+            }}
+          >
+            {connecting ? "Connecting…" : "Connect Wallet"}
+          </button>
+        </div>
       </div>
     </div>
   );
