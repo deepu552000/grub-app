@@ -30,15 +30,6 @@ const SUGGESTION_WINDOW_LIMIT = 2;
 
 export type SuggestionType = "suggestion" | "issue";
 
-// Two-way thread — only ever populated for type "issue". Suggestions stay
-// one-shot (submit → admin marks resolved), so this is intentionally never
-// read or written for type "suggestion".
-export type SuggestionMessage = {
-  sender: "user" | "admin";
-  text: string;
-  ts: number;
-};
-
 export type SuggestionEntry = {
   id: string;
   fid: number | string | null; // null when the submitter is wallet-only
@@ -48,8 +39,6 @@ export type SuggestionEntry = {
   text: string;
   status: "new" | "seen" | "resolved" | "archived";
   ts: number;
-  messages?: SuggestionMessage[]; // follow-up thread, issue-only
-  unread?: boolean;               // true when admin has replied and user hasn't seen it yet
 };
 
 // Normalizes fid/wallet into one identity key + display label. Kept local
@@ -170,89 +159,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, id: entry.id });
   } catch (err: any) {
     console.error("[suggestion] error:", err);
-    return NextResponse.json({ ok: false, error: err?.message ?? "unknown error" }, { status: 500 });
-  }
-}
-
-// GET /api/suggestion?fid=... | ?wallet=...
-//   Returns the caller's own "issue" tickets (not suggestions — those are
-//   one-way) so the app can show the reply thread and an unread badge.
-//   Scoped to the identity's own entries only; never returns other users'
-//   tickets, so this is safe to leave unauthenticated like the POST above.
-export async function GET(req: NextRequest) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const identity = resolveIdentity(searchParams.get("fid"), searchParams.get("wallet"));
-    if (!identity) {
-      return NextResponse.json({ ok: false, error: "Missing fid or wallet identity." }, { status: 400 });
-    }
-
-    const list = (await kv.get<SuggestionEntry[]>(LIST_KEY)) ?? [];
-    const tickets = list
-      .filter((s) => s.type === "issue" && s.identity === identity.label && s.status !== "archived")
-      .sort((a, b) => b.ts - a.ts);
-
-    return NextResponse.json({ ok: true, tickets });
-  } catch (err: any) {
-    console.error("[suggestion GET] error:", err);
-    return NextResponse.json({ ok: false, error: err?.message ?? "unknown error" }, { status: 500 });
-  }
-}
-
-// PATCH /api/suggestion
-//   Body: { id, fid?, wallet?, text? }
-//   - text present  → appends a "user" message to that ticket's thread and
-//                      reopens it (status "new") so it resurfaces for admin.
-//   - text omitted/empty → mark-read only: clears the "unread" flag (called
-//                      when the user opens a ticket that has an admin reply
-//                      they haven't seen yet).
-//   Identity-checked so someone can only touch their own ticket.
-export async function PATCH(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { id, fid, wallet, text } = body ?? {};
-    const identity = resolveIdentity(fid, wallet);
-    if (!identity) {
-      return NextResponse.json({ ok: false, error: "Missing fid or wallet identity." }, { status: 400 });
-    }
-    if (!id || typeof id !== "string") {
-      return NextResponse.json({ ok: false, error: "Missing ticket id." }, { status: 400 });
-    }
-
-    const trimmed = typeof text === "string" ? text.trim() : "";
-    const isMarkReadOnly = trimmed.length === 0;
-    if (!isMarkReadOnly && trimmed.length > MAX_TEXT_LENGTH) {
-      return NextResponse.json({ ok: false, error: `Keep it under ${MAX_TEXT_LENGTH} characters.` }, { status: 400 });
-    }
-
-    const list = (await kv.get<SuggestionEntry[]>(LIST_KEY)) ?? [];
-    const idx = list.findIndex((s) => s.id === id);
-    if (idx === -1) {
-      return NextResponse.json({ ok: false, error: "Ticket not found." }, { status: 404 });
-    }
-
-    const ticket = list[idx];
-    if (ticket.identity !== identity.label) {
-      return NextResponse.json({ ok: false, error: "Not your ticket." }, { status: 403 });
-    }
-    if (ticket.type !== "issue") {
-      return NextResponse.json({ ok: false, error: "Only issue reports support replies." }, { status: 400 });
-    }
-
-    const updated: SuggestionEntry = isMarkReadOnly
-      ? { ...ticket, unread: false }
-      : {
-          ...ticket,
-          messages: [...(ticket.messages ?? []), { sender: "user", text: trimmed, ts: Date.now() }],
-          status: "new",
-          unread: false,
-        };
-    list[idx] = updated;
-    await kv.set(LIST_KEY, list);
-
-    return NextResponse.json({ ok: true, ticket: updated });
-  } catch (err: any) {
-    console.error("[suggestion PATCH] error:", err);
     return NextResponse.json({ ok: false, error: err?.message ?? "unknown error" }, { status: 500 });
   }
 }

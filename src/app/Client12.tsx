@@ -1512,6 +1512,9 @@ function ClientPageInner() {
   // with no identity yet (no fid, no connected wallet) — catches it up front
   // rather than letting them fill out the form and only finding out on submit.
   const [showIdentityRequired, setShowIdentityRequired] = useState(false);
+  // Shown briefly after a successful submit — the modal itself just closes
+  // silently otherwise, which leaves no confirmation that anything happened.
+  const [suggestSuccess, setSuggestSuccess] = useState(false);
 
   const submitSuggestion = async () => {
     const identity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
@@ -1546,6 +1549,7 @@ function ClientPageInner() {
       }
       setSuggestText("");
       setShowSuggest(false);
+      setSuggestSuccess(true);
     } catch {
       setSuggestError("Network error — please try again.");
     } finally {
@@ -3691,6 +3695,35 @@ function ClientPageInner() {
             >
               {sfxOn || musicOn ? "🔊" : "🔇"}
             </button>
+            <button
+              type="button"
+              title="Suggest an idea or report an issue"
+              onClick={() => {
+                if (!fid && !walletAddress) {
+                  setShowIdentityRequired(true);
+                  return;
+                }
+                setSuggestError(null);
+                setShowSuggest(true);
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                background: "#7c3aed",
+                border: "none",
+                borderRadius: 20,
+                color: "#fff",
+                padding: "6px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                boxShadow: "0 0 10px rgba(124,58,237,0.55)",
+              }}
+            >
+              💬 Feedback
+            </button>
             {volumePopoverOpen && (
               <div
                 onPointerDown={(e) => e.stopPropagation()}
@@ -3812,21 +3845,6 @@ function ClientPageInner() {
             )}
             <button className="ghost-button" type="button" onClick={() => setShowFaq(true)}>
               ?
-            </button>
-            <button
-              className="ghost-button"
-              type="button"
-              title="Suggest an idea or report an issue"
-              onClick={() => {
-                if (!fid && !walletAddress) {
-                  setShowIdentityRequired(true);
-                  return;
-                }
-                setSuggestError(null);
-                setShowSuggest(true);
-              }}
-            >
-              💬
             </button>
           </div>
         </header>
@@ -5307,6 +5325,7 @@ function ClientPageInner() {
           }}
         />
       )}
+      {suggestSuccess && <SuggestSuccessModal onClose={() => setSuggestSuccess(false)} />}
     </main>
   );
 }
@@ -5827,7 +5846,7 @@ function SuggestModal({
                 borderRadius: 8,
                 cursor: "pointer",
                 border: type === "suggestion" ? "2px solid #a78bfa" : "1px solid rgba(255,255,255,0.18)",
-                background: type === "suggestion" ? "#2e1f5e" : "transparent",
+                background: "transparent",
                 color: "inherit",
                 fontWeight: 700,
                 fontSize: 13,
@@ -5844,7 +5863,7 @@ function SuggestModal({
                 borderRadius: 8,
                 cursor: "pointer",
                 border: type === "issue" ? "2px solid #f87171" : "1px solid rgba(255,255,255,0.18)",
-                background: type === "issue" ? "#450a0a" : "transparent",
+                background: "transparent",
                 color: "inherit",
                 fontWeight: 700,
                 fontSize: 13,
@@ -5887,7 +5906,7 @@ function SuggestModal({
             <div style={{ color: "#fbbf24", fontSize: 12, marginTop: 8, lineHeight: 1.4 }}>
               {type === "issue"
                 ? `You can report another issue in about ${cooldownLabel}.`
-                : `You've used today's suggestion limit — try again in about ${cooldownLabel}.`}
+                : `You can send another suggestion in about ${cooldownLabel}.`}
             </div>
           )}
 
@@ -5911,6 +5930,32 @@ function SuggestModal({
             {submitting ? "Sending…" : "Submit"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SuggestSuccessModal({ onClose }: { onClose: () => void }) {
+  // Auto-dismiss after a few seconds so it doesn't require an extra tap,
+  // but still closeable manually (backdrop tap / ✕) for anyone who wants
+  // to read it again or dismiss it sooner.
+  useEffect(() => {
+    const t = setTimeout(onClose, 2800);
+    return () => clearTimeout(t);
+  }, [onClose]);
+
+  return (
+    <div className="faq-backdrop" onClick={onClose}>
+      <div
+        className="faq-sheet"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 320, textAlign: "center", padding: "28px 24px" }}
+      >
+        <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
+        <h2 style={{ margin: "0 0 6px", fontSize: 16 }}>Thanks!</h2>
+        <p style={{ fontSize: 13, opacity: 0.8, margin: 0, lineHeight: 1.5 }}>
+          Your feedback has been sent.
+        </p>
       </div>
     </div>
   );

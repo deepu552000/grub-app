@@ -2,7 +2,7 @@
 
 import sdk from "@farcaster/miniapp-sdk";
 import type { CSSProperties } from "react";
-import { Component, useEffect, useMemo, useState, useRef } from "react";
+import { Component, useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { connect, getAccount, reconnect, sendTransaction, switchChain, watchAccount } from "wagmi/actions";
 import { base } from "wagmi/chains";
 import { wagmiConfig } from "@/lib/wagmi";
@@ -1515,6 +1515,74 @@ function ClientPageInner() {
   // Shown briefly after a successful submit — the modal itself just closes
   // silently otherwise, which leaves no confirmation that anything happened.
   const [suggestSuccess, setSuggestSuccess] = useState(false);
+
+  // ── Report Issue reply thread ───────────────────────────────────────────
+  // Two-way only for "issue" — suggestions stay one-shot, so there's no
+  // equivalent state for those. Tickets are the user's own past issue
+  // reports, each possibly carrying admin replies + an "unread" flag.
+  const [myTickets, setMyTickets] = useState<
+    { id: string; text: string; status: "new" | "seen" | "resolved" | "archived"; ts: number; messages?: { sender: "user" | "admin"; text: string; ts: number }[]; unread?: boolean }[]
+  >([]);
+  const [ticketReplyDrafts, setTicketReplyDrafts] = useState<Record<string, string>>({});
+  const [ticketReplySubmittingId, setTicketReplySubmittingId] = useState<string | null>(null);
+  const hasUnreadTicketReply = myTickets.some((t) => t.unread);
+
+  const fetchMyTickets = useCallback(async () => {
+    const identity = fid ? { fid: String(fid) } : walletAddress ? { wallet: walletAddress } : null;
+    if (!identity) return;
+    try {
+      const params = new URLSearchParams(identity as Record<string, string>);
+      const res = await fetch(`/api/suggestion?${params.toString()}`);
+      const data = await res.json().catch(() => null);
+      if (data?.ok) setMyTickets(data.tickets ?? []);
+    } catch {
+      // best effort — badge/thread just won't refresh this time
+    }
+  }, [fid, walletAddress]);
+
+  // Refresh once identity is known, so the 💬 badge dot can show up even
+  // before the user opens the modal.
+  useEffect(() => {
+    fetchMyTickets();
+  }, [fetchMyTickets]);
+
+  const submitTicketReply = useCallback(async (ticketId: string, text: string) => {
+    const identity = fid ? { fid: String(fid) } : walletAddress ? { wallet: walletAddress } : null;
+    const trimmed = text.trim();
+    if (!identity || !trimmed) return;
+    setTicketReplySubmittingId(ticketId);
+    try {
+      const res = await fetch("/api/suggestion", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: ticketId, ...identity, text: trimmed }),
+      });
+      const data = await res.json().catch(() => null);
+      if (data?.ok && data.ticket) {
+        setMyTickets((prev) => prev.map((t) => (t.id === ticketId ? data.ticket : t)));
+        setTicketReplyDrafts((prev) => ({ ...prev, [ticketId]: "" }));
+      }
+    } catch {
+      // best effort
+    } finally {
+      setTicketReplySubmittingId(null);
+    }
+  }, [fid, walletAddress]);
+
+  const markTicketRead = useCallback(async (ticketId: string) => {
+    const identity = fid ? { fid: String(fid) } : walletAddress ? { wallet: walletAddress } : null;
+    if (!identity) return;
+    setMyTickets((prev) => prev.map((t) => (t.id === ticketId ? { ...t, unread: false } : t)));
+    try {
+      await fetch("/api/suggestion", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: ticketId, ...identity, text: "" }),
+      });
+    } catch {
+      // best effort — worst case the dot reappears next load
+    }
+  }, [fid, walletAddress]);
 
   const submitSuggestion = async () => {
     const identity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
@@ -3705,8 +3773,10 @@ function ClientPageInner() {
                 }
                 setSuggestError(null);
                 setShowSuggest(true);
+                fetchMyTickets();
               }}
               style={{
+                position: "relative",
                 display: "flex",
                 alignItems: "center",
                 gap: 5,
@@ -3723,6 +3793,21 @@ function ClientPageInner() {
               }}
             >
               💬 Feedback
+              {hasUnreadTicketReply && (
+                <span
+                  aria-label="You have a reply"
+                  style={{
+                    position: "absolute",
+                    top: -3,
+                    right: -3,
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    background: "#f87171",
+                    border: "1.5px solid #1a0033",
+                  }}
+                />
+              )}
             </button>
             {volumePopoverOpen && (
               <div
@@ -5302,6 +5387,12 @@ function ClientPageInner() {
           submitting={suggestSubmitting}
           error={suggestError}
           cooldownUntil={suggestCooldown[suggestType] ?? 0}
+          myTickets={myTickets}
+          replyDrafts={ticketReplyDrafts}
+          onReplyDraftChange={(id, val) => setTicketReplyDrafts((prev) => ({ ...prev, [id]: val }))}
+          onSubmitReply={submitTicketReply}
+          replySubmittingId={ticketReplySubmittingId}
+          onMarkRead={markTicketRead}
         />
       )}
       {showIdentityRequired && (
@@ -5800,6 +5891,9 @@ function FaqModal({ onClose, debugInfo }: { onClose: () => void; debugInfo?: str
   );
 }
 
+type TicketMessage = { sender: "user" | "admin"; text: string; ts: number };
+type Ticket = { id: string; text: string; status: "new" | "seen" | "resolved" | "archived"; ts: number; messages?: TicketMessage[]; unread?: boolean };
+
 function SuggestModal({
   onClose,
   type,
@@ -5810,6 +5904,12 @@ function SuggestModal({
   submitting,
   error,
   cooldownUntil,
+  myTickets,
+  replyDrafts,
+  onReplyDraftChange,
+  onSubmitReply,
+  replySubmittingId,
+  onMarkRead,
 }: {
   onClose: () => void;
   type: "suggestion" | "issue";
@@ -5820,6 +5920,12 @@ function SuggestModal({
   submitting: boolean;
   error: string | null;
   cooldownUntil: number;
+  myTickets: Ticket[];
+  replyDrafts: Record<string, string>;
+  onReplyDraftChange: (id: string, val: string) => void;
+  onSubmitReply: (id: string, text: string) => void;
+  replySubmittingId: string | null;
+  onMarkRead: (id: string) => void;
 }) {
   const onCooldown = cooldownUntil > Date.now();
   const cooldownMins = onCooldown ? Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 60000)) : 0;
@@ -5827,6 +5933,16 @@ function SuggestModal({
     cooldownMins >= 60
       ? `${Math.ceil(cooldownMins / 60)} hr${Math.ceil(cooldownMins / 60) === 1 ? "" : "s"}`
       : `${cooldownMins} min`;
+
+  // Mark any unread admin replies as seen as soon as the Report Issue tab
+  // is open — this is what clears the 💬 badge dot.
+  useEffect(() => {
+    if (type !== "issue") return;
+    myTickets.forEach((t) => {
+      if (t.unread) onMarkRead(t.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type]);
 
   return (
     <div className="faq-backdrop" onClick={onClose}>
@@ -5872,6 +5988,97 @@ function SuggestModal({
               🐛 Report Issue
             </button>
           </div>
+
+          {type === "issue" && myTickets.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+              {myTickets.map((t) => (
+                <div key={t.id} style={{ border: "1px solid rgba(255,255,255,0.18)", borderRadius: 8, padding: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                        color: t.status === "resolved" ? "#4ade80" : "#fbbf24",
+                      }}
+                    >
+                      {t.status === "resolved" ? "Resolved" : "In progress"}
+                    </span>
+                    <span style={{ fontFamily: "monospace", fontSize: 10, opacity: 0.4 }}>#{t.id.slice(-6)}</span>
+                    <span style={{ fontSize: 10, opacity: 0.5 }}>{new Date(t.ts).toLocaleDateString()}</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ alignSelf: "flex-start", maxWidth: "88%", background: "rgba(255,255,255,0.06)", borderRadius: 8, padding: "6px 10px" }}>
+                      <div style={{ fontSize: 10, opacity: 0.5, marginBottom: 2 }}>You</div>
+                      <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap" }}>{t.text}</div>
+                    </div>
+                    {(t.messages ?? []).map((m, mi) => (
+                      <div
+                        key={mi}
+                        style={{
+                          alignSelf: m.sender === "admin" ? "flex-end" : "flex-start",
+                          maxWidth: "88%",
+                          background: m.sender === "admin" ? "#2e1f5e" : "rgba(255,255,255,0.06)",
+                          border: m.sender === "admin" ? "1px solid #a78bfa55" : "none",
+                          borderRadius: 8,
+                          padding: "6px 10px",
+                        }}
+                      >
+                        <div style={{ fontSize: 10, opacity: 0.6, marginBottom: 2 }}>
+                          {m.sender === "admin" ? "Grub Team" : "You"}
+                        </div>
+                        <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap" }}>{m.text}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {t.status !== "resolved" && (
+                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                      <input
+                        type="text"
+                        value={replyDrafts[t.id] ?? ""}
+                        onChange={(e) => onReplyDraftChange(t.id, e.target.value.slice(0, 500))}
+                        placeholder="Add more details…"
+                        style={{
+                          flex: 1,
+                          fontSize: 12.5,
+                          padding: "7px 9px",
+                          borderRadius: 6,
+                          border: "1px solid rgba(255,255,255,0.18)",
+                          background: "rgba(255,255,255,0.04)",
+                          color: "inherit",
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            onSubmitReply(t.id, replyDrafts[t.id] ?? "");
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={replySubmittingId === t.id || !(replyDrafts[t.id] ?? "").trim()}
+                        onClick={() => onSubmitReply(t.id, replyDrafts[t.id] ?? "")}
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 700,
+                          padding: "7px 12px",
+                          borderRadius: 6,
+                          border: "none",
+                          cursor: replySubmittingId === t.id ? "default" : "pointer",
+                          background: "#a78bfa",
+                          color: "#1a0033",
+                        }}
+                      >
+                        {replySubmittingId === t.id ? "…" : "Reply"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div style={{ fontSize: 11, opacity: 0.5, textAlign: "center" }}>Have a new issue? Report it below 👇</div>
+            </div>
+          )}
 
           <textarea
             value={text}

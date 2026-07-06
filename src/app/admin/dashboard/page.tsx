@@ -38,6 +38,7 @@ type WebhookLogEntry = {
 // Mirrors SuggestionEntry in app/api/suggestion/route.ts — kept as a local
 // copy since that file is server-only (imports @vercel/kv) and can't be
 // imported into this client component.
+type SuggestionMessage = { sender: "user" | "admin"; text: string; ts: number };
 type SuggestionEntry = {
   id: string;
   fid: number | string | null;
@@ -47,6 +48,8 @@ type SuggestionEntry = {
   text: string;
   status: "new" | "seen" | "resolved" | "archived";
   ts: number;
+  messages?: SuggestionMessage[]; // follow-up thread, issue-only
+  unread?: boolean;               // true when user hasn't seen the latest admin reply
 };
 
 type FailedPayout = {
@@ -556,6 +559,29 @@ function AdminDashboardInner() {
     }
   }, [authedPost, addToast]);
 
+  // Reply thread — issue reports only (suggestions stay one-way). Draft text
+  // per ticket id so multiple open threads don't clobber each other.
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const sendSuggestionReply = useCallback(async (id: string, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setSuggestionActionId(id);
+    try {
+      const res = await authedPost("/api/admin/suggestions", { id, reply: trimmed });
+      if (!res?.ok) {
+        addToast(`✕ ${res?.reason ?? "Could not send reply"}`, "error");
+        return;
+      }
+      setSuggestions((prev) => prev.map((s) => (s.id === id ? res.suggestion : s)));
+      setReplyDrafts((prev) => ({ ...prev, [id]: "" }));
+      addToast("✓ Reply sent", "success");
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Could not send reply"}`, "error");
+    } finally {
+      setSuggestionActionId(null);
+    }
+  }, [authedPost, addToast]);
+
   // Dry-run check — shows what would be backfilled without writing anything.
   const checkMissingTxns = useCallback(async () => {
     setMissingTxnsLoading(true);
@@ -772,6 +798,12 @@ function AdminDashboardInner() {
     return () => { document.title = base; };
   }, [newSuggestionCount]);
   const sortedSuggestions = [...suggestions].sort((a, b) => b.ts - a.ts);
+  // Counts how many non-archived entries share the same identity, so a
+  // repeat reporter is visible at a glance in the list below.
+  const identityActiveCounts = suggestions.reduce<Record<string, number>>((acc, s) => {
+    if (s.status !== "archived") acc[s.identity] = (acc[s.identity] ?? 0) + 1;
+    return acc;
+  }, {});
   const filteredSuggestions = sortedSuggestions
     .filter((s) => {
       if (suggestionStatusFilter === "all") return true;
@@ -1612,9 +1644,30 @@ function AdminDashboardInner() {
                       <Badge color={s.type === "issue" ? C.red : C.purple} bg={s.type === "issue" ? C.redDim : "#2e1f5e"}>
                         {s.type === "issue" ? "🐛 Issue" : "💡 Suggestion"}
                       </Badge>
+                      <span
+                        title="Ticket reference"
+                        style={{ fontFamily: "monospace", fontSize: 10, color: T.textMute, opacity: 0.8 }}
+                      >
+                        #{s.id.slice(-6)}
+                      </span>
                       <span style={{ fontFamily: "monospace", fontSize: 11, color: dark ? C.amberGlow : "#7c3aed" }}>
                         {displayName}
                       </span>
+                      {identityActiveCounts[s.identity] > 1 && (
+                        <span
+                          title="This person has more than one active report"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "1px 6px",
+                            borderRadius: 999,
+                            background: C.amberGlow + "22",
+                            color: C.amberGlow,
+                          }}
+                        >
+                          {identityActiveCounts[s.identity]}× reports
+                        </span>
+                      )}
                       <span style={{ fontSize: 10, fontWeight: 700, color: statusColor, textTransform: "uppercase", letterSpacing: "0.05em" }}>
                         {s.status}
                       </span>
@@ -1624,6 +1677,78 @@ function AdminDashboardInner() {
                   <p style={{ margin: "8px 0 10px", fontSize: 13, color: T.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
                     {s.text}
                   </p>
+
+                  {/* Two-way thread — issue reports only. Suggestions have no
+                      messages array and skip this block entirely. */}
+                  {s.type === "issue" && (
+                    <div style={{ marginBottom: 10 }}>
+                      {(s.messages ?? []).length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                          {(s.messages ?? []).map((m, mi) => (
+                            <div
+                              key={mi}
+                              style={{
+                                alignSelf: m.sender === "admin" ? "flex-end" : "flex-start",
+                                maxWidth: "85%",
+                                background: m.sender === "admin" ? "#2e1f5e" : T.surfaceAlt,
+                                border: `1px solid ${m.sender === "admin" ? "#a78bfa55" : T.border}`,
+                                borderRadius: 8,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              <div style={{ fontSize: 10, fontWeight: 700, color: m.sender === "admin" ? "#c4b5fd" : T.textMute, marginBottom: 2 }}>
+                                {m.sender === "admin" ? "You" : displayName}
+                              </div>
+                              <div style={{ fontSize: 12.5, color: T.text, whiteSpace: "pre-wrap" }}>{m.text}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {s.status !== "archived" && (
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <input
+                            type="text"
+                            value={replyDrafts[s.id] ?? ""}
+                            onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                            placeholder="Reply — e.g. ask for more info…"
+                            style={{
+                              flex: 1,
+                              fontSize: 12,
+                              padding: "6px 8px",
+                              borderRadius: 6,
+                              border: `1px solid ${T.border}`,
+                              background: T.surfaceAlt,
+                              color: T.text,
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                sendSuggestionReply(s.id, replyDrafts[s.id] ?? "");
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            disabled={suggestionActionId === s.id || !(replyDrafts[s.id] ?? "").trim()}
+                            onClick={() => sendSuggestionReply(s.id, replyDrafts[s.id] ?? "")}
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 700,
+                              padding: "6px 12px",
+                              borderRadius: 6,
+                              cursor: "pointer",
+                              border: "1px solid #a78bfa55",
+                              background: "#2e1f5e",
+                              color: "#e9d5ff",
+                            }}
+                          >
+                            Reply
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div style={{ display: "flex", gap: 6 }}>
                     {s.status !== "resolved" && (
                       <button

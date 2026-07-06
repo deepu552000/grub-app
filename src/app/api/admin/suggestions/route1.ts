@@ -18,12 +18,6 @@ import { verifyToken } from "@clerk/nextjs/server";
 // Mirrors the type in app/api/suggestion/route.ts. Not imported directly —
 // keeping a plain local type here avoids any bundling coupling between the
 // two routes; they only need to agree on the KV shape, not share a module.
-type SuggestionMessage = {
-  sender: "user" | "admin";
-  text: string;
-  ts: number;
-};
-
 type SuggestionEntry = {
   id: string;
   fid: number | string | null;
@@ -33,8 +27,6 @@ type SuggestionEntry = {
   text: string;
   status: "new" | "seen" | "resolved" | "archived";
   ts: number;
-  messages?: SuggestionMessage[]; // follow-up thread, issue-only
-  unread?: boolean;               // true when the user hasn't seen the latest admin reply yet
 };
 
 const LIST_KEY = "suggestions:list";
@@ -67,18 +59,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    // status: unchanged one-click resolve/seen/archive path (works for both
-    //   suggestions and issues, same as before).
-    // reply:  new — appends an admin message to an issue's thread. Ignored
-    //   (rejected) for type "suggestion", since those stay one-way.
-    const { id, status, reply } = await req.json();
-    if (!id) {
-      return NextResponse.json({ ok: false, reason: "missing id" }, { status: 400 });
+    const { id, status } = await req.json();
+    if (!id || !status) {
+      return NextResponse.json({ ok: false, reason: "missing id or status" }, { status: 400 });
     }
-    if (!status && !reply) {
-      return NextResponse.json({ ok: false, reason: "missing status or reply" }, { status: 400 });
-    }
-    if (status && !["new", "seen", "resolved", "archived"].includes(status)) {
+    if (!["new", "seen", "resolved", "archived"].includes(status)) {
       return NextResponse.json({ ok: false, reason: `invalid status "${status}"` }, { status: 400 });
     }
 
@@ -87,28 +72,10 @@ export async function POST(req: NextRequest) {
     if (idx === -1) {
       return NextResponse.json({ ok: false, reason: "suggestion not found" }, { status: 404 });
     }
-
-    let entry = list[idx];
-    const trimmedReply = typeof reply === "string" ? reply.trim() : "";
-
-    if (trimmedReply) {
-      if (entry.type !== "issue") {
-        return NextResponse.json({ ok: false, reason: "replies are only supported for issue reports" }, { status: 400 });
-      }
-      entry = {
-        ...entry,
-        messages: [...(entry.messages ?? []), { sender: "admin", text: trimmedReply, ts: Date.now() }],
-        unread: true, // surfaces to the user next time they open Report Issue
-        status: status ?? (entry.status === "new" ? "seen" : entry.status),
-      };
-    } else if (status) {
-      entry = { ...entry, status };
-    }
-
-    list[idx] = entry;
+    list[idx] = { ...list[idx], status };
     await kv.set(LIST_KEY, list);
 
-    return NextResponse.json({ ok: true, id, suggestion: entry });
+    return NextResponse.json({ ok: true, id, status });
   } catch (err: any) {
     console.error("[admin/suggestions] error:", err);
     return NextResponse.json({ ok: false, reason: err?.message ?? "unknown error" }, { status: 500 });

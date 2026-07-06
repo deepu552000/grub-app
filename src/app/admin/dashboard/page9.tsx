@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
 import { useAuth, useClerk } from "@clerk/nextjs";
 
 type DebugUser = {
@@ -33,6 +33,20 @@ type WebhookLogEntry = {
   fid: number;
   event: string;
   payload: any;
+};
+
+// Mirrors SuggestionEntry in app/api/suggestion/route.ts — kept as a local
+// copy since that file is server-only (imports @vercel/kv) and can't be
+// imported into this client component.
+type SuggestionEntry = {
+  id: string;
+  fid: number | string | null;
+  wallet: string | null;
+  identity: string; // e.g. "fid:203912" or "wallet:0xabc…"
+  type: "suggestion" | "issue";
+  text: string;
+  status: "new" | "seen" | "resolved" | "archived";
+  ts: number;
 };
 
 type FailedPayout = {
@@ -75,7 +89,7 @@ const C = {
   amberGlow2:"#ede9fe",
   cream:     "#f5f0ff",
   creamDim:  "#c4b5fd",
-  creamMute: "#7c6fa0",
+  creamMute: "#a89bd0",
   green:     "#34d399",
   greenDim:  "#064e3b",
   blue:      "#60a5fa",
@@ -84,8 +98,8 @@ const C = {
   red:       "#f87171",
   redDim:    "#450a0a",
   text:      "#ede9fe",
-  textSub:   "#a89bc8",
-  textMute:  "#5c5478",
+  textSub:   "#c9bfe6",
+  textMute:  "#948bb8",
 };
 
 const TYPE_META: Record<string, { color: string; bg: string; label: string }> = {
@@ -357,6 +371,10 @@ function AdminDashboardInner() {
   const [users, setUsers] = useState<DebugUser[]>([]);
   const [txns, setTxns] = useState<TxnEntry[]>([]);
   const [webhookEvents, setWebhookEvents] = useState<WebhookLogEntry[]>([]);
+  const [suggestions, setSuggestions] = useState<SuggestionEntry[]>([]);
+  const [suggestionStatusFilter, setSuggestionStatusFilter] = useState<"active" | "new" | "resolved" | "archived" | "all">("active");
+  const [suggestionTypeFilter, setSuggestionTypeFilter] = useState<"all" | "suggestion" | "issue">("all");
+  const [suggestionActionId, setSuggestionActionId] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<Record<string, { username: string | null; displayName: string | null }>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -519,6 +537,25 @@ function AdminDashboardInner() {
     }
   }, [authedPost, addToast]);
 
+  // Updates a suggestion/issue's status (seen / resolved / archived) and
+  // reflects it locally instead of a full reload, so the list doesn't jump.
+  const markSuggestion = useCallback(async (id: string, status: SuggestionEntry["status"]) => {
+    setSuggestionActionId(id);
+    try {
+      const res = await authedPost("/api/admin/suggestions", { id, status });
+      if (!res?.ok) {
+        addToast(`✕ ${res?.reason ?? "Could not update"}`, "error");
+        return;
+      }
+      setSuggestions((prev) => prev.map((s) => (s.id === id ? { ...s, status } : s)));
+      addToast(`✓ Marked ${status}`, "success");
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Could not update"}`, "error");
+    } finally {
+      setSuggestionActionId(null);
+    }
+  }, [authedPost, addToast]);
+
   // Dry-run check — shows what would be backfilled without writing anything.
   const checkMissingTxns = useCallback(async () => {
     setMissingTxnsLoading(true);
@@ -549,10 +586,11 @@ function AdminDashboardInner() {
     setLookupFid("");
     setStatDrafts({ xp: "", bond: "", glimmer: "", hunger: "", happiness: "" });
     try {
-      const [debugRes, txnRes, failedRes] = await Promise.all([
+      const [debugRes, txnRes, failedRes, suggestionsRes] = await Promise.all([
         authedGet("/api/debug-kv"),
         authedGet("/api/txn-log?all=1"),
         authedGet("/api/admin/failed-payouts"),
+        authedGet("/api/admin/suggestions"),
       ]);
       if (debugRes.error === "Unauthorized" || txnRes.error === "Unauthorized") {
         setError("Unauthorized — you may not have access to this dashboard.");
@@ -562,6 +600,7 @@ function AdminDashboardInner() {
       setWebhookEvents(debugRes.webhookEvents ?? []);
       setTxns(txnRes.log ?? []);
       setFailedPayouts(failedRes?.payouts ?? []);
+      setSuggestions(suggestionsRes?.suggestions ?? []);
       setLastLoaded(new Date());
       // Treasury balance — non-blocking, don't let a pool-check hiccup break the main load
       fetch("/api/referral/pool")
@@ -718,6 +757,29 @@ function AdminDashboardInner() {
   const filteredSortedTxns = sortedTxns.filter((t) => globalMatchesFid(t.fid) || globalMatchesFid(t.toFid ?? ""));
   const filteredWheelSpinTxns = wheelSpinTxns.filter((t) => globalMatchesFid(t.fid));
   const filteredWebhookEvents = webhookEvents.filter((e) => globalMatchesFid(e.fid));
+
+  // Suggestions & Issues — "active" (the default) hides archived so old,
+  // handled items don't pile up in view; switch to "all" to see everything.
+  const newSuggestionCount = suggestions.filter((s) => s.status === "new").length;
+  const suggestionsPanelRef = useRef<HTMLDivElement | null>(null);
+
+  // Surface unread suggestions/issues in the browser tab title too — so you
+  // notice new ones even if the dashboard tab is just sitting in the
+  // background, without needing to scroll down to the panel to check.
+  useEffect(() => {
+    const base = "Grub Admin";
+    document.title = newSuggestionCount > 0 ? `(${newSuggestionCount}) ${base}` : base;
+    return () => { document.title = base; };
+  }, [newSuggestionCount]);
+  const sortedSuggestions = [...suggestions].sort((a, b) => b.ts - a.ts);
+  const filteredSuggestions = sortedSuggestions
+    .filter((s) => {
+      if (suggestionStatusFilter === "all") return true;
+      if (suggestionStatusFilter === "active") return s.status !== "archived";
+      return s.status === suggestionStatusFilter;
+    })
+    .filter((s) => suggestionTypeFilter === "all" || s.type === suggestionTypeFilter)
+    .filter((s) => globalMatchesFid(s.fid ?? s.wallet ?? s.identity));
   const filteredReferrers = referrers.filter((u) => globalMatchesFid(u.fid));
   const notifStatusUsers = [...users].sort((a, b) => {
     // Flag cases first (added but no token), then by most recent last-seen
@@ -811,6 +873,34 @@ function AdminDashboardInner() {
           <span style={{ fontSize: 11, color: T.textMute, paddingLeft: 12, borderLeft: `1px solid ${T.border}` }}>Admin Console</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {/* Unread Suggestions/Issues badge — jumps straight to the panel
+              and switches its filter to "new" so you land right on the
+              unread items instead of the default active-minus-archived view. */}
+          {newSuggestionCount > 0 && (
+            <button
+              onClick={() => {
+                setSuggestionStatusFilter("new");
+                suggestionsPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              title="Jump to new suggestions & issues"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                background: C.redDim,
+                border: `1px solid ${C.red}66`,
+                borderRadius: 20,
+                color: C.red,
+                padding: "5px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              💬 {newSuggestionCount} new
+            </button>
+          )}
           {/* Global dashboard search */}
           <div style={{ position: "relative", width: 200 }}>
             <input
@@ -1078,7 +1168,7 @@ function AdminDashboardInner() {
                 {filteredRealUsers.length === 0 ? (
                   <p style={{ fontSize: 12, color: T.textMute, margin: "0 0 14px" }}>{(playerSearchQuery || globalSearchQuery || playerNotifFilter !== "all") ? "No matches." : "None yet."}</p>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 16 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto", paddingRight: 10, marginBottom: 28 }}>
                     {[...filteredRealUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0)).map((u) => {
                       const profile = profiles[String(u.fid)];
                       const bothOff = !u.hasAddedApp && !u.hasNotifToken;
@@ -1128,7 +1218,7 @@ function AdminDashboardInner() {
                   </div>
                 )}
 
-                <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: dark ? "#cbd5e1" : T.textMute, margin: "0 0 8px" }}>
+                <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: dark ? "#e2e8f0" : T.textMute, margin: "0 0 8px", paddingTop: 14, borderTop: `1px solid ${T.borderSub}` }}>
                   Unconverted Opens · {(playerSearchQuery || globalSearchQuery || playerNotifFilter !== "all") ? `${filteredGhostUsers.length}/${ghostUsers.length}` : ghostUsers.length}
                 </p>
                 {filteredGhostUsers.length === 0 ? (
@@ -1440,6 +1530,135 @@ function AdminDashboardInner() {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* ── Suggestions & Issues ──────────────────────────────────────────
+            Fed by the in-app "Suggest / Report Issue" button — see
+            app/api/suggestion/route.ts (public submit, rate-limited) and
+            app/api/admin/suggestions/route.ts (this panel's data + actions).
+            Every entry carries whichever identity the submitter had (fid or
+            wallet), same convention as everywhere else in the dashboard. */}
+        <SectionLabel dark={dark} accent="#a78bfa">
+          Suggestions & Issues{newSuggestionCount > 0 ? ` (${newSuggestionCount} new)` : ""}
+        </SectionLabel>
+        <div ref={suggestionsPanelRef} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}`, gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, color: T.textMute }}>
+              {globalSearchQuery
+                ? `Showing ${filteredSuggestions.length} matching "${globalSearchQuery}"`
+                : `${filteredSuggestions.length} shown`}
+            </span>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {(["active", "new", "resolved", "archived", "all"] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setSuggestionStatusFilter(f)}
+                  style={{
+                    fontSize: 11, fontWeight: 600, padding: "5px 10px", borderRadius: 6, cursor: "pointer",
+                    border: `1px solid ${suggestionStatusFilter === f ? "#a78bfa" : T.border}`,
+                    background: suggestionStatusFilter === f ? "#2e1f5e" : "transparent",
+                    color: suggestionStatusFilter === f ? "#e9d5ff" : T.textMute,
+                    textTransform: "capitalize",
+                  }}
+                >
+                  {f}
+                </button>
+              ))}
+              <span style={{ width: 1, background: T.border, margin: "0 2px" }} />
+              {(["all", "suggestion", "issue"] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setSuggestionTypeFilter(f)}
+                  style={{
+                    fontSize: 11, fontWeight: 600, padding: "5px 10px", borderRadius: 6, cursor: "pointer",
+                    border: `1px solid ${suggestionTypeFilter === f ? "#a78bfa" : T.border}`,
+                    background: suggestionTypeFilter === f ? "#2e1f5e" : "transparent",
+                    color: suggestionTypeFilter === f ? "#e9d5ff" : T.textMute,
+                  }}
+                >
+                  {f === "all" ? "All types" : f === "suggestion" ? "💡 Suggestion" : "🐛 Issue"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ maxHeight: 420, overflowY: "auto" }}>
+            {filteredSuggestions.length === 0 ? (
+              <div style={{ padding: "24px 14px", textAlign: "center", color: T.textMute, fontSize: 12 }}>
+                Nothing here yet.
+              </div>
+            ) : filteredSuggestions.map((s, i) => {
+              const idStr = s.fid !== null && s.fid !== undefined ? String(s.fid) : null;
+              const profile = idStr ? profiles[idStr] : undefined;
+              const displayName = profile?.username ? `@${profile.username}` : (idStr ?? s.identity);
+              const statusColor =
+                s.status === "new" ? C.amberGlow :
+                s.status === "resolved" ? C.green :
+                s.status === "archived" ? T.textMute : C.blue;
+              return (
+                <div
+                  key={s.id}
+                  style={{
+                    padding: "12px 16px",
+                    borderBottom: `1px solid ${T.borderSub}`,
+                    background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55",
+                    opacity: s.status === "archived" ? 0.6 : 1,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <Badge color={s.type === "issue" ? C.red : C.purple} bg={s.type === "issue" ? C.redDim : "#2e1f5e"}>
+                        {s.type === "issue" ? "🐛 Issue" : "💡 Suggestion"}
+                      </Badge>
+                      <span style={{ fontFamily: "monospace", fontSize: 11, color: dark ? C.amberGlow : "#7c3aed" }}>
+                        {displayName}
+                      </span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: statusColor, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        {s.status}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 11, color: T.creamMute, whiteSpace: "nowrap" }}>{timeAgo(s.ts)}</span>
+                  </div>
+                  <p style={{ margin: "8px 0 10px", fontSize: 13, color: T.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                    {s.text}
+                  </p>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {s.status !== "resolved" && (
+                      <button
+                        type="button"
+                        disabled={suggestionActionId === s.id}
+                        onClick={() => markSuggestion(s.id, "resolved")}
+                        style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.green}55`, background: C.greenDim, color: C.green }}
+                      >
+                        ✓ Resolve
+                      </button>
+                    )}
+                    {s.status === "new" && (
+                      <button
+                        type="button"
+                        disabled={suggestionActionId === s.id}
+                        onClick={() => markSuggestion(s.id, "seen")}
+                        style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.blue}55`, background: C.blueDim, color: C.blue }}
+                      >
+                        Mark seen
+                      </button>
+                    )}
+                    {s.status !== "archived" && (
+                      <button
+                        type="button"
+                        disabled={suggestionActionId === s.id}
+                        onClick={() => markSuggestion(s.id, "archived")}
+                        style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${T.border}`, background: "transparent", color: T.textMute }}
+                      >
+                        Archive
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
