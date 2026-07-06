@@ -5997,126 +5997,92 @@ function SuggestModal({
           </div>
 
           {type === "issue" && myTickets.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-              {myTickets.map((t) => {
-                const isOpen = expandedTicketId === t.id;
-                const lastMsg = (t.messages ?? [])[(t.messages ?? []).length - 1];
-                const snippet = (lastMsg ? lastMsg.text : t.text);
-                const snippetShort = snippet.length > 50 ? `${snippet.slice(0, 50)}…` : snippet;
-                return (
-                  <div key={t.id} style={{ border: "1px solid rgba(0,0,0,0.14)", borderRadius: 8, overflow: "hidden" }}>
-                    {/* ── Collapsed summary — tap to expand/collapse ── */}
-                    <div
-                      onClick={() => setExpandedTicketId(isOpen ? null : t.id)}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+              {myTickets.map((t) => (
+                <div key={t.id} style={{ border: "1px solid rgba(255,255,255,0.18)", borderRadius: 8, padding: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span
                       style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        padding: "9px 10px",
-                        cursor: "pointer",
-                        flexWrap: "wrap",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                        color: t.status === "resolved" ? "#4ade80" : "#fbbf24",
                       }}
                     >
-                      <span style={{ fontSize: 10, color: "#78716c", transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", display: "inline-block" }}>
-                        ▶
-                      </span>
-                      <span
+                      {t.status === "resolved" ? "Resolved" : "In progress"}
+                    </span>
+                    <span style={{ fontFamily: "monospace", fontSize: 10, opacity: 0.4 }}>#{t.id.slice(-6)}</span>
+                    <span style={{ fontSize: 10, opacity: 0.5 }}>{new Date(t.ts).toLocaleDateString()}</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ alignSelf: "flex-start", maxWidth: "88%", background: "rgba(255,255,255,0.06)", borderRadius: 8, padding: "6px 10px" }}>
+                      <div style={{ fontSize: 10, opacity: 0.5, marginBottom: 2 }}>You</div>
+                      <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap" }}>{t.text}</div>
+                    </div>
+                    {(t.messages ?? []).map((m, mi) => (
+                      <div
+                        key={mi}
                         style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          textTransform: "uppercase",
-                          letterSpacing: "0.05em",
-                          color: t.status === "resolved" ? "#16a34a" : "#d97706",
+                          alignSelf: m.sender === "admin" ? "flex-end" : "flex-start",
+                          maxWidth: "88%",
+                          background: "rgba(255,255,255,0.06)",
+                          border: m.sender === "admin" ? "1px solid #a78bfa88" : "none",
+                          borderRadius: 8,
+                          padding: "6px 10px",
                         }}
                       >
-                        {t.status === "resolved" ? "Resolved" : "In progress"}
-                      </span>
-                      <span style={{ fontFamily: "monospace", fontSize: 10, color: "#78716c" }}>#{t.id.slice(-6)}</span>
-                      <span style={{ fontSize: 10, color: "#78716c" }}>{new Date(t.ts).toLocaleDateString()}</span>
-                      {!isOpen && (
-                        <span style={{ fontSize: 11.5, color: "#57534e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 60 }}>
-                          {snippetShort}
-                        </span>
-                      )}
-                      {t.unread && !isOpen && (
-                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f87171", flexShrink: 0 }} />
-                      )}
-                    </div>
-
-                    {/* ── Expanded thread + reply box ── */}
-                    {isOpen && (
-                      <div style={{ padding: "0 10px 10px" }}>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <div style={{ alignSelf: "flex-start", maxWidth: "88%", background: "rgba(255,255,255,0.06)", borderRadius: 8, padding: "6px 10px" }}>
-                            <div style={{ fontSize: 10, opacity: 0.5, marginBottom: 2 }}>You</div>
-                            <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap" }}>{t.text}</div>
-                          </div>
-                          {(t.messages ?? []).map((m, mi) => (
-                            <div
-                              key={mi}
-                              style={{
-                                alignSelf: m.sender === "admin" ? "flex-end" : "flex-start",
-                                maxWidth: "88%",
-                                background: "rgba(255,255,255,0.06)",
-                                border: m.sender === "admin" ? "1px solid #a78bfa88" : "none",
-                                borderRadius: 8,
-                                padding: "6px 10px",
-                              }}
-                            >
-                              <div style={{ fontSize: 10, fontWeight: m.sender === "admin" ? 700 : 400, color: m.sender === "admin" ? "#7c3aed" : "inherit", opacity: m.sender === "admin" ? 1 : 0.5, marginBottom: 2 }}>
-                                {m.sender === "admin" ? "Grub Team" : "You"}
-                              </div>
-                              <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap" }}>{m.text}</div>
-                            </div>
-                          ))}
+                        <div style={{ fontSize: 10, fontWeight: m.sender === "admin" ? 700 : 400, color: m.sender === "admin" ? "#7c3aed" : "inherit", opacity: m.sender === "admin" ? 1 : 0.5, marginBottom: 2 }}>
+                          {m.sender === "admin" ? "Grub Team" : "You"}
                         </div>
-                        {t.status !== "resolved" && (
-                          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                            <input
-                              type="text"
-                              value={replyDrafts[t.id] ?? ""}
-                              onChange={(e) => onReplyDraftChange(t.id, e.target.value.slice(0, 500))}
-                              placeholder="Add more details…"
-                              style={{
-                                flex: 1,
-                                fontSize: 12.5,
-                                padding: "7px 9px",
-                                borderRadius: 6,
-                                border: "1px solid rgba(255,255,255,0.18)",
-                                background: "rgba(255,255,255,0.04)",
-                                color: "inherit",
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  onSubmitReply(t.id, replyDrafts[t.id] ?? "");
-                                }
-                              }}
-                            />
-                            <button
-                              type="button"
-                              disabled={replySubmittingId === t.id || !(replyDrafts[t.id] ?? "").trim()}
-                              onClick={() => onSubmitReply(t.id, replyDrafts[t.id] ?? "")}
-                              style={{
-                                fontSize: 12,
-                                fontWeight: 700,
-                                padding: "7px 12px",
-                                borderRadius: 6,
-                                border: "none",
-                                cursor: replySubmittingId === t.id ? "default" : "pointer",
-                                background: "#a78bfa",
-                                color: "#1a0033",
-                              }}
-                            >
-                              {replySubmittingId === t.id ? "…" : "Reply"}
-                            </button>
-                          </div>
-                        )}
+                        <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap" }}>{m.text}</div>
                       </div>
-                    )}
+                    ))}
                   </div>
-                );
-              })}
+                  {t.status !== "resolved" && (
+                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                      <input
+                        type="text"
+                        value={replyDrafts[t.id] ?? ""}
+                        onChange={(e) => onReplyDraftChange(t.id, e.target.value.slice(0, 500))}
+                        placeholder="Add more details…"
+                        style={{
+                          flex: 1,
+                          fontSize: 12.5,
+                          padding: "7px 9px",
+                          borderRadius: 6,
+                          border: "1px solid rgba(255,255,255,0.18)",
+                          background: "rgba(255,255,255,0.04)",
+                          color: "inherit",
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            onSubmitReply(t.id, replyDrafts[t.id] ?? "");
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={replySubmittingId === t.id || !(replyDrafts[t.id] ?? "").trim()}
+                        onClick={() => onSubmitReply(t.id, replyDrafts[t.id] ?? "")}
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 700,
+                          padding: "7px 12px",
+                          borderRadius: 6,
+                          border: "none",
+                          cursor: replySubmittingId === t.id ? "default" : "pointer",
+                          background: "#a78bfa",
+                          color: "#1a0033",
+                        }}
+                      >
+                        {replySubmittingId === t.id ? "…" : "Reply"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
               <div style={{ fontSize: 11, opacity: 0.5, textAlign: "center" }}>Have a new issue? Report it below 👇</div>
             </div>
           )}
