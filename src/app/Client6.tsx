@@ -2450,140 +2450,95 @@ function ClientPageInner() {
     setWheelRotation(newRotation);
 
     const SPIN_DURATION_MS = 4200;
-
-    // ── Persist the reward IMMEDIATELY, in parallel with the purely
-    // cosmetic spin animation below — do NOT wait for the animation timer
-    // to even start this. Previously the entire state-update + /api/pet
-    // save lived INSIDE the 4.2s setTimeout, meaning a fully paid,
-    // already-decided win sat for 4.2 seconds as nothing but an inert
-    // browser timer before ever being persisted. If the tab/webview got
-    // backgrounded, suspended, or navigated away during that window (very
-    // plausible right after a wallet payment prompt, especially on mobile
-    // or inside a host app's webview), that timeout could simply never
-    // fire — the payment was real and confirmed on-chain, but the win was
-    // never saved anywhere and nothing ever told the user or admin.
-    // Confirmed via a real incident: a clean, fully-matching on-chain
-    // payment with zero corresponding DB record.
-    //
-    // Only the genuine "Rare Accessory, items still available" case stays
-    // deferred — it can't be saved until the player picks WHICH item, and
-    // that path already has its own solid retry+visible-error handling in
-    // confirmWheelAccessoryChoice. Also brings the plain-reward save (xp /
-    // freeCheckin / streakSave / the "already own everything" consolation)
-    // up to that same retry+visible-error standard, instead of the single
-    // silent fire-and-forget attempt it had before.
-    type WheelSaveResult =
-      | { kind: "openPicker"; lockedForStage: ReturnType<typeof getAccessoriesForStage> }
-      | { kind: "resolved"; label: string; wheelRewardId: string; isXpType: boolean };
-
-    async function saveWheelReward(
-      computedState: PetState,
-      wheelRewardId: string,
-      fallbackLabelForLog: string,
-    ): Promise<{ saved: boolean; lastError: string }> {
-      const saveWallet = normalizeWallet(paidWallet, walletAddress);
-      const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-      if (!saveIdentity) return { saved: false, lastError: "No account to save under." };
-
-      let saved = false;
-      let lastError = "";
-      for (let attempt = 1; attempt <= 3 && !saved; attempt++) {
-        try {
-          const res = await fetch("/api/pet", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ...saveIdentity,
-              state: computedState,
-              action: "wheel_spin",
-              wheelReward: wheelRewardId,
-              txHash: txHash!,
-            }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ok) {
-            saved = true;
-            console.log(`[WHEEL] DB saved ✅ (attempt ${attempt})`);
-            // Only sync walletAddress once the DB actually has this fresh
-            // state — see the setWalletAddress race doc in
-            // handleUnlockAccessory for why this can't run before the save.
-            if (!fid && saveWallet && saveWallet !== walletAddress) {
-              setWalletAddress(saveWallet);
-            }
-          } else if (attempt > 1 && String(data?.error ?? "").includes("already been used")) {
-            // Server only marks a txHash used AFTER a successful save, so
-            // hitting this on a retry means an earlier attempt actually
-            // succeeded and we just never saw the response.
-            saved = true;
-            console.log(`[WHEEL] DB already saved by an earlier attempt ✅ (attempt ${attempt})`);
-          } else {
-            lastError = data?.error ?? `HTTP ${res.status}`;
-            console.error(`[WHEEL] DB save rejected (attempt ${attempt}):`, lastError);
-            if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
-          }
-        } catch (e: any) {
-          lastError = e?.message ?? String(e);
-          console.error(`[WHEEL] DB save network error (attempt ${attempt}):`, lastError);
-          if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
-        }
-      }
-
-      if (saved) {
-        logTransaction({
-          type: "wheel_spin",
-          txHash: txHash!,
-          amountUsd: WHEEL_USD,
-          wheelReward: fallbackLabelForLog,
-          walletAddress: saveWallet ?? undefined,
-        }, saveIdentity);
-      }
-      return { saved, lastError };
-    }
-
-    const saveResultPromise: Promise<WheelSaveResult> = (async () => {
+    setTimeout(async () => {
+      // Rare Accessory: don't apply/persist anything yet — hand off to the
+      // picker (below) so the player can choose WHICH accessory they get.
+      // The payment (txHash/paidWallet) is already confirmed at this point,
+      // so it's simply held until they pick. If they've already unlocked
+      // everything available for their current stage, there's nothing left
+      // to give — fall back to a flat +10 XP consolation prize instead of
+      // showing an empty picker (reported to the server as the ordinary
+      // "xp10" reward, same as landing on that wedge directly).
       if (segment.type === "accessoryChoice") {
         const lockedForStage = getAccessoriesForStage(stageIndex).filter(
           (a) => !isUnlocked(state.accessories, a.id)
         );
 
-        if (lockedForStage.length > 0) {
-          // Items available — nothing to save yet, the picker (rendered
-          // once the animation ends, below) hands off to
-          // confirmWheelAccessoryChoice() once the player actually picks.
-          return { kind: "openPicker", lockedForStage };
-        }
+        if (lockedForStage.length === 0) {
+          const consolationXp = 10;
+          let computedState: PetState | null = null;
+          setState((prev) => {
+            const newState: PetState = { ...prev, xp: prev.xp + consolationXp };
+            computedState = newState;
+            try {
+              window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
+            } catch (e) {
+              console.error("[WHEEL] localStorage failed", e);
+            }
+            return newState;
+          });
 
-        // Already unlocked everything for this stage — flat +10 XP
-        // consolation, reported as the ordinary "xp10" reward.
-        const consolationXp = 10;
-        let computedState: PetState | null = null;
-        setState((prev) => {
-          const newState: PetState = { ...prev, xp: prev.xp + consolationXp };
-          computedState = newState;
-          try {
-            window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
-          } catch (e) {
-            console.error("[WHEEL] localStorage failed", e);
+          setWheelResultLabel(`Rare Accessory (already own everything!) — +${consolationXp} XP instead`);
+          setLastAction(`🎡 Spin Wheel: already unlocked every Stage ${stageIndex} item — +${consolationXp} XP instead!`);
+          playSfx("checkin");
+          setWheelSpinning(false);
+          shareWheelWin(`Rare Accessory (+${consolationXp} XP consolation)`, false, "xp10");
+
+          const saveWallet = normalizeWallet(paidWallet, walletAddress);
+          const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
+          if (saveIdentity && computedState) {
+            try {
+              const res = await fetch("/api/pet", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  ...saveIdentity,
+                  state: computedState,
+                  action: "wheel_spin",
+                  wheelReward: "xp10",
+                  txHash: txHash!,
+                }),
+              });
+              const data = await res.json().catch(() => ({}));
+              if (res.ok && data.ok) {
+                console.log("[WHEEL] DB saved ✅ (rareaccessory fallback -> xp10)");
+                // Only sync walletAddress once the DB actually has this
+                // fresh state — see the setWalletAddress race doc in
+                // handleUnlockAccessory for why this can't run before the
+                // save completes.
+                if (!fid && saveWallet && saveWallet !== walletAddress) {
+                  setWalletAddress(saveWallet);
+                }
+              } else {
+                console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
+              }
+            } catch (e) {
+              console.error("[WHEEL] DB save network error", e);
+            }
+            logTransaction({
+              type: "wheel_spin",
+              txHash: txHash!,
+              amountUsd: WHEEL_USD,
+              wheelReward: `${segment.label} (fallback +${consolationXp} XP)`,
+              walletAddress: saveWallet ?? undefined,
+            }, saveIdentity);
           }
-          return newState;
-        });
-
-        const { saved, lastError } = computedState
-          ? await saveWheelReward(computedState, "xp10", `${segment.label} (fallback +${consolationXp} XP)`)
-          : { saved: false, lastError: "State update failed." };
-        if (!saved) {
-          setWheelError(`Payment confirmed but saving failed (${lastError}). Contact support with tx: ${txHash}`);
+          return;
         }
 
-        return {
-          kind: "resolved",
-          label: `Rare Accessory (already own everything!) — +${consolationXp} XP instead`,
-          wheelRewardId: "xp10",
-          isXpType: true,
-        };
+        // Items available — open the picker and wait for the player's pick.
+        // confirmWheelAccessoryChoice() does the actual state update + save.
+        setWheelChoiceError(null);
+        setWheelAccessoryChoices(lockedForStage);
+        setWheelChoiceTx({ txHash: txHash!, wallet: normalizeWallet(paidWallet, walletAddress) });
+        setWheelResultLabel(`🌟 Rare Accessory! Pick your Stage ${stageIndex} item below.`);
+        setLastAction("🎡 Spin Wheel: Rare Accessory! Choose your item.");
+        playSfx("unlock");
+        setWheelSpinning(false);
+        return;
       }
 
-      // Plain xp / freeCheckin / streakSave reward — apply immediately.
+      // Apply the reward to local state (and localStorage) immediately.
       let computedState: PetState | null = null;
       setState((prev) => {
         const newState: PetState =
@@ -2601,44 +2556,56 @@ function ClientPageInner() {
         return newState;
       });
 
-      const { saved, lastError } = computedState
-        ? await saveWheelReward(computedState, segment.id, segment.label)
-        : { saved: false, lastError: "State update failed." };
-      if (!saved) {
-        setWheelError(`Payment confirmed but saving failed (${lastError}). Contact support with tx: ${txHash}`);
-      }
-
-      return {
-        kind: "resolved",
-        label: `You won: ${segment.label}!`,
-        wheelRewardId: segment.id,
-        isXpType: segment.type === "xp",
-      };
-    })();
-
-    // The animation timer now ONLY handles the visual reveal — by the time
-    // it fires, saveResultPromise above has usually already resolved
-    // (it started well before this timer), since it was never gated on
-    // the animation in the first place.
-    setTimeout(async () => {
-      const result = await saveResultPromise;
-
-      if (result.kind === "openPicker") {
-        setWheelChoiceError(null);
-        setWheelAccessoryChoices(result.lockedForStage);
-        setWheelChoiceTx({ txHash: txHash!, wallet: normalizeWallet(paidWallet, walletAddress) });
-        setWheelResultLabel(`🌟 Rare Accessory! Pick your Stage ${stageIndex} item below.`);
-        setLastAction("🎡 Spin Wheel: Rare Accessory! Choose your item.");
-        playSfx("unlock");
-        setWheelSpinning(false);
-        return;
-      }
-
-      setWheelResultLabel(result.label);
-      setLastAction(`🎡 Spin Wheel: ${result.label}`);
-      playSfx(result.isXpType ? "checkin" : "unlock");
+      setWheelResultLabel(`You won: ${segment.label}!`);
+      setLastAction(`🎡 Spin Wheel: ${segment.label}!`);
+      playSfx(segment.type === "xp" ? "checkin" : "unlock");
       setWheelSpinning(false);
-      shareWheelWin(result.label.replace(/^You won: /, "").replace(/!$/, ""), false, result.wheelRewardId);
+      shareWheelWin(segment.label, false, segment.id);
+
+      // Persist to the server. Reuses the same fid-or-wallet identity
+      // resolution as check-in/accessory unlock. Non-blocking beyond this —
+      // the reward is already applied locally either way.
+      // NOTE: this expects a corresponding update to the /api/pet route to
+      // accept action: "wheel_spin" (mirroring "checkin"/"unlock_accessory")
+      // and independently verify the $0.01 payment server-side.
+      const saveWallet = normalizeWallet(paidWallet, walletAddress);
+      const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
+      if (saveIdentity && computedState) {
+        try {
+          const res = await fetch("/api/pet", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...saveIdentity,
+              state: computedState,
+              action: "wheel_spin",
+              wheelReward: segment.id,
+              txHash: txHash!,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok) {
+            console.log("[WHEEL] DB saved ✅");
+            // Only sync walletAddress once the DB actually has this fresh
+            // state — see the setWalletAddress race doc in
+            // handleUnlockAccessory for why this can't run before the save.
+            if (!fid && saveWallet && saveWallet !== walletAddress) {
+              setWalletAddress(saveWallet);
+            }
+          } else {
+            console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
+          }
+        } catch (e) {
+          console.error("[WHEEL] DB save network error", e);
+        }
+        logTransaction({
+          type: "wheel_spin",
+          txHash: txHash!,
+          amountUsd: WHEEL_USD,
+          wheelReward: segment.label,
+          walletAddress: saveWallet ?? undefined,
+        }, saveIdentity);
+      }
     }, SPIN_DURATION_MS);
   }
 
