@@ -5846,13 +5846,13 @@ function SuggestModal({
                 borderRadius: 8,
                 cursor: "pointer",
                 border: type === "suggestion" ? "2px solid #a78bfa" : "1px solid rgba(255,255,255,0.18)",
-                background: "transparent",
+                background: type === "suggestion" ? "#2e1f5e" : "transparent",
                 color: "inherit",
                 fontWeight: 700,
                 fontSize: 13,
               }}
             >
-              💡 Suggestion
+              Suggestion
             </button>
             <button
               type="button"
@@ -5863,13 +5863,13 @@ function SuggestModal({
                 borderRadius: 8,
                 cursor: "pointer",
                 border: type === "issue" ? "2px solid #f87171" : "1px solid rgba(255,255,255,0.18)",
-                background: "transparent",
+                background: type === "issue" ? "#450a0a" : "transparent",
                 color: "inherit",
                 fontWeight: 700,
                 fontSize: 13,
               }}
             >
-              🐛 Report Issue
+              Report Issue
             </button>
           </div>
 
