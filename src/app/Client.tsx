@@ -1849,27 +1849,20 @@ function ClientPageInner() {
           continue;
         }
 
-        // Re-derive the exact same state change the original spin would
-        // have applied, based on the segment id we stored — `workingState`
-        // carries forward any earlier recoveries in this same pass (covers
-        // both "crashed before the reward was even applied locally" and
-        // "crashed after applying it, before the save landed" — the latter
-        // re-applies a no-op-safe delta since XP saves can only go up
-        // server-side, never down, per route.ts's floor).
-        let recoveredState: PetState;
-        if (pending.wheelReward === "xp10") {
-          recoveredState = { ...workingState, xp: workingState.xp + 10 };
-        } else {
-          const seg = WHEEL_SEGMENTS.find((s) => s.id === pending.wheelReward);
-          recoveredState =
-            seg?.type === "xp"
-              ? { ...workingState, xp: workingState.xp + (seg.xp ?? 0) }
-              : seg?.type === "freeCheckin"
-              ? { ...workingState, freeCheckinCredits: (workingState.freeCheckinCredits ?? 0) + 1 }
-              : seg?.type === "streakSave"
-              ? { ...workingState, streakSaveCredits: (workingState.streakSaveCredits ?? 0) + 1 }
-              : workingState; // unknown reward id — resend as-is rather than guess
-        }
+        // IMPORTANT: do NOT re-derive/add the reward delta here. doWheelSpin
+        // applies the reward to local state (and localStorage) SYNCHRONOUSLY,
+        // at spin time, regardless of whether the server save ever succeeds
+        // — that's the whole point of the "decide and persist right here"
+        // design. So `workingState` already includes this reward's XP/
+        // credits by the time this effect ever runs; the ONLY thing that
+        // might not have happened yet is the SERVER getting a copy of it.
+        // Recomputing "workingState.xp + delta" here would add the same
+        // reward a second time on top of a value that already has it —
+        // that was the actual cause of XP getting double-counted once
+        // pending-spin records started reliably surviving to be retried.
+        // Recovery's job is purely to resync the current, already-correct
+        // state to the server for this txHash — never to recompute it.
+        const recoveredState: PetState = workingState;
 
         try {
           const res = await fetch("/api/pet", {
@@ -1885,12 +1878,7 @@ function ClientPageInner() {
           });
           const data = await res.json().catch(() => ({}));
           if (res.ok && data.ok) {
-            console.log("[WHEEL] recovered pending spin ✅");
-            workingState = recoveredState;
-            setState(recoveredState);
-            try {
-              window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(recoveredState));
-            } catch {}
+            console.log("[WHEEL] recovered pending spin ✅ (resynced, no XP re-added)");
             clearPendingSpin(identityParam, pending.txHash);
             logTransaction({
               type: "wheel_spin",
@@ -2776,19 +2764,22 @@ function ClientPageInner() {
         if (!fid && saveWallet && saveWallet !== walletAddress) {
           setWalletAddress(saveWallet);
         }
+        logTransaction({
+          type: "wheel_spin",
+          txHash: txHash!,
+          amountUsd: WHEEL_USD,
+          wheelReward: label,
+          walletAddress: saveWallet ?? undefined,
+        }, saveIdentity);
       } else {
         console.error("[WHEEL] DB save failed after 3 attempts:", lastError);
         // Pending-spin record stays put — the next-mount recovery effect
         // will pick it up if the app gets closed before another spin
-        // attempt is made.
+        // attempt is made. Deliberately NOT logging a transaction here —
+        // it hasn't actually landed yet, and the recovery effect logs it
+        // once it genuinely does, so the dashboard only ever shows
+        // transactions that actually persisted.
       }
-      logTransaction({
-        type: "wheel_spin",
-        txHash: txHash!,
-        amountUsd: WHEEL_USD,
-        wheelReward: label,
-        walletAddress: saveWallet ?? undefined,
-      }, saveIdentity);
     }
 
     // Rare Accessory: the actual accessory choice still has to wait for the
@@ -3367,11 +3358,30 @@ function ClientPageInner() {
   }, identity: { fid?: string | number | null; wallet?: string | null }) {
     const logFid = identity.fid ?? (identity.wallet ? `wallet:${identity.wallet}` : null);
     if (!logFid) return;
-    fetch("/api/txn-log", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fid: logFid, ts: Date.now(), ...entry }),
-    }).catch(() => {}); // never block on logging failure
+    // Previously a single fetch(...).catch(() => {}) with no retry at all —
+    // unlike the /api/pet save (3 attempts + a whole pending-spin recovery
+    // system), a single transient network blip here was permanently lost
+    // with zero backstop, even when the underlying reward saved to /api/pet
+    // just fine. That's the direct cause of transactions that show up in
+    // XP but never appear in the dashboard's txn list. Still fire-and-forget
+    // from the caller's point of view (nothing awaits this), but now retries
+    // like every other save path in this file.
+    (async () => {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const res = await fetch("/api/txn-log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fid: logFid, ts: Date.now(), ...entry }),
+          });
+          if (res.ok) return;
+        } catch {
+          // fall through to retry
+        }
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 1500));
+      }
+      console.error("[TXN-LOG] failed to log transaction after 3 attempts:", entry);
+    })();
   }
 
   // Accessory unlock cost — stage-aware pricing on Base. Routed through the
