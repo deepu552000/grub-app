@@ -3777,7 +3777,6 @@ function ClientPageInner() {
                   return;
                 }
                 setSuggestError(null);
-                setSuggestType("issue");
                 setShowSuggest(true);
                 fetchMyTickets();
               }}
@@ -5414,7 +5413,6 @@ function ClientPageInner() {
                 setWalletAddress(addr);
                 setShowIdentityRequired(false);
                 setSuggestError(null);
-                setSuggestType("issue");
                 setShowSuggest(true);
               }
             } finally {
@@ -6026,13 +6024,13 @@ function SuggestModal({
                         style={{
                           alignSelf: m.sender === "admin" ? "flex-end" : "flex-start",
                           maxWidth: "88%",
-                          background: "rgba(255,255,255,0.06)",
-                          border: m.sender === "admin" ? "1px solid #a78bfa88" : "none",
+                          background: m.sender === "admin" ? "#2e1f5e" : "rgba(255,255,255,0.06)",
+                          border: m.sender === "admin" ? "1px solid #a78bfa55" : "none",
                           borderRadius: 8,
                           padding: "6px 10px",
                         }}
                       >
-                        <div style={{ fontSize: 10, fontWeight: m.sender === "admin" ? 700 : 400, color: m.sender === "admin" ? "#7c3aed" : "inherit", opacity: m.sender === "admin" ? 1 : 0.5, marginBottom: 2 }}>
+                        <div style={{ fontSize: 10, opacity: 0.6, marginBottom: 2 }}>
                           {m.sender === "admin" ? "Grub Team" : "You"}
                         </div>
                         <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap" }}>{m.text}</div>

@@ -378,9 +378,6 @@ function AdminDashboardInner() {
   const [suggestionStatusFilter, setSuggestionStatusFilter] = useState<"active" | "new" | "resolved" | "archived" | "all">("active");
   const [suggestionTypeFilter, setSuggestionTypeFilter] = useState<"all" | "suggestion" | "issue">("all");
   const [suggestionActionId, setSuggestionActionId] = useState<string | null>(null);
-  // Accordion — only one ticket's full thread/actions open at a time, so a
-  // long list of reports stays scannable instead of everything expanded.
-  const [expandedSuggestionId, setExpandedSuggestionId] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<Record<string, { username: string | null; displayName: string | null }>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1632,34 +1629,18 @@ function AdminDashboardInner() {
                 s.status === "new" ? C.amberGlow :
                 s.status === "resolved" ? C.green :
                 s.status === "archived" ? T.textMute : C.blue;
-              const isExpanded = expandedSuggestionId === s.id;
-              const snippet = s.text.length > 70 ? `${s.text.slice(0, 70)}…` : s.text;
               return (
                 <div
                   key={s.id}
                   style={{
+                    padding: "12px 16px",
                     borderBottom: `1px solid ${T.borderSub}`,
                     background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55",
                     opacity: s.status === "archived" ? 0.6 : 1,
                   }}
                 >
-                  {/* ── Collapsed summary row — click to expand/collapse ── */}
-                  <div
-                    onClick={() => setExpandedSuggestionId(isExpanded ? null : s.id)}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "flex-start",
-                      gap: 10,
-                      flexWrap: "wrap",
-                      padding: "12px 16px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-                      <span style={{ fontSize: 10, color: T.textMute, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s", display: "inline-block" }}>
-                        ▶
-                      </span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <Badge color={s.type === "issue" ? C.red : C.purple} bg={s.type === "issue" ? C.redDim : "#2e1f5e"}>
                         {s.type === "issue" ? "🐛 Issue" : "💡 Suggestion"}
                       </Badge>
@@ -1690,127 +1671,116 @@ function AdminDashboardInner() {
                       <span style={{ fontSize: 10, fontWeight: 700, color: statusColor, textTransform: "uppercase", letterSpacing: "0.05em" }}>
                         {s.status}
                       </span>
-                      {!isExpanded && (
-                        <span style={{ fontSize: 12, color: T.textMute, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 320 }}>
-                          {snippet}
-                        </span>
-                      )}
                     </div>
                     <span style={{ fontSize: 11, color: T.creamMute, whiteSpace: "nowrap" }}>{timeAgo(s.ts)}</span>
                   </div>
+                  <p style={{ margin: "8px 0 10px", fontSize: 13, color: T.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                    {s.text}
+                  </p>
 
-                  {/* ── Expanded detail — full text, thread, reply, actions ── */}
-                  {isExpanded && (
-                    <div style={{ padding: "0 16px 14px" }}>
-                      <p style={{ margin: "0 0 10px", fontSize: 13, color: T.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                        {s.text}
-                      </p>
-
-                      {/* Two-way thread — issue reports only. Suggestions have no
-                          messages array and skip this block entirely. */}
-                      {s.type === "issue" && (
-                        <div style={{ marginBottom: 10 }}>
-                          {(s.messages ?? []).length > 0 && (
-                            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
-                              {(s.messages ?? []).map((m, mi) => (
-                                <div
-                                  key={mi}
-                                  style={{
-                                    alignSelf: m.sender === "admin" ? "flex-end" : "flex-start",
-                                    maxWidth: "85%",
-                                    background: m.sender === "admin" ? "#2e1f5e" : T.surfaceAlt,
-                                    border: `1px solid ${m.sender === "admin" ? "#a78bfa55" : T.border}`,
-                                    borderRadius: 8,
-                                    padding: "6px 10px",
-                                  }}
-                                >
-                                  <div style={{ fontSize: 10, fontWeight: 700, color: m.sender === "admin" ? "#c4b5fd" : T.textMute, marginBottom: 2 }}>
-                                    {m.sender === "admin" ? "You" : displayName}
-                                  </div>
-                                  <div style={{ fontSize: 12.5, color: T.text, whiteSpace: "pre-wrap" }}>{m.text}</div>
-                                </div>
-                              ))}
+                  {/* Two-way thread — issue reports only. Suggestions have no
+                      messages array and skip this block entirely. */}
+                  {s.type === "issue" && (
+                    <div style={{ marginBottom: 10 }}>
+                      {(s.messages ?? []).length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                          {(s.messages ?? []).map((m, mi) => (
+                            <div
+                              key={mi}
+                              style={{
+                                alignSelf: m.sender === "admin" ? "flex-end" : "flex-start",
+                                maxWidth: "85%",
+                                background: m.sender === "admin" ? "#2e1f5e" : T.surfaceAlt,
+                                border: `1px solid ${m.sender === "admin" ? "#a78bfa55" : T.border}`,
+                                borderRadius: 8,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              <div style={{ fontSize: 10, fontWeight: 700, color: m.sender === "admin" ? "#c4b5fd" : T.textMute, marginBottom: 2 }}>
+                                {m.sender === "admin" ? "You" : displayName}
+                              </div>
+                              <div style={{ fontSize: 12.5, color: T.text, whiteSpace: "pre-wrap" }}>{m.text}</div>
                             </div>
-                          )}
-                          {s.status !== "archived" && (
-                            <div style={{ display: "flex", gap: 6 }}>
-                              <input
-                                type="text"
-                                value={replyDrafts[s.id] ?? ""}
-                                onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                                placeholder="Reply — e.g. ask for more info…"
-                                style={{
-                                  flex: 1,
-                                  fontSize: 12,
-                                  padding: "6px 8px",
-                                  borderRadius: 6,
-                                  border: `1px solid ${T.border}`,
-                                  background: T.surfaceAlt,
-                                  color: T.text,
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    sendSuggestionReply(s.id, replyDrafts[s.id] ?? "");
-                                  }
-                                }}
-                              />
-                              <button
-                                type="button"
-                                disabled={suggestionActionId === s.id || !(replyDrafts[s.id] ?? "").trim()}
-                                onClick={() => sendSuggestionReply(s.id, replyDrafts[s.id] ?? "")}
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  padding: "6px 12px",
-                                  borderRadius: 6,
-                                  cursor: "pointer",
-                                  border: "1px solid #a78bfa55",
-                                  background: "#2e1f5e",
-                                  color: "#e9d5ff",
-                                }}
-                              >
-                                Reply
-                              </button>
-                            </div>
-                          )}
+                          ))}
                         </div>
                       )}
-
-                      <div style={{ display: "flex", gap: 6 }}>
-                        {s.status !== "resolved" && (
+                      {s.status !== "archived" && (
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <input
+                            type="text"
+                            value={replyDrafts[s.id] ?? ""}
+                            onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                            placeholder="Reply — e.g. ask for more info…"
+                            style={{
+                              flex: 1,
+                              fontSize: 12,
+                              padding: "6px 8px",
+                              borderRadius: 6,
+                              border: `1px solid ${T.border}`,
+                              background: T.surfaceAlt,
+                              color: T.text,
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                sendSuggestionReply(s.id, replyDrafts[s.id] ?? "");
+                              }
+                            }}
+                          />
                           <button
                             type="button"
-                            disabled={suggestionActionId === s.id}
-                            onClick={() => markSuggestion(s.id, "resolved")}
-                            style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.green}55`, background: C.greenDim, color: C.green }}
+                            disabled={suggestionActionId === s.id || !(replyDrafts[s.id] ?? "").trim()}
+                            onClick={() => sendSuggestionReply(s.id, replyDrafts[s.id] ?? "")}
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 700,
+                              padding: "6px 12px",
+                              borderRadius: 6,
+                              cursor: "pointer",
+                              border: "1px solid #a78bfa55",
+                              background: "#2e1f5e",
+                              color: "#e9d5ff",
+                            }}
                           >
-                            ✓ Resolve
+                            Reply
                           </button>
-                        )}
-                        {s.status === "new" && (
-                          <button
-                            type="button"
-                            disabled={suggestionActionId === s.id}
-                            onClick={() => markSuggestion(s.id, "seen")}
-                            style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.blue}55`, background: C.blueDim, color: C.blue }}
-                          >
-                            Mark seen
-                          </button>
-                        )}
-                        {s.status !== "archived" && (
-                          <button
-                            type="button"
-                            disabled={suggestionActionId === s.id}
-                            onClick={() => markSuggestion(s.id, "archived")}
-                            style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${T.border}`, background: "transparent", color: T.textMute }}
-                          >
-                            Archive
-                          </button>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   )}
+
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {s.status !== "resolved" && (
+                      <button
+                        type="button"
+                        disabled={suggestionActionId === s.id}
+                        onClick={() => markSuggestion(s.id, "resolved")}
+                        style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.green}55`, background: C.greenDim, color: C.green }}
+                      >
+                        ✓ Resolve
+                      </button>
+                    )}
+                    {s.status === "new" && (
+                      <button
+                        type="button"
+                        disabled={suggestionActionId === s.id}
+                        onClick={() => markSuggestion(s.id, "seen")}
+                        style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.blue}55`, background: C.blueDim, color: C.blue }}
+                      >
+                        Mark seen
+                      </button>
+                    )}
+                    {s.status !== "archived" && (
+                      <button
+                        type="button"
+                        disabled={suggestionActionId === s.id}
+                        onClick={() => markSuggestion(s.id, "archived")}
+                        style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${T.border}`, background: "transparent", color: T.textMute }}
+                      >
+                        Archive
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
