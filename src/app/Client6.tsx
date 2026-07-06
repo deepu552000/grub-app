@@ -252,64 +252,6 @@ function scopedStorageKey(identity: string | null): string {
   return identity ? `${STORAGE_KEY}:${identity}` : STORAGE_KEY;
 }
 
-// ── Pending Spin Wheel recovery ─────────────────────────────────────────
-// Written to localStorage the instant a spin's payment confirms and its
-// reward is rolled — BEFORE the /api/pet save round-trip, and no longer
-// gated behind the 4.2s cosmetic wheel animation (see doWheelSpin). Covers
-// the case where the host app tears down/remounts the mini app right after
-// its own payment-confirm sheet dismisses (observed on Base App), which can
-// kill in-flight JS with zero trace — no error, no request, nothing to log
-// server-side, even though the $0.01 already left the wallet. On next
-// mount, once identity is known again, we retry the exact save that spin
-// would have sent. Safe to retry unconditionally: the server's replay
-// guard (grub:used-tx:<txHash>) means a request that actually landed the
-// first time just comes back "already been used", which we treat the same
-// as success.
-function pendingSpinKey(identity: string | null): string {
-  return `grub:pending-spin:${identity ?? "anon"}`;
-}
-
-type PendingSpin = {
-  txHash: string;
-  wallet: string | null;
-  wheelReward: string; // segment id, "xp10", "rareaccessory_choice_pending", or "rareaccessory_chosen"
-  ts: number;
-  // Only set for Rare Accessory spins. `lockedIds` is the picker's item
-  // list at the moment it opened, so recovery can resurface the exact same
-  // choices instead of guessing. `chosenId` is set once the player actually
-  // taps an item (see confirmWheelAccessoryChoice) — once present, recovery
-  // retries saving THAT item rather than reopening the picker, since the
-  // player already made their choice and reopening it would let them pick
-  // a second time for the same payment.
-  accessoryChoice?: { lockedIds: string[]; chosenId?: string };
-};
-
-function savePendingSpin(identity: string | null, entry: PendingSpin) {
-  try {
-    window.localStorage.setItem(pendingSpinKey(identity), JSON.stringify(entry));
-  } catch (e) {
-    console.error("[WHEEL] pending-spin write failed", e);
-  }
-}
-
-function clearPendingSpin(identity: string | null) {
-  try {
-    window.localStorage.removeItem(pendingSpinKey(identity));
-  } catch {
-    // non-fatal — worst case we retry a save that's already "already used"
-    // server-side next time, which is a harmless no-op.
-  }
-}
-
-function readPendingSpin(identity: string | null): PendingSpin | null {
-  try {
-    const raw = window.localStorage.getItem(pendingSpinKey(identity));
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
 const stages = [
   {
     name: "Tiny Cloud",
@@ -1700,170 +1642,6 @@ function ClientPageInner() {
   const WHEEL_USD = 0.01; // $0.01 per Spin Wheel spin
   const RECIPIENT = "0xCF8A44059652DB5Af8B4CB62938c5DC6916eB082" as const;
 
-  // ── Pending Spin Wheel recovery ───────────────────────────────────────
-  // Retries a spin save that never reached the server — e.g. the app got
-  // remounted right as Base App's own confirm sheet dismissed, killing the
-  // in-flight JS between "payment confirmed" and "save sent" with no error
-  // and nothing to log. Runs once identity is actually known (fid, or a
-  // connected wallet) so it doesn't fire against the wrong/no account.
-  // Always safe to retry: the server's replay guard on txHash means a spin
-  // that actually landed the first time just comes back "already been
-  // used", handled the same as success.
-  useEffect(() => {
-    if (!hydrated) return;
-    const saveIdentity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
-    if (!saveIdentity) return;
-
-    const pending = readPendingSpin(identityParam);
-    if (!pending) return;
-
-    // Rare Accessory, no choice made yet when the crash happened — reopen
-    // the SAME picker with the SAME item list rather than guessing or
-    // defaulting to a consolation prize. Doesn't touch the server at all;
-    // confirmWheelAccessoryChoice takes over from here exactly as if the
-    // picker had just opened normally, and clears this pending record once
-    // the player's eventual pick actually saves.
-    if (pending.wheelReward === "rareaccessory_choice_pending" && pending.accessoryChoice) {
-      const stillLocked = pending.accessoryChoice.lockedIds.filter((id) => !isUnlocked(state.accessories, id));
-      if (stillLocked.length > 0) {
-        const items = stillLocked.map((id) => getAccessory(id)).filter(Boolean) as Accessory[];
-        if (items.length > 0) {
-          console.log("[WHEEL] reopening Rare Accessory picker after interrupted spin");
-          setWheelChoiceError(null);
-          setWheelAccessoryChoices(items);
-          setWheelChoiceTx({ txHash: pending.txHash, wallet: pending.wallet });
-          setWheelResultLabel(`🌟 Rare Accessory! Pick your Stage ${stageIndex} item below.`);
-          setLastAction("🎡 Spin Wheel: Rare Accessory! Choose your item.");
-          return;
-        }
-      }
-      // Every item from the original list is already unlocked some other
-      // way since then (e.g. bought directly) — nothing left to pick, fall
-      // back to the same flat +10 XP consolation used elsewhere, and save
-      // it now since this is the first chance we've had to.
-      const recovered = { ...state, xp: state.xp + 10 };
-      (async () => {
-        try {
-          const res = await fetch("/api/pet", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...saveIdentity, state: recovered, action: "wheel_spin", wheelReward: "xp10", txHash: pending.txHash }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if ((res.ok && data.ok) || (typeof data?.error === "string" && data.error.includes("already been used"))) {
-            setState(recovered);
-            try { window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(recovered)); } catch {}
-            clearPendingSpin(identityParam);
-            logTransaction({ type: "wheel_spin", txHash: pending.txHash, amountUsd: WHEEL_USD, wheelReward: "xp10 (recovered, items since unlocked)", walletAddress: pending.wallet ?? undefined }, saveIdentity);
-          } else {
-            console.error("[WHEEL] recovery fallback rejected:", data?.error ?? res.status);
-          }
-        } catch (e) {
-          console.error("[WHEEL] recovery fallback network error", e);
-        }
-      })();
-      return;
-    }
-
-    // Rare Accessory, player already tapped an item before the crash —
-    // don't reopen the picker (they already chose, doing so again would
-    // let them pick a second time off one payment). Just retry saving
-    // that exact item, same shape confirmWheelAccessoryChoice would send.
-    if (pending.wheelReward === "rareaccessory_chosen" && pending.accessoryChoice?.chosenId) {
-      const chosenId = pending.accessoryChoice.chosenId;
-      const alreadyApplied = isUnlocked(state.accessories, chosenId);
-      const recovered: PetState = alreadyApplied
-        ? state
-        : { ...state, xp: state.xp + getUnlockXp(chosenId), accessories: { ...state.accessories, unlocked: [...state.accessories.unlocked, chosenId] } };
-      (async () => {
-        try {
-          const res = await fetch("/api/pet", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...saveIdentity, state: recovered, action: "wheel_spin", wheelReward: "rareaccessory", accessoryId: chosenId, txHash: pending.txHash }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if ((res.ok && data.ok) || (typeof data?.error === "string" && data.error.includes("already been used"))) {
-            console.log("[WHEEL] recovered chosen accessory ✅");
-            setState(recovered);
-            try { window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(recovered)); } catch {}
-            clearPendingSpin(identityParam);
-            logTransaction({ type: "wheel_spin", txHash: pending.txHash, amountUsd: WHEEL_USD, wheelReward: `rareaccessory:${chosenId}`, walletAddress: pending.wallet ?? undefined }, saveIdentity);
-          } else {
-            console.error("[WHEEL] chosen-accessory recovery rejected:", data?.error ?? res.status);
-          }
-        } catch (e) {
-          console.error("[WHEEL] chosen-accessory recovery network error", e);
-        }
-      })();
-      return;
-    }
-
-    // Re-derive the exact same state change the original spin would have
-    // applied, based on the segment id we stored — current `state` is the
-    // freshest snapshot we have (covers both "crashed before the reward
-    // was even applied locally" and "crashed after applying it, before the
-    // save landed" — the latter re-applies a no-op-safe delta since XP
-    // saves can only go up server-side, never down, per route.ts's floor).
-    let recoveredState: PetState;
-    if (pending.wheelReward === "xp10") {
-      recoveredState = { ...state, xp: state.xp + 10 };
-    } else {
-      const seg = WHEEL_SEGMENTS.find((s) => s.id === pending.wheelReward);
-      recoveredState =
-        seg?.type === "xp"
-          ? { ...state, xp: state.xp + (seg.xp ?? 0) }
-          : seg?.type === "freeCheckin"
-          ? { ...state, freeCheckinCredits: (state.freeCheckinCredits ?? 0) + 1 }
-          : seg?.type === "streakSave"
-          ? { ...state, streakSaveCredits: (state.streakSaveCredits ?? 0) + 1 }
-          : state; // unknown reward id — resend as-is rather than guess
-    }
-
-    (async () => {
-      try {
-        const res = await fetch("/api/pet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...saveIdentity,
-            state: recoveredState,
-            action: "wheel_spin",
-            wheelReward: pending.wheelReward,
-            txHash: pending.txHash,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.ok) {
-          console.log("[WHEEL] recovered pending spin ✅");
-          setState(recoveredState);
-          try {
-            window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(recoveredState));
-          } catch {}
-          clearPendingSpin(identityParam);
-          logTransaction({
-            type: "wheel_spin",
-            txHash: pending.txHash,
-            amountUsd: WHEEL_USD,
-            wheelReward: pending.wheelReward,
-            walletAddress: pending.wallet ?? undefined,
-          }, saveIdentity);
-        } else if (typeof data?.error === "string" && data.error.includes("already been used")) {
-          // It landed the first time after all — we just never got the
-          // response before the remount. Nothing further to do.
-          console.log("[WHEEL] pending spin was already saved server-side");
-          clearPendingSpin(identityParam);
-        } else {
-          console.error("[WHEEL] pending spin recovery rejected:", data?.error ?? res.status);
-          // Leave it — will retry again next mount.
-        }
-      } catch (e) {
-        console.error("[WHEEL] pending spin recovery network error", e);
-        // Leave it — will retry again next mount.
-      }
-    })();
-  }, [hydrated, identityParam, fid, walletAddress]);
-
   const totalCheckIns = state.totalCheckIns ?? 0;
   const freeCheckInsLeft = Math.max(0, FREE_CHECKIN_DAYS - totalCheckIns);
   const isFreeCheckin = freeCheckInsLeft > 0;
@@ -2652,38 +2430,147 @@ function ClientPageInner() {
       return;
     }
 
-    // Payment confirmed on-chain. Everything that DECIDES and PERSISTS the
-    // reward now happens synchronously, right here — not 4.2s from now.
-    // The 4.2s wheel animation below is purely cosmetic from this point on;
-    // it reveals a reward that has already been rolled, saved, and written
-    // to localStorage as a recovery record, so a host-triggered remount
-    // during the animation (or even before it starts) can no longer lose
-    // a paid-for spin. See the pending-spin recovery effect + helpers near
-    // scopedStorageKey for the other half of this.
+    // Payment confirmed on-chain — roll the reward and animate the wheel.
+    setWheelSpinning(true);
+    playSfx("spin");
     const { segment, index } = pickWheelSegment();
-    const saveWallet = normalizeWallet(paidWallet, walletAddress);
-    const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
+    const segAngle = 360 / WHEEL_SEGMENTS.length;
+    // Angle (from 12 o'clock, clockwise) of this segment's center.
+    const segCenterAngle = index * segAngle + segAngle / 2;
+    // The fixed pointer sits at 12 o'clock (0deg). To bring the segment
+    // center under the pointer, the wheel must rotate by -segCenterAngle
+    // (plus full spins for drama). Keep spinning in the same direction and
+    // always further than before so it never looks like it's rewinding.
+    const extraSpins = 5 + Math.floor(Math.random() * 3); // 5–7 full spins
+    const currentNormalized = ((wheelRotation % 360) + 360) % 360;
+    const targetNormalized = ((-segCenterAngle % 360) + 360) % 360;
+    let delta = targetNormalized - currentNormalized;
+    if (delta <= 0) delta += 360;
+    const newRotation = wheelRotation + extraSpins * 360 + delta;
+    setWheelRotation(newRotation);
 
-    // Fires the actual /api/pet save + txn log, and clears the pending-spin
-    // record once the server confirms it has the write (success OR "already
-    // used" — both mean it landed). Called immediately below, not from the
-    // setTimeout. Kept as its own function so both the accessoryChoice
-    // fallback and the normal reward path can share it.
-    // Retry the save up to 3 times, same pattern as persistPaidCheckin and
-    // confirmWheelAccessoryChoice — previously this was a single attempt
-    // and leaned entirely on the pending-spin localStorage record + next-
-    // mount recovery for resilience, which is why plain-reward spins (xp /
-    // freeCheckin / streakSave) were more exposed than Rare Accessory to
-    // an ordinary transient network blip, not just a full app kill. The
-    // pending-spin record below still stays as the deeper backstop for a
-    // kill that survives all 3 attempts (e.g. mid-retry-loop remount) —
-    // these two mechanisms aren't redundant, they cover different failure
-    // windows.
-    async function persistWheelReward(computedState: PetState, wheelReward: string, label: string) {
-      if (!saveIdentity) return;
-      let saved = false;
-      let lastError = "";
-      for (let attempt = 1; attempt <= 3 && !saved; attempt++) {
+    const SPIN_DURATION_MS = 4200;
+    setTimeout(async () => {
+      // Rare Accessory: don't apply/persist anything yet — hand off to the
+      // picker (below) so the player can choose WHICH accessory they get.
+      // The payment (txHash/paidWallet) is already confirmed at this point,
+      // so it's simply held until they pick. If they've already unlocked
+      // everything available for their current stage, there's nothing left
+      // to give — fall back to a flat +10 XP consolation prize instead of
+      // showing an empty picker (reported to the server as the ordinary
+      // "xp10" reward, same as landing on that wedge directly).
+      if (segment.type === "accessoryChoice") {
+        const lockedForStage = getAccessoriesForStage(stageIndex).filter(
+          (a) => !isUnlocked(state.accessories, a.id)
+        );
+
+        if (lockedForStage.length === 0) {
+          const consolationXp = 10;
+          let computedState: PetState | null = null;
+          setState((prev) => {
+            const newState: PetState = { ...prev, xp: prev.xp + consolationXp };
+            computedState = newState;
+            try {
+              window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
+            } catch (e) {
+              console.error("[WHEEL] localStorage failed", e);
+            }
+            return newState;
+          });
+
+          setWheelResultLabel(`Rare Accessory (already own everything!) — +${consolationXp} XP instead`);
+          setLastAction(`🎡 Spin Wheel: already unlocked every Stage ${stageIndex} item — +${consolationXp} XP instead!`);
+          playSfx("checkin");
+          setWheelSpinning(false);
+          shareWheelWin(`Rare Accessory (+${consolationXp} XP consolation)`, false, "xp10");
+
+          const saveWallet = normalizeWallet(paidWallet, walletAddress);
+          const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
+          if (saveIdentity && computedState) {
+            try {
+              const res = await fetch("/api/pet", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  ...saveIdentity,
+                  state: computedState,
+                  action: "wheel_spin",
+                  wheelReward: "xp10",
+                  txHash: txHash!,
+                }),
+              });
+              const data = await res.json().catch(() => ({}));
+              if (res.ok && data.ok) {
+                console.log("[WHEEL] DB saved ✅ (rareaccessory fallback -> xp10)");
+                // Only sync walletAddress once the DB actually has this
+                // fresh state — see the setWalletAddress race doc in
+                // handleUnlockAccessory for why this can't run before the
+                // save completes.
+                if (!fid && saveWallet && saveWallet !== walletAddress) {
+                  setWalletAddress(saveWallet);
+                }
+              } else {
+                console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
+              }
+            } catch (e) {
+              console.error("[WHEEL] DB save network error", e);
+            }
+            logTransaction({
+              type: "wheel_spin",
+              txHash: txHash!,
+              amountUsd: WHEEL_USD,
+              wheelReward: `${segment.label} (fallback +${consolationXp} XP)`,
+              walletAddress: saveWallet ?? undefined,
+            }, saveIdentity);
+          }
+          return;
+        }
+
+        // Items available — open the picker and wait for the player's pick.
+        // confirmWheelAccessoryChoice() does the actual state update + save.
+        setWheelChoiceError(null);
+        setWheelAccessoryChoices(lockedForStage);
+        setWheelChoiceTx({ txHash: txHash!, wallet: normalizeWallet(paidWallet, walletAddress) });
+        setWheelResultLabel(`🌟 Rare Accessory! Pick your Stage ${stageIndex} item below.`);
+        setLastAction("🎡 Spin Wheel: Rare Accessory! Choose your item.");
+        playSfx("unlock");
+        setWheelSpinning(false);
+        return;
+      }
+
+      // Apply the reward to local state (and localStorage) immediately.
+      let computedState: PetState | null = null;
+      setState((prev) => {
+        const newState: PetState =
+          segment.type === "xp"
+            ? { ...prev, xp: prev.xp + (segment.xp ?? 0) }
+            : segment.type === "freeCheckin"
+            ? { ...prev, freeCheckinCredits: (prev.freeCheckinCredits ?? 0) + 1 }
+            : { ...prev, streakSaveCredits: (prev.streakSaveCredits ?? 0) + 1 };
+        computedState = newState;
+        try {
+          window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
+        } catch (e) {
+          console.error("[WHEEL] localStorage failed", e);
+        }
+        return newState;
+      });
+
+      setWheelResultLabel(`You won: ${segment.label}!`);
+      setLastAction(`🎡 Spin Wheel: ${segment.label}!`);
+      playSfx(segment.type === "xp" ? "checkin" : "unlock");
+      setWheelSpinning(false);
+      shareWheelWin(segment.label, false, segment.id);
+
+      // Persist to the server. Reuses the same fid-or-wallet identity
+      // resolution as check-in/accessory unlock. Non-blocking beyond this —
+      // the reward is already applied locally either way.
+      // NOTE: this expects a corresponding update to the /api/pet route to
+      // accept action: "wheel_spin" (mirroring "checkin"/"unlock_accessory")
+      // and independently verify the $0.01 payment server-side.
+      const saveWallet = normalizeWallet(paidWallet, walletAddress);
+      const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
+      if (saveIdentity && computedState) {
         try {
           const res = await fetch("/api/pet", {
             method: "POST",
@@ -2692,167 +2579,34 @@ function ClientPageInner() {
               ...saveIdentity,
               state: computedState,
               action: "wheel_spin",
-              wheelReward,
+              wheelReward: segment.id,
               txHash: txHash!,
             }),
           });
           const data = await res.json().catch(() => ({}));
           if (res.ok && data.ok) {
-            saved = true;
-            console.log(`[WHEEL] DB saved ✅ (attempt ${attempt})`);
-          } else if (attempt > 1 && String(data?.error ?? "").includes("already been used")) {
-            // Server only marks a txHash used AFTER a successful save, so
-            // hitting this on a retry (not the first attempt) means an
-            // earlier attempt actually landed and we just never saw its
-            // response — same reasoning as persistPaidCheckin.
-            saved = true;
-            console.log(`[WHEEL] DB already saved by an earlier attempt ✅ (attempt ${attempt})`);
+            console.log("[WHEEL] DB saved ✅");
+            // Only sync walletAddress once the DB actually has this fresh
+            // state — see the setWalletAddress race doc in
+            // handleUnlockAccessory for why this can't run before the save.
+            if (!fid && saveWallet && saveWallet !== walletAddress) {
+              setWalletAddress(saveWallet);
+            }
           } else {
-            lastError = data?.error ?? `HTTP ${res.status}`;
-            console.error(`[WHEEL] DB save rejected (attempt ${attempt}):`, lastError);
-            if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
+            console.error("[WHEEL] DB save rejected:", data?.error ?? res.status);
           }
-        } catch (e: any) {
-          lastError = e?.message ?? String(e);
-          console.error(`[WHEEL] DB save network error (attempt ${attempt}):`, lastError);
-          if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
+        } catch (e) {
+          console.error("[WHEEL] DB save network error", e);
         }
-      }
-
-      if (saved) {
-        clearPendingSpin(identityParam);
-        if (!fid && saveWallet && saveWallet !== walletAddress) {
-          setWalletAddress(saveWallet);
-        }
-      } else {
-        console.error("[WHEEL] DB save failed after 3 attempts:", lastError);
-        // Pending-spin record stays put — the next-mount recovery effect
-        // will pick it up if the app gets closed before another spin
-        // attempt is made.
-      }
-      logTransaction({
-        type: "wheel_spin",
-        txHash: txHash!,
-        amountUsd: WHEEL_USD,
-        wheelReward: label,
-        walletAddress: saveWallet ?? undefined,
-      }, saveIdentity);
-    }
-
-    // Rare Accessory: the actual accessory choice still has to wait for the
-    // player to tap one in the picker (confirmWheelAccessoryChoice handles
-    // that save separately) — that part can't be moved earlier since the
-    // reward genuinely isn't decided yet. We still write a pending-spin
-    // record now so a crash before the player picks isn't a silent total
-    // loss — recovery for the no-items-left fallback grants the same flat
-    // +10 XP consolation used when landing on an empty picker normally.
-    // When items ARE available, we persist the picker's own item list so a
-    // crash before the player taps anything can resurface the SAME picker
-    // on next mount instead of guessing — see the recovery effect below.
-    if (segment.type === "accessoryChoice") {
-      const lockedForStage = getAccessoriesForStage(stageIndex).filter(
-        (a) => !isUnlocked(state.accessories, a.id)
-      );
-
-      if (lockedForStage.length === 0) {
-        const consolationXp = 10;
-        let computedState: PetState | null = null;
-        setState((prev) => {
-          const newState: PetState = { ...prev, xp: prev.xp + consolationXp };
-          computedState = newState;
-          try {
-            window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
-          } catch (e) {
-            console.error("[WHEEL] localStorage failed", e);
-          }
-          return newState;
-        });
-        savePendingSpin(identityParam, { txHash: txHash!, wallet: saveWallet, wheelReward: "xp10", ts: Date.now() });
-        if (computedState) persistWheelReward(computedState, "xp10", `${segment.label} (fallback +${consolationXp} XP)`);
-      } else {
-        savePendingSpin(identityParam, {
+        logTransaction({
+          type: "wheel_spin",
           txHash: txHash!,
-          wallet: saveWallet,
-          wheelReward: "rareaccessory_choice_pending",
-          ts: Date.now(),
-          accessoryChoice: { lockedIds: lockedForStage.map((a) => a.id) },
-        });
+          amountUsd: WHEEL_USD,
+          wheelReward: segment.label,
+          walletAddress: saveWallet ?? undefined,
+        }, saveIdentity);
       }
-
-      // Animate, then reveal — reward (or the picker) is already decided
-      // and, for the no-items-left case, already saved above.
-      setWheelSpinning(true);
-      playSfx("spin");
-      animateWheelTo(index);
-      const SPIN_DURATION_MS = 4200;
-      setTimeout(() => {
-        if (lockedForStage.length === 0) {
-          setWheelResultLabel(`Rare Accessory (already own everything!) — +${10} XP instead`);
-          setLastAction(`🎡 Spin Wheel: already unlocked every Stage ${stageIndex} item — +10 XP instead!`);
-          playSfx("checkin");
-          setWheelSpinning(false);
-          shareWheelWin(`Rare Accessory (+10 XP consolation)`, false, "xp10");
-        } else {
-          setWheelChoiceError(null);
-          setWheelAccessoryChoices(lockedForStage);
-          setWheelChoiceTx({ txHash: txHash!, wallet: saveWallet });
-          setWheelResultLabel(`🌟 Rare Accessory! Pick your Stage ${stageIndex} item below.`);
-          setLastAction("🎡 Spin Wheel: Rare Accessory! Choose your item.");
-          playSfx("unlock");
-          setWheelSpinning(false);
-        }
-      }, SPIN_DURATION_MS);
-      return;
-    }
-
-    // Normal rewards (xp / freeCheckin / streakSave): decide, apply, persist
-    // — all synchronously, right now.
-    let computedState: PetState | null = null;
-    setState((prev) => {
-      const newState: PetState =
-        segment.type === "xp"
-          ? { ...prev, xp: prev.xp + (segment.xp ?? 0) }
-          : segment.type === "freeCheckin"
-          ? { ...prev, freeCheckinCredits: (prev.freeCheckinCredits ?? 0) + 1 }
-          : { ...prev, streakSaveCredits: (prev.streakSaveCredits ?? 0) + 1 };
-      computedState = newState;
-      try {
-        window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
-      } catch (e) {
-        console.error("[WHEEL] localStorage failed", e);
-      }
-      return newState;
-    });
-
-    savePendingSpin(identityParam, { txHash: txHash!, wallet: saveWallet, wheelReward: segment.id, ts: Date.now() });
-    if (computedState) persistWheelReward(computedState, segment.id, segment.label);
-
-    // Animation is now purely cosmetic — it reveals a reward that's
-    // already been saved above, it doesn't gate the save anymore.
-    setWheelSpinning(true);
-    playSfx("spin");
-    animateWheelTo(index);
-    const SPIN_DURATION_MS = 4200;
-    setTimeout(() => {
-      setWheelResultLabel(`You won: ${segment.label}!`);
-      setLastAction(`🎡 Spin Wheel: ${segment.label}!`);
-      playSfx(segment.type === "xp" ? "checkin" : "unlock");
-      setWheelSpinning(false);
-      shareWheelWin(segment.label, false, segment.id);
     }, SPIN_DURATION_MS);
-  }
-
-  // Extracted from the old inline block in doWheelSpin so both the normal
-  // and accessoryChoice paths can trigger the same cosmetic rotation.
-  function animateWheelTo(index: number) {
-    const segAngle = 360 / WHEEL_SEGMENTS.length;
-    const segCenterAngle = index * segAngle + segAngle / 2;
-    const extraSpins = 5 + Math.floor(Math.random() * 3); // 5–7 full spins
-    const currentNormalized = ((wheelRotation % 360) + 360) % 360;
-    const targetNormalized = ((-segCenterAngle % 360) + 360) % 360;
-    let delta = targetNormalized - currentNormalized;
-    if (delta <= 0) delta += 360;
-    setWheelRotation(wheelRotation + extraSpins * 360 + delta);
   }
 
   // ── Rare Accessory picker — confirm choice ────────────────────────────────
@@ -2896,19 +2650,6 @@ function ClientPageInner() {
 
     setWheelChoicePending(true);
     setWheelChoiceError(null);
-
-    // Mark the pending-spin record as "chosen" now, before touching state or
-    // making the request — if a crash happens anywhere from here on, this
-    // stops the recovery effect from reopening the picker (the player
-    // already decided) and instead tells it to just retry saving THIS
-    // specific accessoryId.
-    savePendingSpin(identityParam, {
-      txHash,
-      wallet: saveWallet,
-      wheelReward: "rareaccessory_chosen",
-      ts: Date.now(),
-      accessoryChoice: { lockedIds: [accessoryId], chosenId: accessoryId },
-    });
 
     const unlockXp = getUnlockXp(accessoryId);
     let computedState: PetState | null = null;
@@ -2979,18 +2720,13 @@ function ClientPageInner() {
     if (!saved) {
       // Payment confirmed on-chain but persistence never confirmed after 3
       // tries. Don't claim success — surface the txHash plainly, same as
-      // handleUnlockAccessory's failure path. Pending-spin record stays put
-      // (still marked "rareaccessory_chosen" for this accessoryId) so the
-      // next-mount recovery effect retries this exact save instead of
-      // reopening the picker.
+      // handleUnlockAccessory's failure path.
       setWheelChoiceError(
         `Payment confirmed but saving failed (${lastError}). Your item may disappear on refresh — if so, contact support with tx: ${txHash}`
       );
       setWheelResultLabel(`🎉 Rare Accessory: ${accessory?.name ?? accessoryId}! (save pending — see note below)`);
       return;
     }
-
-    clearPendingSpin(identityParam);
 
     // Only NOW does the DB actually have this wallet's fresh state — see
     // the setWalletAddress race doc in handleUnlockAccessory for why this
