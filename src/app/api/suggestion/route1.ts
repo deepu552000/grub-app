@@ -24,9 +24,7 @@ const MAX_TEXT_LENGTH = 500;
 const MIN_TEXT_LENGTH = 3;
 
 const ISSUE_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
-const SUGGESTION_WINDOW_MS = 24 * 60 * 60 * 1000; // rolling 24h, not calendar-day
-const SUGGESTION_GAP_MS = 12 * 60 * 60 * 1000;     // min gap between the two allowed
-const SUGGESTION_WINDOW_LIMIT = 2;
+const SUGGESTION_DAILY_LIMIT = 2;
 
 export type SuggestionType = "suggestion" | "issue";
 
@@ -98,45 +96,25 @@ export async function POST(req: NextRequest) {
       }
       await kv.set(cooldownKey, Date.now(), { ex: Math.ceil(ISSUE_COOLDOWN_MS / 1000) + 5 });
     } else {
-      // "suggestion" — up to 2 per ROLLING 24h (not a UTC calendar-day reset,
-      // which produced a confusing "wait 19h" instead of a clean 24h — the
-      // reset point used to be midnight UTC regardless of when in the day
-      // the user actually submitted, so the remaining wait depended on the
-      // clock rather than on their own last submission). Also enforces a
-      // minimum 12h gap between the two, so they can't be sent back-to-back.
-      //
-      // Stored as a small array of this identity's own submission timestamps
-      // (max 2 kept), pruned to only ones still inside the 24h window before
-      // every check — so the window always tracks THEIR last submission(s),
-      // not a fixed clock boundary.
-      const timesKey = `suggestion:times:${identity.key}`;
-      const now = Date.now();
-      let times = ((await kv.get<number[]>(timesKey)) ?? []).filter((t) => now - t < SUGGESTION_WINDOW_MS);
-
-      if (times.length >= SUGGESTION_WINDOW_LIMIT) {
-        const oldest = Math.min(...times);
+      // "suggestion" — max 2 per UTC calendar day. Counter key is scoped to
+      // today's date string so it naturally resets at UTC midnight; the ex
+      // (26h) is just cleanup, not the actual reset mechanism.
+      const dayKey = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+      const countKey = `suggestion:cooldown:suggestion:${identity.key}:${dayKey}`;
+      const count = (await kv.get<number>(countKey)) ?? 0;
+      if (count >= SUGGESTION_DAILY_LIMIT) {
+        const tomorrow = new Date();
+        tomorrow.setUTCHours(24, 0, 0, 0); // next UTC midnight
         return NextResponse.json(
           {
             ok: false,
-            error: "You've reached the suggestion limit for now — try again later.",
-            retryAt: oldest + SUGGESTION_WINDOW_MS,
+            error: "You've used today's suggestion limit — try again tomorrow.",
+            retryAt: tomorrow.getTime(),
           },
           { status: 429 },
         );
       }
-      if (times.length === 1 && now - times[0] < SUGGESTION_GAP_MS) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "Please wait a bit before sending another suggestion.",
-            retryAt: times[0] + SUGGESTION_GAP_MS,
-          },
-          { status: 429 },
-        );
-      }
-
-      times.push(now);
-      await kv.set(timesKey, times, { ex: Math.ceil(SUGGESTION_WINDOW_MS / 1000) + 60 });
+      await kv.set(countKey, count + 1, { ex: 60 * 60 * 26 });
     }
 
     // ── Save entry ─────────────────────────────────────────────────────────
