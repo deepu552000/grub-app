@@ -205,12 +205,9 @@ function Badge({ color, bg, children }: { color: string; bg: string; children: R
   );
 }
 
-function Input({ value, onChange, placeholder, onKeyDown, style, dark = true }: {
-  value: string; onChange: (v: string) => void; placeholder?: string; onKeyDown?: React.KeyboardEventHandler; style?: React.CSSProperties; dark?: boolean;
+function Input({ value, onChange, placeholder, onKeyDown, style }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; onKeyDown?: React.KeyboardEventHandler; style?: React.CSSProperties;
 }) {
-  const bg = dark ? C.bg : "#ffffff";
-  const border = dark ? C.border : "#c4b5fd";
-  const text = dark ? C.text : "#1a1a18";
   return (
     <input
       type="text"
@@ -220,10 +217,10 @@ function Input({ value, onChange, placeholder, onKeyDown, style, dark = true }: 
       onKeyDown={onKeyDown}
       style={{
         flex: 1,
-        background: bg,
-        border: `1px solid ${border}`,
+        background: C.bg,
+        border: `1px solid ${C.border}`,
         borderRadius: 8,
-        color: text,
+        color: C.text,
         padding: "8px 12px",
         fontSize: 13,
         outline: "none",
@@ -234,24 +231,20 @@ function Input({ value, onChange, placeholder, onKeyDown, style, dark = true }: 
   );
 }
 
-function NumberInput({ label, value, onChange, dark = true }: { label: string; value: string; onChange: (v: string) => void; dark?: boolean }) {
-  const bg = dark ? C.bg : "#ffffff";
-  const border = dark ? C.border : "#c4b5fd";
-  const text = dark ? C.text : "#1a1a18";
-  const labelColor = dark ? C.creamDim : "#4c1d95";
+function NumberInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <div>
-      <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: labelColor, display: "block", marginBottom: 5 }}>{label}</label>
+      <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamDim, display: "block", marginBottom: 5 }}>{label}</label>
       <input
         type="number"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         style={{
           width: "100%",
-          background: bg,
-          border: `1px solid ${border}`,
+          background: C.bg,
+          border: `1px solid ${C.border}`,
           borderRadius: 8,
-          color: text,
+          color: C.text,
           padding: "7px 10px",
           fontSize: 13,
           boxSizing: "border-box",
@@ -817,9 +810,7 @@ function AdminDashboardInner() {
   const filteredSuggestions = sortedSuggestions
     .filter((s) => {
       if (suggestionStatusFilter === "all") return true;
-      // "Active" = still needs attention — excludes both resolved and
-      // archived so closed-out tickets don't linger in the default view.
-      if (suggestionStatusFilter === "active") return s.status !== "archived" && s.status !== "resolved";
+      if (suggestionStatusFilter === "active") return s.status !== "archived";
       return s.status === suggestionStatusFilter;
     })
     .filter((s) => suggestionTypeFilter === "all" || s.type === suggestionTypeFilter)
@@ -1741,7 +1732,7 @@ function AdminDashboardInner() {
                               ))}
                             </div>
                           )}
-                          {s.status !== "archived" && s.status !== "resolved" && (
+                          {s.status !== "archived" && (
                             <div style={{ display: "flex", gap: 6 }}>
                               <input
                                 type="text"
@@ -1905,7 +1896,6 @@ function AdminDashboardInner() {
                 onChange={setUserSearch}
                 placeholder="Search fid or @username…"
                 style={{ width: 220, fontSize: 12, padding: "6px 10px" }}
-                dark={dark}
               />
             </div>
           </div>
@@ -2057,7 +2047,6 @@ function AdminDashboardInner() {
               onChange={setLookupFid}
               placeholder="Enter FID"
               onKeyDown={(e) => e.key === "Enter" && loadUserControl(lookupFid)}
-              dark={dark}
             />
             <Btn onClick={() => loadUserControl(lookupFid)} disabled={controlLoading || !lookupFid} variant="amber">
               {controlLoading ? "Loading…" : "Load User"}
@@ -2156,7 +2145,7 @@ function AdminDashboardInner() {
                     <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamDim, margin: "0 0 12px" }}>Adjust Stats</p>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginBottom: 12 }}>
                       {(["xp", "bond", "glimmer", "hunger", "happiness"] as const).map((f) => (
-                        <NumberInput key={f} label={f} value={statDrafts[f]} onChange={(v) => setStatDrafts((d) => ({ ...d, [f]: v }))} dark={dark} />
+                        <NumberInput key={f} label={f} value={statDrafts[f]} onChange={(v) => setStatDrafts((d) => ({ ...d, [f]: v }))} />
                       ))}
                     </div>
                     <Btn onClick={() => runAction("adjust_stats", {
@@ -2213,7 +2202,6 @@ function AdminDashboardInner() {
                           value={newReferrerFid}
                           onChange={setNewReferrerFid}
                           placeholder={String(controlState.fid).startsWith("wallet:") ? "Sponsor wallet — full 0x address" : "Sponsor FID"}
-                          dark={dark}
                         />
                         <Btn
                           onClick={() => runAction("edit_referral", { newReferrerFid, triggerPayout: triggerRealPayout })}
@@ -2281,7 +2269,7 @@ function AdminDashboardInner() {
                     <div>
                       <p style={{ fontSize: 10, fontWeight: 600, color: C.green, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>Grant Accessory</p>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <Input value={accessoryToUnlock} onChange={setAccessoryToUnlock} placeholder="accessory id" dark={dark} />
+                        <Input value={accessoryToUnlock} onChange={setAccessoryToUnlock} placeholder="accessory id" />
                         <Btn onClick={() => { runAction("unlock_accessory", { accessoryId: accessoryToUnlock }); setAccessoryToUnlock(""); }}
                           disabled={!accessoryToUnlock} variant="green">
                           Unlock
@@ -2293,7 +2281,7 @@ function AdminDashboardInner() {
                     <div>
                       <p style={{ fontSize: 10, fontWeight: 600, color: C.red, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>Revoke Accessory</p>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <Input value={accessoryToRevoke} onChange={setAccessoryToRevoke} placeholder="accessory id" dark={dark} />
+                        <Input value={accessoryToRevoke} onChange={setAccessoryToRevoke} placeholder="accessory id" />
                         <Btn onClick={() => { runAction("revoke_accessory", { accessoryId: accessoryToRevoke }); setAccessoryToRevoke(""); }}
                           disabled={!accessoryToRevoke} variant="red">
                           Revoke
