@@ -5,12 +5,8 @@
       "schedule": "0 9 * * *"
     },
     {
-      "path": "/api/cron/raffle-lock",
+      "path": "/api/cron/raffle-draw",
       "schedule": "0 0 * * 0"
-    },
-    {
-      "path": "/api/cron/raffle-reveal",
-      "schedule": "0 1 * * 0"
     }
   ]
 }
