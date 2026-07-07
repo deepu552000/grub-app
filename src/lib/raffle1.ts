@@ -142,36 +142,13 @@ function nextSundayUtc(from: number): number {
   return next.getTime();
 }
 
-/**
- * Opens a brand new round if one isn't already open — called by the cron
- * after locking the previous one, and lazily by the purchase route just in
- * case the cron hasn't run yet (e.g. very first deploy).
- *
- * IDs are date-based ("2026-07-07") for readability, but that's only unique
- * under the cron's normal weekly cadence (a full week passes between a
- * round opening and the next one opening). force_draw can lock+reopen on
- * the SAME calendar day, which would otherwise generate the identical id
- * for the new round as the one just locked — colliding on the same KV key
- * (roundKey(id)) and silently overwriting the just-locked round's data
- * (and, since tickets/entrants are keyed by roundId too, carrying its
- * ticket counts into the "new" round). Guard against that by suffixing the
- * id if a round already exists for today's date.
- */
+/** Opens a brand new round if one isn't already open — called by the cron after locking the previous one, and lazily by the purchase route just in case the cron hasn't run yet (e.g. very first deploy). */
 export async function ensureOpenRound(): Promise<RaffleRound> {
   const existing = await getOpenRound();
   if (existing) return existing;
 
   const now = Date.now();
-  let id = new Date(now).toISOString().slice(0, 10);
-  if (await getRound(id)) {
-    // Collision — today's date-id is already taken by a round that was
-    // just locked/voided/resolved. Disambiguate with a short suffix rather
-    // than clobbering it.
-    let suffix = 2;
-    while (await getRound(`${id}-${suffix}`)) suffix++;
-    id = `${id}-${suffix}`;
-  }
-
+  const id = new Date(now).toISOString().slice(0, 10);
   const round: RaffleRound = {
     id,
     status: "open",
