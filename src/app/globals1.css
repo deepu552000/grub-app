@@ -983,14 +983,8 @@ h1 {
 .faq-backdrop {
   position: fixed;
   inset: 0;
-  /* No backdrop-filter here on purpose — blur() forces a full-screen GPU
-     compositing layer that embedded WebViews (Base App, Coinbase Wallet,
-     Farcaster clients) handle poorly. Opening/closing this backdrop a few
-     times was leaking/exhausting GPU memory until the renderer crashed to
-     a black screen, below React — ClientErrorBoundary never even saw it.
-     Slightly darker solid overlay approximates the old blurred look
-     without the GPU cost. */
-  background: rgba(43, 33, 29, 0.6);
+  background: rgba(43, 33, 29, 0.45);
+  backdrop-filter: blur(4px);
   z-index: 100;
   display: flex;
   align-items: flex-end;
@@ -1232,12 +1226,7 @@ h1 {
 }
 
 @keyframes eventBubblePop {
-  /* filter: blur() removed — same GPU compositing cost as backdrop-filter,
-     just on a smaller element. This fires automatically on a timer (see
-     dismissEvent in Client.tsx), so it can run several times per session
-     with no user action at all. Scale/opacity alone gives the same
-     "popping away" feel without creating a new GPU layer each time. */
-  0%   { opacity: 1; transform: scale(1); }
-  40%  { opacity: 0.6; transform: scale(1.08); }
-  100% { opacity: 0; transform: scale(1.4); }
+  0%   { opacity: 1; transform: scale(1); filter: blur(0px); }
+  40%  { opacity: 0.6; transform: scale(1.08); filter: blur(1px); }
+  100% { opacity: 0; transform: scale(1.4); filter: blur(6px); }
 }

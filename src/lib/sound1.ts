@@ -141,23 +141,6 @@ class SoundEngine {
     if (ctx && ctx.state === "suspended") {
       ctx.resume().catch(() => {});
     }
-    // Resume the background <audio> element too, if music was on before
-    // being backgrounded — resume() alone doesn't restart a paused element.
-    if (this.musicPlaying && this.audioEl && this.audioEl.paused) {
-      this.audioEl.play().catch(() => {});
-    }
-  }
-
-  /** Backgrounds the audio engine without tearing anything down — see the
-   *  visibilitychange listener below getEngine(). Safe to call even if
-   *  ctx was never created yet. */
-  suspend() {
-    if (this.ctx && this.ctx.state === "running") {
-      this.ctx.suspend().catch(() => {});
-    }
-    if (this.audioEl && !this.audioEl.paused) {
-      this.audioEl.pause();
-    }
   }
 
   getVolume() {
@@ -459,27 +442,6 @@ let engineSingleton: SoundEngine | null = null;
 function getEngine() {
   if (!engineSingleton) engineSingleton = new SoundEngine();
   return engineSingleton;
-}
-
-// Suspend the AudioContext (and pause the background <audio> element) the
-// moment the app is backgrounded, and resume on foreground. Without this,
-// switching away from the app inside Base App's in-app browser can leave a
-// fully-running AudioContext (oscillators, a MediaElementAudioSourceNode
-// tied to a playing <audio> tag) alive in the background. That's a real
-// resource held open the entire time the app isn't even visible, which
-// only adds to memory/GPU pressure if the user comes back and opens the
-// app again a few times without a full reload in between. Suspend (not
-// close()) because close() is irreversible — a second startMusic() call
-// after close() would silently no-op instead of resuming.
-if (typeof document !== "undefined") {
-  document.addEventListener("visibilitychange", () => {
-    if (!engineSingleton) return;
-    if (document.visibilityState === "hidden") {
-      engineSingleton.suspend();
-    } else {
-      engineSingleton.resume();
-    }
-  });
 }
 
 /** React hook wrapping the singleton SoundEngine with reactive sfx/music/volume/track state. */
