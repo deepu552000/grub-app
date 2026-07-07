@@ -1255,6 +1255,19 @@ function AdminDashboardInner() {
                               <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textSub }}>—</span>
                             )
                           )}
+                          {u.accessoriesUnlocked && u.accessoriesUnlocked.length > 0 && (
+                            <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, minWidth: 0 }}>
+                              {u.accessoriesUnlocked.map((id) => (
+                                <span key={id} title={id} style={{
+                                  fontSize: 10, padding: "2px 8px", borderRadius: 5,
+                                  background: T.bg, border: `1px solid ${dark ? C.amberGlow : "#7c3aed"}55`,
+                                  color: dark ? C.amberGlow : "#7c3aed", fontWeight: 500, whiteSpace: "nowrap",
+                                }}>
+                                  {id}
+                                </span>
+                              ))}
+                            </span>
+                          )}
                           <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textMute, marginLeft: "auto", flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp · {u.totalCheckIns || 0} checkin</span>
                         </div>
                       );
@@ -1307,6 +1320,19 @@ function AdminDashboardInner() {
                             ) : (
                               <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textSub }}>—</span>
                             )
+                          )}
+                          {u.accessoriesUnlocked && u.accessoriesUnlocked.length > 0 && (
+                            <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, minWidth: 0 }}>
+                              {u.accessoriesUnlocked.map((id) => (
+                                <span key={id} title={id} style={{
+                                  fontSize: 10, padding: "2px 8px", borderRadius: 5,
+                                  background: T.bg, border: `1px solid ${dark ? C.amberGlow : "#7c3aed"}55`,
+                                  color: dark ? C.amberGlow : "#7c3aed", fontWeight: 500, whiteSpace: "nowrap",
+                                }}>
+                                  {id}
+                                </span>
+                              ))}
+                            </span>
                           )}
                           <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textMute, marginLeft: "auto", flexShrink: 0 }}>0 xp · 0 checkin</span>
                         </div>

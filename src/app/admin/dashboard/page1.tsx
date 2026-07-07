@@ -38,6 +38,7 @@ type WebhookLogEntry = {
 // Mirrors SuggestionEntry in app/api/suggestion/route.ts — kept as a local
 // copy since that file is server-only (imports @vercel/kv) and can't be
 // imported into this client component.
+type SuggestionMessage = { sender: "user" | "admin"; text: string; ts: number };
 type SuggestionEntry = {
   id: string;
   fid: number | string | null;
@@ -47,6 +48,8 @@ type SuggestionEntry = {
   text: string;
   status: "new" | "seen" | "resolved" | "archived";
   ts: number;
+  messages?: SuggestionMessage[]; // follow-up thread, issue-only
+  unread?: boolean;               // true when user hasn't seen the latest admin reply
 };
 
 type FailedPayout = {
@@ -202,9 +205,12 @@ function Badge({ color, bg, children }: { color: string; bg: string; children: R
   );
 }
 
-function Input({ value, onChange, placeholder, onKeyDown, style }: {
-  value: string; onChange: (v: string) => void; placeholder?: string; onKeyDown?: React.KeyboardEventHandler; style?: React.CSSProperties;
+function Input({ value, onChange, placeholder, onKeyDown, style, dark = true }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; onKeyDown?: React.KeyboardEventHandler; style?: React.CSSProperties; dark?: boolean;
 }) {
+  const bg = dark ? C.bg : "#ffffff";
+  const border = dark ? C.border : "#c4b5fd";
+  const text = dark ? C.text : "#1a1a18";
   return (
     <input
       type="text"
@@ -214,10 +220,10 @@ function Input({ value, onChange, placeholder, onKeyDown, style }: {
       onKeyDown={onKeyDown}
       style={{
         flex: 1,
-        background: C.bg,
-        border: `1px solid ${C.border}`,
+        background: bg,
+        border: `1px solid ${border}`,
         borderRadius: 8,
-        color: C.text,
+        color: text,
         padding: "8px 12px",
         fontSize: 13,
         outline: "none",
@@ -228,20 +234,24 @@ function Input({ value, onChange, placeholder, onKeyDown, style }: {
   );
 }
 
-function NumberInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function NumberInput({ label, value, onChange, dark = true }: { label: string; value: string; onChange: (v: string) => void; dark?: boolean }) {
+  const bg = dark ? C.bg : "#ffffff";
+  const border = dark ? C.border : "#c4b5fd";
+  const text = dark ? C.text : "#1a1a18";
+  const labelColor = dark ? C.creamDim : "#4c1d95";
   return (
     <div>
-      <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.creamDim, display: "block", marginBottom: 5 }}>{label}</label>
+      <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: labelColor, display: "block", marginBottom: 5 }}>{label}</label>
       <input
         type="number"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         style={{
           width: "100%",
-          background: C.bg,
-          border: `1px solid ${C.border}`,
+          background: bg,
+          border: `1px solid ${border}`,
           borderRadius: 8,
-          color: C.text,
+          color: text,
           padding: "7px 10px",
           fontSize: 13,
           boxSizing: "border-box",
@@ -375,6 +385,9 @@ function AdminDashboardInner() {
   const [suggestionStatusFilter, setSuggestionStatusFilter] = useState<"active" | "new" | "resolved" | "archived" | "all">("active");
   const [suggestionTypeFilter, setSuggestionTypeFilter] = useState<"all" | "suggestion" | "issue">("all");
   const [suggestionActionId, setSuggestionActionId] = useState<string | null>(null);
+  // Accordion — only one ticket's full thread/actions open at a time, so a
+  // long list of reports stays scannable instead of everything expanded.
+  const [expandedSuggestionId, setExpandedSuggestionId] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<Record<string, { username: string | null; displayName: string | null }>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -551,6 +564,29 @@ function AdminDashboardInner() {
       addToast(`✓ Marked ${status}`, "success");
     } catch (err: any) {
       addToast(`✕ ${err?.message ?? "Could not update"}`, "error");
+    } finally {
+      setSuggestionActionId(null);
+    }
+  }, [authedPost, addToast]);
+
+  // Reply thread — issue reports only (suggestions stay one-way). Draft text
+  // per ticket id so multiple open threads don't clobber each other.
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const sendSuggestionReply = useCallback(async (id: string, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setSuggestionActionId(id);
+    try {
+      const res = await authedPost("/api/admin/suggestions", { id, reply: trimmed });
+      if (!res?.ok) {
+        addToast(`✕ ${res?.reason ?? "Could not send reply"}`, "error");
+        return;
+      }
+      setSuggestions((prev) => prev.map((s) => (s.id === id ? res.suggestion : s)));
+      setReplyDrafts((prev) => ({ ...prev, [id]: "" }));
+      addToast("✓ Reply sent", "success");
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Could not send reply"}`, "error");
     } finally {
       setSuggestionActionId(null);
     }
@@ -772,10 +808,18 @@ function AdminDashboardInner() {
     return () => { document.title = base; };
   }, [newSuggestionCount]);
   const sortedSuggestions = [...suggestions].sort((a, b) => b.ts - a.ts);
+  // Counts how many non-archived entries share the same identity, so a
+  // repeat reporter is visible at a glance in the list below.
+  const identityActiveCounts = suggestions.reduce<Record<string, number>>((acc, s) => {
+    if (s.status !== "archived") acc[s.identity] = (acc[s.identity] ?? 0) + 1;
+    return acc;
+  }, {});
   const filteredSuggestions = sortedSuggestions
     .filter((s) => {
       if (suggestionStatusFilter === "all") return true;
-      if (suggestionStatusFilter === "active") return s.status !== "archived";
+      // "Active" = still needs attention — excludes both resolved and
+      // archived so closed-out tickets don't linger in the default view.
+      if (suggestionStatusFilter === "active") return s.status !== "archived" && s.status !== "resolved";
       return s.status === suggestionStatusFilter;
     })
     .filter((s) => suggestionTypeFilter === "all" || s.type === suggestionTypeFilter)
@@ -1597,65 +1641,185 @@ function AdminDashboardInner() {
                 s.status === "new" ? C.amberGlow :
                 s.status === "resolved" ? C.green :
                 s.status === "archived" ? T.textMute : C.blue;
+              const isExpanded = expandedSuggestionId === s.id;
+              const snippet = s.text.length > 70 ? `${s.text.slice(0, 70)}…` : s.text;
               return (
                 <div
                   key={s.id}
                   style={{
-                    padding: "12px 16px",
                     borderBottom: `1px solid ${T.borderSub}`,
                     background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55",
                     opacity: s.status === "archived" ? 0.6 : 1,
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  {/* ── Collapsed summary row — click to expand/collapse ── */}
+                  <div
+                    onClick={() => setExpandedSuggestionId(isExpanded ? null : s.id)}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      gap: 10,
+                      flexWrap: "wrap",
+                      padding: "12px 16px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+                      <span style={{ fontSize: 10, color: T.textMute, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s", display: "inline-block" }}>
+                        ▶
+                      </span>
                       <Badge color={s.type === "issue" ? C.red : C.purple} bg={s.type === "issue" ? C.redDim : "#2e1f5e"}>
                         {s.type === "issue" ? "🐛 Issue" : "💡 Suggestion"}
                       </Badge>
+                      <span
+                        title="Ticket reference"
+                        style={{ fontFamily: "monospace", fontSize: 10, color: T.textMute, opacity: 0.8 }}
+                      >
+                        #{s.id.slice(-6)}
+                      </span>
                       <span style={{ fontFamily: "monospace", fontSize: 11, color: dark ? C.amberGlow : "#7c3aed" }}>
                         {displayName}
                       </span>
+                      {identityActiveCounts[s.identity] > 1 && (
+                        <span
+                          title="This person has more than one active report"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "1px 6px",
+                            borderRadius: 999,
+                            background: C.amberGlow + "22",
+                            color: C.amberGlow,
+                          }}
+                        >
+                          {identityActiveCounts[s.identity]}× reports
+                        </span>
+                      )}
                       <span style={{ fontSize: 10, fontWeight: 700, color: statusColor, textTransform: "uppercase", letterSpacing: "0.05em" }}>
                         {s.status}
                       </span>
+                      {!isExpanded && (
+                        <span style={{ fontSize: 12, color: T.textMute, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 320 }}>
+                          {snippet}
+                        </span>
+                      )}
                     </div>
                     <span style={{ fontSize: 11, color: T.creamMute, whiteSpace: "nowrap" }}>{timeAgo(s.ts)}</span>
                   </div>
-                  <p style={{ margin: "8px 0 10px", fontSize: 13, color: T.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                    {s.text}
-                  </p>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {s.status !== "resolved" && (
-                      <button
-                        type="button"
-                        disabled={suggestionActionId === s.id}
-                        onClick={() => markSuggestion(s.id, "resolved")}
-                        style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.green}55`, background: C.greenDim, color: C.green }}
-                      >
-                        ✓ Resolve
-                      </button>
-                    )}
-                    {s.status === "new" && (
-                      <button
-                        type="button"
-                        disabled={suggestionActionId === s.id}
-                        onClick={() => markSuggestion(s.id, "seen")}
-                        style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.blue}55`, background: C.blueDim, color: C.blue }}
-                      >
-                        Mark seen
-                      </button>
-                    )}
-                    {s.status !== "archived" && (
-                      <button
-                        type="button"
-                        disabled={suggestionActionId === s.id}
-                        onClick={() => markSuggestion(s.id, "archived")}
-                        style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${T.border}`, background: "transparent", color: T.textMute }}
-                      >
-                        Archive
-                      </button>
-                    )}
-                  </div>
+
+                  {/* ── Expanded detail — full text, thread, reply, actions ── */}
+                  {isExpanded && (
+                    <div style={{ padding: "0 16px 14px" }}>
+                      <p style={{ margin: "0 0 10px", fontSize: 13, color: T.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                        {s.text}
+                      </p>
+
+                      {/* Two-way thread — issue reports only. Suggestions have no
+                          messages array and skip this block entirely. */}
+                      {s.type === "issue" && (
+                        <div style={{ marginBottom: 10 }}>
+                          {(s.messages ?? []).length > 0 && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                              {(s.messages ?? []).map((m, mi) => (
+                                <div
+                                  key={mi}
+                                  style={{
+                                    alignSelf: m.sender === "admin" ? "flex-end" : "flex-start",
+                                    maxWidth: "85%",
+                                    background: m.sender === "admin" ? "#2e1f5e" : T.surfaceAlt,
+                                    border: `1px solid ${m.sender === "admin" ? "#a78bfa55" : T.border}`,
+                                    borderRadius: 8,
+                                    padding: "6px 10px",
+                                  }}
+                                >
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: m.sender === "admin" ? "#c4b5fd" : T.textMute, marginBottom: 2 }}>
+                                    {m.sender === "admin" ? "You" : displayName}
+                                  </div>
+                                  <div style={{ fontSize: 12.5, color: T.text, whiteSpace: "pre-wrap" }}>{m.text}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {s.status !== "archived" && s.status !== "resolved" && (
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <input
+                                type="text"
+                                value={replyDrafts[s.id] ?? ""}
+                                onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                                placeholder="Reply — e.g. ask for more info…"
+                                style={{
+                                  flex: 1,
+                                  fontSize: 12,
+                                  padding: "6px 8px",
+                                  borderRadius: 6,
+                                  border: `1px solid ${T.border}`,
+                                  background: T.surfaceAlt,
+                                  color: T.text,
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    sendSuggestionReply(s.id, replyDrafts[s.id] ?? "");
+                                  }
+                                }}
+                              />
+                              <button
+                                type="button"
+                                disabled={suggestionActionId === s.id || !(replyDrafts[s.id] ?? "").trim()}
+                                onClick={() => sendSuggestionReply(s.id, replyDrafts[s.id] ?? "")}
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  padding: "6px 12px",
+                                  borderRadius: 6,
+                                  cursor: "pointer",
+                                  border: "1px solid #a78bfa55",
+                                  background: "#2e1f5e",
+                                  color: "#e9d5ff",
+                                }}
+                              >
+                                Reply
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {s.status !== "resolved" && (
+                          <button
+                            type="button"
+                            disabled={suggestionActionId === s.id}
+                            onClick={() => markSuggestion(s.id, "resolved")}
+                            style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.green}55`, background: C.greenDim, color: C.green }}
+                          >
+                            ✓ Resolve
+                          </button>
+                        )}
+                        {s.status === "new" && (
+                          <button
+                            type="button"
+                            disabled={suggestionActionId === s.id}
+                            onClick={() => markSuggestion(s.id, "seen")}
+                            style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.blue}55`, background: C.blueDim, color: C.blue }}
+                          >
+                            Mark seen
+                          </button>
+                        )}
+                        {s.status !== "archived" && (
+                          <button
+                            type="button"
+                            disabled={suggestionActionId === s.id}
+                            onClick={() => markSuggestion(s.id, "archived")}
+                            style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${T.border}`, background: "transparent", color: T.textMute }}
+                          >
+                            Archive
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1741,6 +1905,7 @@ function AdminDashboardInner() {
                 onChange={setUserSearch}
                 placeholder="Search fid or @username…"
                 style={{ width: 220, fontSize: 12, padding: "6px 10px" }}
+                dark={dark}
               />
             </div>
           </div>
@@ -1892,6 +2057,7 @@ function AdminDashboardInner() {
               onChange={setLookupFid}
               placeholder="Enter FID"
               onKeyDown={(e) => e.key === "Enter" && loadUserControl(lookupFid)}
+              dark={dark}
             />
             <Btn onClick={() => loadUserControl(lookupFid)} disabled={controlLoading || !lookupFid} variant="amber">
               {controlLoading ? "Loading…" : "Load User"}
@@ -1990,7 +2156,7 @@ function AdminDashboardInner() {
                     <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamDim, margin: "0 0 12px" }}>Adjust Stats</p>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginBottom: 12 }}>
                       {(["xp", "bond", "glimmer", "hunger", "happiness"] as const).map((f) => (
-                        <NumberInput key={f} label={f} value={statDrafts[f]} onChange={(v) => setStatDrafts((d) => ({ ...d, [f]: v }))} />
+                        <NumberInput key={f} label={f} value={statDrafts[f]} onChange={(v) => setStatDrafts((d) => ({ ...d, [f]: v }))} dark={dark} />
                       ))}
                     </div>
                     <Btn onClick={() => runAction("adjust_stats", {
@@ -2047,6 +2213,7 @@ function AdminDashboardInner() {
                           value={newReferrerFid}
                           onChange={setNewReferrerFid}
                           placeholder={String(controlState.fid).startsWith("wallet:") ? "Sponsor wallet — full 0x address" : "Sponsor FID"}
+                          dark={dark}
                         />
                         <Btn
                           onClick={() => runAction("edit_referral", { newReferrerFid, triggerPayout: triggerRealPayout })}
@@ -2114,7 +2281,7 @@ function AdminDashboardInner() {
                     <div>
                       <p style={{ fontSize: 10, fontWeight: 600, color: C.green, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>Grant Accessory</p>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <Input value={accessoryToUnlock} onChange={setAccessoryToUnlock} placeholder="accessory id" />
+                        <Input value={accessoryToUnlock} onChange={setAccessoryToUnlock} placeholder="accessory id" dark={dark} />
                         <Btn onClick={() => { runAction("unlock_accessory", { accessoryId: accessoryToUnlock }); setAccessoryToUnlock(""); }}
                           disabled={!accessoryToUnlock} variant="green">
                           Unlock
@@ -2126,7 +2293,7 @@ function AdminDashboardInner() {
                     <div>
                       <p style={{ fontSize: 10, fontWeight: 600, color: C.red, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>Revoke Accessory</p>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <Input value={accessoryToRevoke} onChange={setAccessoryToRevoke} placeholder="accessory id" />
+                        <Input value={accessoryToRevoke} onChange={setAccessoryToRevoke} placeholder="accessory id" dark={dark} />
                         <Btn onClick={() => { runAction("revoke_accessory", { accessoryId: accessoryToRevoke }); setAccessoryToRevoke(""); }}
                           disabled={!accessoryToRevoke} variant="red">
                           Revoke
