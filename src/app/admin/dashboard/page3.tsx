@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef, Suspense, Fragment } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
 import { useAuth, useClerk } from "@clerk/nextjs";
 
 type DebugUser = {
@@ -465,7 +465,6 @@ function AdminDashboardInner() {
   const [raffleAdminLoading, setRaffleAdminLoading] = useState(true);
   const [raffleAdminError, setRaffleAdminError] = useState<string | null>(null);
   const [raffleActionLoading, setRaffleActionLoading] = useState<string | null>(null);
-  const [expandedVoidRoundId, setExpandedVoidRoundId] = useState<string | null>(null);
 
   const authedGet = useCallback(async (path: string) => {
     const token = await getToken();
@@ -752,62 +751,6 @@ function AdminDashboardInner() {
       }
     } catch (err: any) {
       addToast(`✕ ${err?.message ?? "Void failed"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadRaffleAdmin]);
-
-  // Refunds one entrant of a voided round — sends real USDC out of the
-  // treasury (same env-configured wallet the referral DEGEN payouts use).
-  // Idempotent server-side via round.refunds, so a repeated click after a
-  // refresh just comes back "already refunded" instead of double-paying.
-  const refundRaffleEntrant = useCallback(async (roundId: string, identityKey: string, amountMicroUsdc: number) => {
-    const amountUsd = (amountMicroUsdc / 1_000_000).toFixed(2);
-    if (!window.confirm(`Refund $${amountUsd} USDC to ${identityKey}? This sends real money from the treasury.`)) return;
-    const loadingKey = `refund_${roundId}_${identityKey}`;
-    setRaffleActionLoading(loadingKey);
-    try {
-      const res = await authedPost("/api/admin/raffle", { action: "refund_entrant", roundId, identityKey });
-      if (res?.ok) {
-        addToast(`✓ Refunded $${amountUsd} to ${identityKey} (tx ${String(res.txHash ?? "").slice(0, 10)}…)`, "success");
-        loadRaffleAdmin();
-      } else {
-        addToast(`✕ ${res?.reason ?? "Refund failed"}`, "error");
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Refund failed"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadRaffleAdmin]);
-
-  // Refunds every entrant of a voided round, one USDC send each. Each
-  // entrant refunds independently server-side — a single bad wallet lookup
-  // or RPC hiccup doesn't block or roll back the others, so check the
-  // partial-failure toast below and retry just the failed ones individually.
-  const refundRaffleAll = useCallback(async (roundId: string, entrantCount: number) => {
-    if (!window.confirm(`Refund ALL ${entrantCount} entrant(s) in round ${roundId}? This sends real USDC from the treasury — one transaction per entrant.`)) return;
-    const loadingKey = `refundall_${roundId}`;
-    setRaffleActionLoading(loadingKey);
-    try {
-      const res = await authedPost("/api/admin/raffle", { action: "refund_all", roundId });
-      if (res?.ok) {
-        const results = res.results ?? [];
-        const okCount = results.filter((r: any) => r.ok).length;
-        const failCount = results.length - okCount;
-        addToast(
-          failCount > 0
-            ? `✓ Refunded ${okCount}/${results.length} — ${failCount} failed (see console + failed-refunds log)`
-            : `✓ Refunded all ${okCount} entrant(s).`,
-          failCount > 0 ? "error" : "success",
-        );
-        if (failCount > 0) console.error("[raffle] refund_all partial failures:", results.filter((r: any) => !r.ok));
-        loadRaffleAdmin();
-      } else {
-        addToast(`✕ ${res?.reason ?? "Refund all failed"}`, "error");
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Refund all failed"}`, "error");
     } finally {
       setRaffleActionLoading(null);
     }
@@ -1774,7 +1717,7 @@ function AdminDashboardInner() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
-                  {["Round", "Status", "Tickets", "Winner", "Prize", "Resolved", "Refunds"].map((h, i) => (
+                  {["Round", "Status", "Tickets", "Winner", "Prize", "Resolved"].map((h, i) => (
                     <th key={h} style={{
                       textAlign: i >= 2 ? "right" : "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700,
                       letterSpacing: "0.06em", textTransform: "uppercase", fontSize: 10,
@@ -1785,114 +1728,18 @@ function AdminDashboardInner() {
               </thead>
               <tbody>
                 {!raffleAdmin?.history?.length ? (
-                  <tr><td colSpan={7} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No rounds resolved yet.</td></tr>
+                  <tr><td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No rounds resolved yet.</td></tr>
                 ) : raffleAdmin.history.map((r: any, i: number) => {
                   const statusColor = r.status === "resolved" ? C.green : r.status === "void" ? C.red : r.status === "no_entrants" ? T.creamMute : C.blue;
-                  const ticketPrice = r.ticketPriceMicroUsdc ?? 100_000;
-                  const entrants = r.entrants ?? []; // only populated by the API for void rounds
-                  const refundedCount = entrants.filter((e: any) => r.refunds?.[e.identityKey]).length;
-                  const isExpanded = expandedVoidRoundId === r.id;
                   return (
-                    <Fragment key={r.id}>
-                      <tr style={{ borderBottom: `1px solid ${T.borderSub}`, background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55" }}>
-                        <td style={{ padding: "9px 14px", fontWeight: 600 }}>{r.id}</td>
-                        <td style={{ padding: "9px 14px", color: statusColor, fontWeight: 700, textTransform: "capitalize" }}>{r.status.replace("_", " ")}</td>
-                        <td style={{ padding: "9px 14px", textAlign: "right" }}>{r.ticketCountAtLock ?? 0}</td>
-                        <td style={{ padding: "9px 14px", textAlign: "right", fontFamily: "monospace", fontSize: 11, color: dark ? C.amberGlow : "#7c3aed" }}>{r.winnerKey ?? "—"}</td>
-                        <td style={{ padding: "9px 14px", textAlign: "right", color: C.amberGlow }}>{r.prizeTier ? `+${r.prizeTier.value} XP` : "—"}</td>
-                        <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute, whiteSpace: "nowrap" }}>{r.resolvedAt ? timeAgo(r.resolvedAt) : r.voidedAt ? timeAgo(r.voidedAt) : "—"}</td>
-                        <td style={{ padding: "9px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
-                          {r.status !== "void" ? (
-                            <span style={{ color: T.textMute }}>—</span>
-                          ) : entrants.length === 0 ? (
-                            <span style={{ color: T.textMute }}>no entrants</span>
-                          ) : (
-                            <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                              <span style={{ color: refundedCount === entrants.length ? C.green : T.textMute, fontSize: 11 }}>
-                                {refundedCount}/{entrants.length} refunded
-                              </span>
-                              <button
-                                onClick={() => setExpandedVoidRoundId(isExpanded ? null : r.id)}
-                                style={{
-                                  background: "transparent", color: dark ? C.amberGlow : "#7c3aed", border: `1px solid ${T.border}`, borderRadius: 6,
-                                  padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer",
-                                }}
-                              >
-                                {isExpanded ? "Hide" : "View"}
-                              </button>
-                              {refundedCount < entrants.length && (
-                                <button
-                                  onClick={() => refundRaffleAll(r.id, entrants.length)}
-                                  disabled={raffleActionLoading === `refundall_${r.id}`}
-                                  style={{
-                                    background: C.red, color: "#fff", border: "none", borderRadius: 6,
-                                    padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
-                                  }}
-                                >
-                                  {raffleActionLoading === `refundall_${r.id}` ? "Refunding…" : "Refund All"}
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                      {isExpanded && r.status === "void" && (
-                        <tr>
-                          <td colSpan={7} style={{ padding: 0, background: dark ? "#0a0a0f" : "#faf7f2" }}>
-                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                              <thead>
-                                <tr>
-                                  {["Identity", "Tickets", "Amount", "Status", ""].map((h, hi) => (
-                                    <th key={h} style={{
-                                      textAlign: hi >= 1 && hi <= 2 ? "right" : "left", padding: "7px 14px 7px 28px",
-                                      color: T.creamMute, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", fontSize: 9,
-                                      borderBottom: `1px solid ${T.borderSub}`,
-                                    }}>{h}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {entrants.map((e: any) => {
-                                  const amountMicroUsdc = e.tickets * ticketPrice;
-                                  const refund = r.refunds?.[e.identityKey];
-                                  const loadingKey = `refund_${r.id}_${e.identityKey}`;
-                                  return (
-                                    <tr key={e.identityKey} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
-                                      <td style={{ padding: "7px 14px 7px 28px", fontFamily: "monospace", fontSize: 11, color: dark ? C.amberGlow : "#7c3aed" }}>{e.identityKey}</td>
-                                      <td style={{ padding: "7px 14px", textAlign: "right" }}>{e.tickets}</td>
-                                      <td style={{ padding: "7px 14px", textAlign: "right", color: C.green }}>${(amountMicroUsdc / 1_000_000).toFixed(2)}</td>
-                                      <td style={{ padding: "7px 14px", textAlign: "right" }}>
-                                        {refund ? (
-                                          <span style={{ color: C.green, fontSize: 10 }} title={refund.txHash}>
-                                            ✓ refunded ({refund.txHash?.slice(0, 8)}…)
-                                          </span>
-                                        ) : (
-                                          <span style={{ color: T.textMute, fontSize: 10 }}>not refunded</span>
-                                        )}
-                                      </td>
-                                      <td style={{ padding: "7px 14px", textAlign: "right" }}>
-                                        {!refund && (
-                                          <button
-                                            onClick={() => refundRaffleEntrant(r.id, e.identityKey, amountMicroUsdc)}
-                                            disabled={raffleActionLoading === loadingKey}
-                                            style={{
-                                              background: "transparent", color: C.red, border: `1px solid ${C.red}`, borderRadius: 6,
-                                              padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
-                                            }}
-                                          >
-                                            {raffleActionLoading === loadingKey ? "Sending…" : "Refund"}
-                                          </button>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
+                    <tr key={r.id} style={{ borderBottom: `1px solid ${T.borderSub}`, background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55" }}>
+                      <td style={{ padding: "9px 14px", fontWeight: 600 }}>{r.id}</td>
+                      <td style={{ padding: "9px 14px", color: statusColor, fontWeight: 700, textTransform: "capitalize" }}>{r.status.replace("_", " ")}</td>
+                      <td style={{ padding: "9px 14px", textAlign: "right" }}>{r.ticketCountAtLock ?? 0}</td>
+                      <td style={{ padding: "9px 14px", textAlign: "right", fontFamily: "monospace", fontSize: 11, color: dark ? C.amberGlow : "#7c3aed" }}>{r.winnerKey ?? "—"}</td>
+                      <td style={{ padding: "9px 14px", textAlign: "right", color: C.amberGlow }}>{r.prizeTier ? `+${r.prizeTier.value} XP` : "—"}</td>
+                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute, whiteSpace: "nowrap" }}>{r.resolvedAt ? timeAgo(r.resolvedAt) : r.voidedAt ? timeAgo(r.voidedAt) : "—"}</td>
+                    </tr>
                   );
                 })}
               </tbody>

@@ -6,10 +6,8 @@
 //        dashboard's new Raffle section.
 //
 //   POST /api/admin/raffle
-//        Body: { action, roundId?, reason?, identityKey? }
-//        action = "force_draw" | "void_round" | "refund_entrant" | "refund_all"
-//        refund_entrant needs identityKey too; refund_all only needs roundId
-//        and only works on a "void" round (sends real USDC out of treasury).
+//        Body: { action, roundId?, reason? }
+//        action = "force_draw" | "void_round"
 //
 // Auth follows the exact same Clerk-session pattern as
 // /api/admin/user-control — see that file if this ever needs to change.
@@ -23,12 +21,10 @@ import {
   getLiveTicketTotal,
   getTicketCount,
   getHistory,
-  getRound,
   lockRound,
   revealRound,
   voidRound,
   ensureOpenRound,
-  refundEntrant,
 } from "@/lib/raffle";
 
 function unauthorized() {
@@ -70,17 +66,9 @@ export async function GET(req: NextRequest) {
       ? { ...awaiting, entrants: await entrantsWithCounts(awaiting.id) }
       : null;
 
-    // Voided rounds need their entrant list surfaced so the dashboard can
-    // show a refund button per entrant (with amount = tickets × price) and
-    // grey out anyone already covered by round.refunds. Skipped for
-    // resolved/no_entrants history entries — nothing to refund there, no
-    // reason to pay for the extra KV round-trips.
     const history = await getHistory();
-    const historyWithEntrants = await Promise.all(
-      history.map(async (r) => (r.status === "void" ? { ...r, entrants: await entrantsWithCounts(r.id) } : r)),
-    );
 
-    return NextResponse.json({ ok: true, open: openDetail, awaitingReveal: awaitingDetail, history: historyWithEntrants });
+    return NextResponse.json({ ok: true, open: openDetail, awaitingReveal: awaitingDetail, history });
   } catch (err: any) {
     console.error("[admin/raffle] GET error:", err);
     return NextResponse.json({ ok: false, reason: err?.message }, { status: 500 });
@@ -92,7 +80,7 @@ export async function POST(req: NextRequest) {
     if (!(await checkAuth(req))) return unauthorized();
 
     const body = await req.json();
-    const { action, roundId, reason, identityKey } = body;
+    const { action, roundId, reason } = body;
 
     // ── Force a draw right now, out of schedule ─────────────────────────
     // Runs the same reveal→lock→open sequence the Sunday cron does. Use
@@ -140,40 +128,6 @@ export async function POST(req: NextRequest) {
       // continue immediately rather than waiting for next Sunday's cron.
       const next = await ensureOpenRound();
       return NextResponse.json({ ok: true, action, voided, newOpenRoundId: next.id });
-    }
-
-    // ── Refund one entrant of a voided round ────────────────────────────
-    // Sends real USDC out of the treasury. Idempotent — refundEntrant()
-    // itself checks round.refunds, so a repeated click (or a double-tap on
-    // a slow connection) is safe and just returns "already refunded".
-    if (action === "refund_entrant") {
-      if (!roundId || !identityKey) {
-        return NextResponse.json({ ok: false, reason: "missing roundId or identityKey" }, { status: 400 });
-      }
-      const result = await refundEntrant(roundId, identityKey);
-      return NextResponse.json({ action, roundId, identityKey, ...result });
-    }
-
-    // ── Refund every entrant of a voided round, one send each ───────────
-    // Each entrant refunds independently — one failure (bad wallet lookup,
-    // RPC hiccup, etc.) doesn't block or roll back the others. Check
-    // `results` for any ok:false entries and retry those individually via
-    // refund_entrant once the underlying issue is fixed.
-    if (action === "refund_all") {
-      if (!roundId) {
-        return NextResponse.json({ ok: false, reason: "missing roundId" }, { status: 400 });
-      }
-      const round = await getRound(roundId);
-      if (!round) {
-        return NextResponse.json({ ok: false, reason: `no round found with id ${roundId}` }, { status: 404 });
-      }
-      const entrants = ((await kv.smembers(`grub:raffle:entrants:${roundId}`)) as string[] | null) ?? [];
-      const results = [];
-      for (const key of entrants) {
-        const result = await refundEntrant(roundId, key);
-        results.push({ identityKey: key, ...result });
-      }
-      return NextResponse.json({ ok: true, action, roundId, results });
     }
 
     return NextResponse.json({ ok: false, reason: `unknown action "${action}"` }, { status: 400 });

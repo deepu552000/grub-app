@@ -34,19 +34,10 @@
 //   grub:raffle:history                   → capped list of resolved rounds
 
 import { kv } from "@vercel/kv";
-import { ethers } from "ethers";
-import { acquireLock, releaseLock, getWalletFromNeynar } from "@/lib/referral";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 export const TICKET_PRICE_MICRO_USDC = 100_000; // $0.10
 export const MAX_TICKETS_PER_USER_PER_ROUND = 3;
-
-// Same USDC contract the purchase route (app/api/raffle/route.ts) verifies
-// incoming payments against — used here for the reverse direction (sending a
-// refund back OUT of the treasury) when an admin voids a round.
-const REFUND_USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-const ERC20_TRANSFER_ABI = ["function transfer(address to, uint256 amount) returns (bool)"];
-const ERC20_TRANSFER_IFACE = new ethers.Interface(ERC20_TRANSFER_ABI);
 
 // Base produces a block roughly every 2s. 300 blocks ≈ 10 minutes — long
 // enough that the block is nowhere near mined at commit time (so the
@@ -99,10 +90,6 @@ export type RaffleRound = {
   resolvedAt?: number;
   voidedAt?: number;
   voidReason?: string;
-  // Per-entrant refund receipts for a voided round — keyed by identityKey
-  // (same key recordTicketPurchase used). Presence of a key here is what
-  // makes refundEntrant() idempotent: a second click can't double-pay.
-  refunds?: Record<string, { txHash: string; amountMicroUsdc: number; wallet: string; refundedAt: number }>;
 };
 
 function roundKey(id: string) {
@@ -395,26 +382,7 @@ export async function getHistory(): Promise<RaffleRound[]> {
   return (await kv.get<RaffleRound[]>(HISTORY_KEY)) ?? [];
 }
 
-/**
- * Turns a raw identityKey (grub:pet:<fid> or grub:pet:wallet:<address>) into
- * a display-safe label for the PUBLIC "previous rounds" list — never expose
- * the raw KV key format to clients. Wallet addresses get shortened the same
- * way the referral dashboard shortens them (shortenAddress in lib/referral.ts);
- * fids show as "fid:1234" since Grub has no public username without a Neynar
- * call, which isn't worth doing just for a small history list.
- */
-export function publicWinnerLabel(identityKey?: string | null): string | null {
-  if (!identityKey) return null;
-  const WALLET_PREFIX = "grub:pet:wallet:";
-  if (identityKey.startsWith(WALLET_PREFIX)) {
-    const addr = identityKey.slice(WALLET_PREFIX.length);
-    return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-  }
-  const fid = identityKey.replace(/^grub:pet:/, "");
-  return `fid:${fid}`;
-}
-
-/** Admin escape hatch — voids an in-flight round without drawing a winner (e.g. a bug is discovered mid-round). Does NOT refund tickets automatically; refundEntrant()/refund_entrant below is the manual per-entrant follow-up step. */
+/** Admin escape hatch — voids an in-flight round without drawing a winner (e.g. a bug is discovered mid-round). Does NOT refund tickets automatically; that's a manual admin step per-entrant if ever needed, same philosophy as your existing admin actions. */
 export async function voidRound(roundId: string, reason: string): Promise<RaffleRound | null> {
   const round = await getRound(roundId);
   if (!round) return null;
@@ -427,182 +395,4 @@ export async function voidRound(roundId: string, reason: string): Promise<Raffle
   await setPointers(next);
   await pushHistory(voided);
   return voided;
-}
-
-// ── Refunds ──────────────────────────────────────────────────────────────────
-// Manual, admin-triggered — voidRound() never auto-refunds. Each entrant in a
-// voided round gets refunded individually (one on-chain send each) so a
-// partial failure only affects that one entrant, not the whole batch.
-
-/**
- * Given a raffle identityKey (same string petKey() produces — either
- * "grub:pet:<fid>" or "grub:pet:wallet:<address>"), resolve the wallet
- * address a refund should be sent to.
- *
- *  - Wallet-based identity: the address IS the identityKey, no lookup needed.
- *  - Fid-based identity: check the ref:<fid>:wallet cache the referral system
- *    already maintains (populated whenever that fid was ever a referrer);
- *    fall back to a live Neynar lookup and cache the result the same way
- *    registerReferral() does, so future refunds/payouts for this fid are free.
- */
-export async function resolveEntrantWallet(identityKey: string): Promise<string | null> {
-  const WALLET_PREFIX = "grub:pet:wallet:";
-  if (identityKey.startsWith(WALLET_PREFIX)) {
-    return identityKey.slice(WALLET_PREFIX.length);
-  }
-
-  const fidStr = identityKey.replace(/^grub:pet:/, "");
-  const fid = Number(fidStr);
-  if (!fid || Number.isNaN(fid)) return null;
-
-  const cached = await kv.get<string>(`ref:${fid}:wallet`);
-  if (cached) return cached;
-
-  const resolved = await getWalletFromNeynar(fid);
-  if (resolved) await kv.set(`ref:${fid}:wallet`, resolved);
-  return resolved;
-}
-
-/**
- * Sends a USDC refund from the treasury wallet. Same broadcast-vs-confirm
- * split as sendDegen() in lib/referral.ts: if tx.wait() throws, the transfer
- * may already be on-chain — the error carries broadcastTxHash so the caller
- * never blindly retries money that already moved.
- */
-async function sendUsdcFromTreasury(toAddress: string, microUsdc: number): Promise<string> {
-  const provider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL ?? "https://mainnet.base.org");
-  const treasury = new ethers.Wallet(process.env.TREASURY_PRIVATE_KEY!, provider);
-  const data = ERC20_TRANSFER_IFACE.encodeFunctionData("transfer", [toAddress, BigInt(microUsdc)]);
-
-  const tx = await treasury.sendTransaction({ to: REFUND_USDC_CONTRACT, data });
-
-  try {
-    await tx.wait();
-  } catch (waitErr: any) {
-    const err = new Error(
-      `Refund broadcast (tx ${tx.hash}) but confirmation failed: ${waitErr?.reason ?? waitErr?.shortMessage ?? waitErr?.message ?? waitErr}. ` +
-      `The USDC may already have been sent — verify tx ${tx.hash} on Basescan before retrying.`,
-    );
-    (err as any).broadcastTxHash = tx.hash;
-    (err as any).originalError = waitErr;
-    throw err;
-  }
-
-  console.log(`[raffle] refunded ${microUsdc} microUSDC to ${toAddress} tx=${tx.hash}`);
-  return tx.hash;
-}
-
-export type FailedRaffleRefund = {
-  id: string;
-  roundId: string;
-  identityKey: string;
-  wallet: string;
-  amountMicroUsdc: number;
-  reason: string;
-  ts: number;
-  broadcastTxHash?: string | null; // present ⇒ verify on Basescan before ever retrying
-};
-
-const FAILED_REFUNDS_KEY = "grub:raffle:failed-refunds";
-
-async function recordFailedRefund(entry: Omit<FailedRaffleRefund, "id" | "ts">): Promise<FailedRaffleRefund> {
-  const record: FailedRaffleRefund = { ...entry, id: `${entry.roundId}:${entry.identityKey}:${Date.now()}`, ts: Date.now() };
-  const list = (await kv.get<FailedRaffleRefund[]>(FAILED_REFUNDS_KEY)) ?? [];
-  list.push(record);
-  await kv.set(FAILED_REFUNDS_KEY, list);
-  console.error(`[raffle] refund FAILED — logged for retry: ${record.id} (${record.reason})`);
-  return record;
-}
-
-export async function getFailedRefunds(): Promise<FailedRaffleRefund[]> {
-  return (await kv.get<FailedRaffleRefund[]>(FAILED_REFUNDS_KEY)) ?? [];
-}
-
-/** Keeps a HISTORY_KEY snapshot in sync after a refund lands, so the admin dashboard's history view (which reads from history, not live round records) reflects refund status without a second read path. */
-async function updateHistoryEntry(round: RaffleRound) {
-  const history = (await kv.get<RaffleRound[]>(HISTORY_KEY)) ?? [];
-  const idx = history.findIndex((r) => r.id === round.id);
-  if (idx === -1) return;
-  history[idx] = round;
-  await kv.set(HISTORY_KEY, history);
-}
-
-export type RefundResult =
-  | { ok: true; txHash: string; amountMicroUsdc: number; wallet: string }
-  | { ok: false; reason: string };
-
-/**
- * Refunds one entrant's tickets in a voided round. Idempotent — a second
- * call for the same (roundId, identityKey) short-circuits on round.refunds
- * rather than sending twice. Only works on "void" rounds: resolved rounds
- * had a real draw (refunding would be wrong), and open/awaiting rounds
- * aren't done yet.
- */
-export async function refundEntrant(roundId: string, identityKey: string): Promise<RefundResult> {
-  const round = await getRound(roundId);
-  if (!round) return { ok: false, reason: "round not found" };
-  if (round.status !== "void") {
-    return { ok: false, reason: `refunds only apply to voided rounds (this round is "${round.status}")` };
-  }
-  if (round.refunds?.[identityKey]) {
-    return { ok: false, reason: "already refunded" };
-  }
-
-  const ticketCount = await getTicketCount(roundId, identityKey);
-  if (ticketCount <= 0) {
-    return { ok: false, reason: "this entrant has no tickets in this round" };
-  }
-  const amountMicroUsdc = ticketCount * round.ticketPriceMicroUsdc;
-
-  const wallet = await resolveEntrantWallet(identityKey);
-  if (!wallet) {
-    return { ok: false, reason: "could not resolve a payout wallet for this entrant" };
-  }
-
-  // Same lock primitive the referral payouts use — stops a double-click (or
-  // a dashboard refresh + re-click race) from sending the refund twice.
-  const lockKey = `grub:raffle:refundlock:${roundId}:${identityKey}`;
-  const gotLock = await acquireLock(lockKey, 30);
-  if (!gotLock) {
-    return { ok: false, reason: "a refund for this entrant is already in progress — try again shortly" };
-  }
-
-  try {
-    let txHash: string;
-    try {
-      txHash = await sendUsdcFromTreasury(wallet, amountMicroUsdc);
-    } catch (err: any) {
-      console.error("[raffle] refundEntrant sendUsdcFromTreasury failed:", err);
-      await recordFailedRefund({
-        roundId,
-        identityKey,
-        wallet,
-        amountMicroUsdc,
-        reason: err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error",
-        broadcastTxHash: err?.broadcastTxHash ?? null,
-      });
-      return {
-        ok: false,
-        reason:
-          "USDC refund failed to send — logged in the failed-refunds list for retry. If a tx hash was broadcast, verify it on Basescan before retrying to avoid a double-refund.",
-      };
-    }
-
-    // Re-fetch fresh before writing back — refunding a DIFFERENT entrant in
-    // this same round concurrently also writes this key, so reading right
-    // before the write (rather than reusing the `round` fetched at the top
-    // of this function) avoids clobbering their refund entry.
-    const fresh = (await getRound(roundId)) ?? round;
-    const updated: RaffleRound = {
-      ...fresh,
-      refunds: { ...(fresh.refunds ?? {}), [identityKey]: { txHash, amountMicroUsdc, wallet, refundedAt: Date.now() } },
-    };
-    await kv.set(roundKey(roundId), updated);
-    await updateHistoryEntry(updated);
-
-    console.log(`[raffle] refunded ${amountMicroUsdc} microUSDC to ${wallet} (round ${roundId}, ${identityKey}) tx=${txHash}`);
-    return { ok: true, txHash, amountMicroUsdc, wallet };
-  } finally {
-    await releaseLock(lockKey);
-  }
 }

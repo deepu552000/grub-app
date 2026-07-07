@@ -27,8 +27,6 @@ import {
   getOpenRound,
   getTicketCount,
   getLiveTicketTotal,
-  getHistory,
-  publicWinnerLabel,
   recordTicketPurchase,
   MAX_TICKETS_PER_USER_PER_ROUND,
   TICKET_PRICE_MICRO_USDC,
@@ -100,21 +98,6 @@ export async function GET(req: NextRequest) {
     const key = petKey(fid, wallet);
     if (key) myTickets = await getTicketCount(round.id, key);
 
-    // getHistory() is already newest-first and only ever contains finalized
-    // rounds (resolved/no_entrants/void — pushHistory() is only called from
-    // those code paths), so no extra filtering needed here. Trim to 10 and
-    // strip everything down to a display-safe shape — raw identityKeys never
-    // leave the server; see publicWinnerLabel().
-    const history = await getHistory();
-    const recentWinners = history.slice(0, 10).map((r) => ({
-      id: r.id,
-      status: r.status,
-      ticketCount: r.ticketCountAtLock ?? 0,
-      winner: publicWinnerLabel(r.winnerKey),
-      prizeTier: r.prizeTier ?? null,
-      resolvedAt: r.resolvedAt ?? r.voidedAt ?? null,
-    }));
-
     return NextResponse.json({
       ok: true,
       round: {
@@ -127,7 +110,6 @@ export async function GET(req: NextRequest) {
       },
       myTickets,
       maxTicketsPerUser: MAX_TICKETS_PER_USER_PER_ROUND,
-      recentWinners,
     });
   } catch (err: any) {
     console.error("[raffle] GET error:", err);
