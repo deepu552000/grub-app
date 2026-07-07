@@ -29,7 +29,6 @@ import {
   voidRound,
   ensureOpenRound,
   refundEntrant,
-  getCurrentBlockNumberSafe,
 } from "@/lib/raffle";
 
 function unauthorized() {
@@ -67,17 +66,8 @@ export async function GET(req: NextRequest) {
     const openDetail = open
       ? { ...open, ticketCount: await getLiveTicketTotal(open.id), entrants: await entrantsWithCounts(open.id) }
       : null;
-    // currentBlock is only fetched here (on-demand, admin-triggered GET) —
-    // never polled — so it costs one extra RPC call per manual dashboard
-    // refresh, not a recurring background cost. Lets the dashboard show
-    // "421/425" progress toward the target block instead of leaving the
-    // admin guessing whether reveal is stuck or just not there yet.
     const awaitingDetail = awaiting
-      ? {
-          ...awaiting,
-          entrants: await entrantsWithCounts(awaiting.id),
-          currentBlock: awaiting.targetBlock ? await getCurrentBlockNumberSafe() : null,
-        }
+      ? { ...awaiting, entrants: await entrantsWithCounts(awaiting.id) }
       : null;
 
     // Voided rounds need their entrant list surfaced so the dashboard can
@@ -131,56 +121,6 @@ export async function POST(req: NextRequest) {
       result.opened = { id: next.id };
 
       return NextResponse.json({ ok: true, action, ...result });
-    }
-
-    // ── Reveal ONLY — does not touch the currently open round ───────────
-    // force_draw (below/above) reveals + locks the open round + opens a new
-    // one, all in one shot — fine for the intended weekly full-cycle use,
-    // but that means retrying a stuck reveal by re-clicking force_draw also
-    // force-locks whatever round is currently open and collecting entries,
-    // even though it isn't done yet. This action is the safe way to retry
-    // just the reveal step. Surfaces the raw RPC error (if any) and the
-    // current/target block numbers so a stuck reveal is diagnosable instead
-    // of silently staying "awaiting reveal" with no explanation.
-    if (action === "force_reveal_only") {
-      const awaiting = await getAwaitingRevealRound();
-      if (!awaiting) {
-        return NextResponse.json({ ok: false, reason: "no round is awaiting reveal" }, { status: 400 });
-      }
-      const currentBlock = await getCurrentBlockNumberSafe();
-      try {
-        const resolved = await revealRound(awaiting);
-        if (!resolved) {
-          const pastTarget = currentBlock != null && awaiting.targetBlock != null && currentBlock >= awaiting.targetBlock;
-          return NextResponse.json({
-            ok: true,
-            action,
-            revealed: null,
-            reason: pastTarget
-              ? "our RPC node returned no block for the target height even though we're past it — likely a lagging/rate-limited RPC node; check server logs and try again in a few seconds"
-              : "target block not yet mined",
-            targetBlock: awaiting.targetBlock,
-            currentBlock,
-          });
-        }
-        return NextResponse.json({
-          ok: true,
-          action,
-          revealed: { id: resolved.id, winnerKey: resolved.winnerKey, prizeTier: resolved.prizeTier },
-        });
-      } catch (err: any) {
-        console.error("[admin/raffle] force_reveal_only RPC error:", err);
-        return NextResponse.json(
-          {
-            ok: false,
-            action,
-            reason: `RPC error while revealing: ${err?.message ?? "unknown error"}`,
-            targetBlock: awaiting.targetBlock,
-            currentBlock,
-          },
-          { status: 502 },
-        );
-      }
     }
 
     // ── Void an in-flight round without drawing a winner ────────────────

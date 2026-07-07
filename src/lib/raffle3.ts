@@ -54,7 +54,7 @@ const ERC20_TRANSFER_IFACE = new ethers.Interface(ERC20_TRANSFER_ABI);
 // well before the NEXT week's cron run comes around to reveal it.
 export const BLOCKS_AHEAD_FOR_DRAW = 300;
 
-const BASE_RPC = process.env.ALCHEMY_BASE_RPC_URL ?? "https://mainnet.base.org";
+const BASE_RPC = "https://mainnet.base.org";
 
 export type PrizeTier = {
   id: string;
@@ -251,24 +251,9 @@ async function rpc(method: string, params: any[]): Promise<any> {
   return json?.result;
 }
 
-export async function getCurrentBlockNumber(): Promise<number> {
+async function getCurrentBlockNumber(): Promise<number> {
   const hex = await rpc("eth_blockNumber", []);
   return parseInt(hex, 16);
-}
-
-/**
- * Same as getCurrentBlockNumber() but never throws — used purely for
- * displaying block-progress in the admin dashboard, where an RPC hiccup
- * should just mean "don't show the counter this refresh", not break the
- * whole raffle admin GET.
- */
-export async function getCurrentBlockNumberSafe(): Promise<number | null> {
-  try {
-    return await getCurrentBlockNumber();
-  } catch (err) {
-    console.error("[raffle] getCurrentBlockNumberSafe failed:", err);
-    return null;
-  }
 }
 
 /** Returns the block hash, or null if that block hasn't been mined yet. */
@@ -485,7 +470,7 @@ export async function resolveEntrantWallet(identityKey: string): Promise<string 
  * never blindly retries money that already moved.
  */
 async function sendUsdcFromTreasury(toAddress: string, microUsdc: number): Promise<string> {
-  const provider = new ethers.JsonRpcProvider(process.env.ALCHEMY_BASE_RPC_URL ?? "https://mainnet.base.org");
+  const provider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL ?? "https://mainnet.base.org");
   const treasury = new ethers.Wallet(process.env.TREASURY_PRIVATE_KEY!, provider);
   const data = ERC20_TRANSFER_IFACE.encodeFunctionData("transfer", [toAddress, BigInt(microUsdc)]);
 

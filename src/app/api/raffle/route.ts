@@ -36,7 +36,7 @@ import {
 
 const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const RECIPIENT = "0xCF8A44059652DB5Af8B4CB62938c5DC6916eB082";
-const BASE_RPC = "https://mainnet.base.org";
+const BASE_RPC = process.env.ALCHEMY_BASE_RPC_URL ?? "https://mainnet.base.org";
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 async function verifyUsdcTransfer(

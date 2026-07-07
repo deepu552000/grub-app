@@ -736,29 +736,6 @@ function AdminDashboardInner() {
     }
   }, [authedPost, addToast, loadRaffleAdmin]);
 
-  // Reveals a stuck "awaiting reveal" round WITHOUT locking/opening the
-  // currently-open round — safe to click repeatedly while waiting on the
-  // target block, unlike Force Draw Now which also force-locks whatever
-  // round is open right now.
-  const forceRevealOnly = useCallback(async () => {
-    setRaffleActionLoading("force_reveal_only");
-    try {
-      const res = await authedPost("/api/admin/raffle", { action: "force_reveal_only" });
-      if (res?.ok && res.revealed) {
-        addToast("✓ Round revealed.", "success");
-      } else if (res?.ok) {
-        addToast(`ℹ ${res?.reason ?? "Not revealed yet"}${res?.currentBlock != null ? ` (block ${res.currentBlock}/${res.targetBlock})` : ""}`, "error");
-      } else {
-        addToast(`✕ ${res?.reason ?? "Force reveal failed"}`, "error");
-      }
-      loadRaffleAdmin();
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Force reveal failed"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadRaffleAdmin]);
-
   // Voids an in-flight round without drawing a winner. Does not auto-refund
   // entrants — same philosophy as the rest of the admin toolkit.
   const voidRaffleRound = useCallback(async (roundId: string) => {
@@ -1711,18 +1688,6 @@ function AdminDashboardInner() {
           >
             {raffleActionLoading === "force_draw" ? "Drawing…" : "⚡ Force Draw Now"}
           </button>
-          {raffleAdmin?.awaitingReveal && (
-            <button
-              onClick={forceRevealOnly}
-              disabled={raffleActionLoading === "force_reveal_only"}
-              style={{
-                background: C.purple, color: "#fff", border: "none", borderRadius: 8,
-                padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
-              }}
-            >
-              {raffleActionLoading === "force_reveal_only" ? "Revealing…" : "🔮 Force Reveal Only"}
-            </button>
-          )}
           {raffleAdmin?.open && (
             <button
               onClick={() => voidRaffleRound(raffleAdmin.open.id)}
@@ -1796,19 +1761,7 @@ function AdminDashboardInner() {
         {/* Awaiting-reveal round detail, only shown when one exists */}
         {raffleAdmin?.awaitingReveal && (
           <div style={{ background: T.surface, border: `1px solid ${C.purple}`, borderRadius: 12, padding: "12px 16px", marginBottom: "1rem", fontSize: 12, color: T.textMute }}>
-            Round {raffleAdmin.awaitingReveal.id} locked with {raffleAdmin.awaitingReveal.ticketCountAtLock ?? 0} ticket(s).
-            {" "}Target block {raffleAdmin.awaitingReveal.targetBlock ?? "—"}
-            {raffleAdmin.awaitingReveal.currentBlock != null && raffleAdmin.awaitingReveal.targetBlock != null && (
-              <>
-                {" "}· currently at <b style={{ color: raffleAdmin.awaitingReveal.currentBlock >= raffleAdmin.awaitingReveal.targetBlock ? C.green : T.textMute }}>
-                  {raffleAdmin.awaitingReveal.currentBlock}/{raffleAdmin.awaitingReveal.targetBlock}
-                </b>
-                {raffleAdmin.awaitingReveal.currentBlock >= raffleAdmin.awaitingReveal.targetBlock
-                  ? " (past target — safe to Force Reveal Only)"
-                  : ` (${raffleAdmin.awaitingReveal.targetBlock - raffleAdmin.awaitingReveal.currentBlock} blocks left)`}
-              </>
-            )}
-            {" "}— will reveal automatically once that block is mined, or click Force Reveal Only above (updates on manual Refresh, not automatically).
+            Round {raffleAdmin.awaitingReveal.id} locked with {raffleAdmin.awaitingReveal.ticketCountAtLock ?? 0} ticket(s), target block {raffleAdmin.awaitingReveal.targetBlock ?? "—"} — will reveal automatically once that block is mined (or use Force Draw above).
           </div>
         )}
 
