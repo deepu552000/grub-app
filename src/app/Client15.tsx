@@ -269,54 +269,6 @@ function pendingSpinKey(identity: string | null): string {
   return `grub:pending-spin:${identity ?? "anon"}`;
 }
 
-// ── Pending Raffle ticket recovery ──────────────────────────────────────
-// Same shape/reasoning as the Spin Wheel's pending-spin record above: the
-// payment can confirm on-chain and then the app can get suspended/killed
-// (mobile webview) before the /api/raffle POST that actually records the
-// ticket lands. Keyed by txHash for the same reason wheel spins are — a
-// player can buy up to 3 tickets in a round, so more than one purchase can
-// be in flight/unresolved at once, and each needs its own recovery slot.
-function pendingRaffleKey(identity: string | null): string {
-  return `grub:pending-raffle:${identity ?? "anon"}`;
-}
-
-type PendingRaffleTicket = { txHash: string; wallet: string | null; roundId: string; ts: number };
-
-function readPendingRaffleRaw(identity: string | null): Record<string, PendingRaffleTicket> {
-  try {
-    const raw = window.localStorage.getItem(pendingRaffleKey(identity));
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-function writePendingRaffleRaw(identity: string | null, entries: Record<string, PendingRaffleTicket>) {
-  try {
-    if (Object.keys(entries).length === 0) {
-      window.localStorage.removeItem(pendingRaffleKey(identity));
-    } else {
-      window.localStorage.setItem(pendingRaffleKey(identity), JSON.stringify(entries));
-    }
-  } catch (e) {
-    console.error("[RAFFLE] pending-ticket write failed", e);
-  }
-}
-function savePendingRaffleTicket(identity: string | null, entry: PendingRaffleTicket) {
-  const entries = readPendingRaffleRaw(identity);
-  entries[entry.txHash] = entry;
-  writePendingRaffleRaw(identity, entries);
-}
-function clearPendingRaffleTicket(identity: string | null, txHash: string) {
-  const entries = readPendingRaffleRaw(identity);
-  if (entries[txHash]) {
-    delete entries[txHash];
-    writePendingRaffleRaw(identity, entries);
-  }
-}
-function readAllPendingRaffleTickets(identity: string | null): PendingRaffleTicket[] {
-  return Object.values(readPendingRaffleRaw(identity)).sort((a, b) => a.ts - b.ts);
-}
-
 type PendingSpin = {
   txHash: string;
   wallet: string | null;
@@ -1696,45 +1648,6 @@ function ClientPageInner() {
   const [wheelChoicePending, setWheelChoicePending] = useState(false);
   const [wheelChoiceError, setWheelChoiceError] = useState<string | null>(null);
 
-  // ── Raffle state ─────────────────────────────────────────────────────────
-  const RAFFLE_USD = 0.10; // $0.10 per ticket, matches TICKET_PRICE_MICRO_USDC server-side
-  const raffleSectionRef = useRef<HTMLElement>(null);
-  const [raffleOpen, setRaffleOpen] = useState(false);
-  const [raffleLoading, setRaffleLoading] = useState(false);
-  const [raffleRound, setRaffleRound] = useState<{
-    id: string;
-    status: string;
-    ticketPriceMicroUsdc: number;
-    locksAt: number;
-    ticketCount: number;
-  } | null>(null);
-  const [raffleMyTickets, setRaffleMyTickets] = useState(0);
-  const [raffleMaxTickets, setRaffleMaxTickets] = useState(3);
-  const [raffleRecentWinners, setRaffleRecentWinners] = useState<
-    Array<{ id: string; status: string; ticketCount: number; winner: string | null; prizeTier: { id: string; type: string; value: number } | null; resolvedAt: number | null }>
-  >([]);
-  const [raffleBuying, setRaffleBuying] = useState(false);
-  const [raffleError, setRaffleError] = useState<string | null>(null);
-  const [raffleMessage, setRaffleMessage] = useState<string | null>(null);
-  const [raffleInfoOpen, setRaffleInfoOpen] = useState(false);
-  // Ticks every 30s purely to re-render the countdown — locksAt itself
-  // never changes client-side, this just forces the "Xd Yh Zm" string to
-  // recompute without a full data refetch.
-  const [raffleCountdownTick, setRaffleCountdownTick] = useState(0);
-
-  // ── Raffle Promo Banner ─────────────────────────────────────────────────
-  // Announces the new Raffle feature. Same session-only dismiss pattern as
-  // the Spin Wheel banner above, deliberately styled distinctly (gold/
-  // ticket theme vs. the wheel's purple) so the two "NEW" banners don't
-  // read as duplicates if a player hasn't dismissed either yet.
-  const [raffleBannerDismissed, setRaffleBannerDismissed] = useState(false);
-  const showRaffleBanner = !raffleBannerDismissed;
-
-  function dismissRaffleBanner() {
-    setRaffleBannerDismissed(true);
-  }
-
-
   // ── Referral Festival Banner ──────────────────────────────────────────────
   // Today (29 Jun): teaser. 30 Jun–2 Jul: live festival. After: hidden.
   // Session-only dismiss — banner reappears every time they open the app during festival
@@ -2148,7 +2061,7 @@ function ClientPageInner() {
   // saves under the wrong (null) identity and the unlock/checkin is lost on
   // refresh — this was the root cause of the "accessory reverts to locked
   // after refresh" bug.
-  async function sendUsdcPayment(usdAmount: number, purpose: "checkin" | "accessory" | "wheel" | "raffle", accessoryId?: string): Promise<{ txHash: string; walletAddress: string | null }> {
+  async function sendUsdcPayment(usdAmount: number, purpose: "checkin" | "accessory" | "wheel", accessoryId?: string): Promise<{ txHash: string; walletAddress: string | null }> {
     console.log("[PAYMENT] start, amount:", usdAmount, "purpose:", purpose);
 
     // Build ERC-20 transfer(address,uint256) calldata — shared by both paths.
@@ -3568,14 +3481,13 @@ function ClientPageInner() {
   // dropped every wallet-only purchase from the txn log (unlock/checkin still
   // succeeded and persisted to KV — only this log write was skipped).
   function logTransaction(entry: {
-    type: "accessory_unlock" | "checkin" | "wheel_spin" | "raffle_ticket";
+    type: "accessory_unlock" | "checkin" | "wheel_spin";
     txHash: string;
     amountUsd: number;
     accessoryId?: string;
     accessoryName?: string;
     walletAddress?: string;
     wheelReward?: string;
-    roundId?: string;
   }, identity: { fid?: string | number | null; wallet?: string | null }) {
     const logFid = identity.fid ?? (identity.wallet ? `wallet:${identity.wallet}` : null);
     if (!logFid) return;
@@ -3603,176 +3515,6 @@ function ClientPageInner() {
       }
       console.error("[TXN-LOG] failed to log transaction after 3 attempts:", entry);
     })();
-  }
-
-  // ── Raffle ────────────────────────────────────────────────────────────────
-  // GET is cheap and side-effect-free (server lazily opens a round if none
-  // exists yet), so it's safe to call on mount, whenever the block is
-  // opened, and after every buy — no separate "did I already fetch" guard
-  // needed.
-  const fetchRaffleStatus = useCallback(async () => {
-    setRaffleLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (fid) params.set("fid", String(fid));
-      if (walletAddress) params.set("wallet", walletAddress);
-      const res = await fetch(`/api/raffle?${params.toString()}`);
-      const data = await res.json().catch(() => null);
-      if (res.ok && data?.ok) {
-        setRaffleRound(data.round);
-        setRaffleMyTickets(data.myTickets ?? 0);
-        setRaffleMaxTickets(data.maxTicketsPerUser ?? 3);
-        setRaffleRecentWinners(data.recentWinners ?? []);
-      } else {
-        console.error("[RAFFLE] status fetch failed:", data?.error);
-      }
-    } catch (e) {
-      console.error("[RAFFLE] status fetch network error:", e);
-    } finally {
-      setRaffleLoading(false);
-    }
-  }, [fid, walletAddress]);
-
-  // Retries the /api/raffle POST for a ticket whose payment already
-  // confirmed on-chain but whose server-side record never landed. Shared by
-  // both the normal buy flow (below) and the recovery effect that runs on
-  // mount for any leftover pending tickets from a previous session — same
-  // "verify already happened, just get the write to stick" shape as
-  // persistWheelReward.
-  async function persistRaffleTicket(txHash: string, saveWallet: string | null): Promise<boolean> {
-    const saveIdentity = fid ? { fid } : saveWallet ? { wallet: saveWallet } : null;
-    if (!saveIdentity) return false;
-    let lastError = "";
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const res = await fetch("/api/raffle", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...saveIdentity, txHash }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.ok) {
-          console.log(`[RAFFLE] ticket saved ✅ (attempt ${attempt})`);
-          logTransaction({ type: "raffle_ticket", txHash, amountUsd: RAFFLE_USD, walletAddress: saveWallet ?? undefined }, saveIdentity);
-          return true;
-        }
-        if (attempt > 1 && String(data?.error ?? "").includes("already been used")) {
-          // Same reasoning as persistWheelReward — a txHash only gets
-          // marked used AFTER a successful save, so this means an earlier
-          // attempt actually landed and we just missed its response.
-          console.log(`[RAFFLE] ticket already saved by an earlier attempt ✅ (attempt ${attempt})`);
-          return true;
-        }
-        lastError = data?.error ?? `HTTP ${res.status}`;
-        console.error(`[RAFFLE] ticket save rejected (attempt ${attempt}):`, lastError);
-      } catch (e: any) {
-        lastError = e?.message ?? String(e);
-        console.error(`[RAFFLE] ticket save network error (attempt ${attempt}):`, lastError);
-      }
-      if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
-    }
-    console.error("[RAFFLE] ticket save failed after 3 attempts:", lastError);
-    return false;
-  }
-
-  async function buyRaffleTicket() {
-    if (raffleBuying) return;
-    setRaffleError(null);
-    setRaffleMessage(null);
-
-    if (raffleRound && raffleRound.status !== "open") {
-      setRaffleError("Raffle isn't open for entries right now — check back soon.");
-      return;
-    }
-    if (raffleMyTickets >= raffleMaxTickets) {
-      setRaffleError(`You already have the max ${raffleMaxTickets} tickets for this round.`);
-      return;
-    }
-
-    setRaffleBuying(true);
-    let txHash: string | null = null;
-    let paidWallet: string | null = null;
-    try {
-      const paymentResult = await sendUsdcPayment(RAFFLE_USD, "raffle");
-      txHash = paymentResult.txHash;
-      paidWallet = paymentResult.walletAddress;
-      if (!txHash) throw new Error("Payment returned no transaction hash. Purchase aborted.");
-    } catch (err: any) {
-      console.error("[RAFFLE] payment failed:", err);
-      const msg: string = err?.message ?? String(err);
-      if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel")) {
-        setRaffleError("Cancelled. Tap Buy Ticket to try again.");
-      } else if (msg.toLowerCase().includes("wallet") || msg.toLowerCase().includes("connect")) {
-        setRaffleError("No wallet connected. Open in Farcaster to pay.");
-      } else {
-        setRaffleError(`Payment failed: ${msg.slice(0, 80)}`);
-      }
-      setRaffleBuying(false);
-      return;
-    }
-
-    // Payment confirmed on-chain — write the recovery record BEFORE
-    // attempting the save, same ordering as the wheel, so a kill mid-save
-    // still leaves a record the next-mount recovery effect can find.
-    const saveWallet = normalizeWallet(paidWallet, walletAddress);
-    savePendingRaffleTicket(identityParam, { txHash, wallet: saveWallet, roundId: raffleRound?.id ?? "", ts: Date.now() });
-
-    const saved = await persistRaffleTicket(txHash, saveWallet);
-    if (saved) {
-      clearPendingRaffleTicket(identityParam, txHash);
-      if (!fid && saveWallet && saveWallet !== walletAddress) setWalletAddress(saveWallet);
-      setRaffleMessage("🎟️ Ticket purchased! Good luck.");
-      setLastAction("🎟️ Raffle: bought a ticket");
-      playSfx("checkin");
-      await fetchRaffleStatus();
-    } else {
-      // Pending record stays put — recovered on next mount if the app gets
-      // closed before another attempt. Payment already went through, so
-      // this is not silently lost, just delayed.
-      setRaffleError("Payment confirmed, but saving your ticket is taking longer than usual. It'll be recovered automatically — check back in a moment.");
-    }
-    setRaffleBuying(false);
-  }
-
-  // Recovery — runs once identity is known, picks up any tickets whose
-  // payment cleared in a previous session but never got confirmed saved.
-  useEffect(() => {
-    if (!identityParam) return;
-    const pending = readAllPendingRaffleTickets(identityParam);
-    if (pending.length === 0) return;
-    (async () => {
-      for (const p of pending) {
-        const saved = await persistRaffleTicket(p.txHash, p.wallet);
-        if (saved) clearPendingRaffleTicket(identityParam, p.txHash);
-      }
-      fetchRaffleStatus();
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [identityParam]);
-
-  // Initial load + refresh whenever the block is opened.
-  useEffect(() => {
-    if (!raffleOpen) return;
-    fetchRaffleStatus();
-  }, [raffleOpen, fetchRaffleStatus]);
-
-  // Countdown ticker — 30s resolution is plenty for a "days/hours" display.
-  useEffect(() => {
-    const id = setInterval(() => setRaffleCountdownTick((t) => t + 1), 30_000);
-    return () => clearInterval(id);
-  }, []);
-
-  function raffleCountdownLabel(): string {
-    if (!raffleRound?.locksAt) return "—";
-    const ms = raffleRound.locksAt - Date.now();
-    if (ms <= 0) return "Drawing soon…";
-    const totalMinutes = Math.floor(ms / 60_000);
-    const days = Math.floor(totalMinutes / (60 * 24));
-    const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
-    const minutes = totalMinutes % 60;
-    if (days > 0) return `${days}d ${hours}h until draw`;
-    if (hours > 0) return `${hours}h ${minutes}m until draw`;
-    return `${minutes}m until draw`;
   }
 
   // Accessory unlock cost — stage-aware pricing on Base. Routed through the
@@ -4387,84 +4129,6 @@ function ClientPageInner() {
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); dismissWheelBanner(); }}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
-                flexShrink: 0,
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
-        {/* ── RAFFLE PROMO BANNER ── */}
-        {showRaffleBanner && (
-          <div
-            onClick={() => {
-              setRaffleOpen(true);
-              requestAnimationFrame(() => {
-                raffleSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-              });
-            }}
-            style={{
-              position: "relative",
-              margin: "8px 8px 0",
-              padding: "12px 14px",
-              background: "#fff8e6",
-              border: "1.5px dashed #b45309",
-              borderRadius: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              cursor: "pointer",
-              overflow: "hidden",
-              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
-            }}
-          >
-            <span
-              style={{
-                position: "absolute",
-                top: 7,
-                right: -26,
-                transform: "rotate(35deg)",
-                background: "#e63946",
-                color: "#fff",
-                fontSize: "0.6rem",
-                fontWeight: 800,
-                padding: "2px 28px",
-                letterSpacing: 0.5,
-              }}
-            >
-              NEW
-            </span>
-            <span
-              style={{
-                fontSize: "1.3rem",
-                lineHeight: 1,
-                flexShrink: 0,
-                width: 34,
-                height: 34,
-                borderRadius: "50%",
-                background: "#b45309",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              🎟️
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#49332d", marginBottom: 1 }}>
-                Raffle is live!
-              </div>
-              <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
-                $0.10 a ticket, drawn every Sunday — winner picked from an on-chain block hash.
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); dismissRaffleBanner(); }}
               style={{
                 background: "none", border: "none", cursor: "pointer",
                 color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
@@ -5294,158 +4958,6 @@ function ClientPageInner() {
                   ))}
                 </div>
               </section>
-            </div>
-          )}
-        </section>
-
-        {/* ── RAFFLE ── */}
-        <section ref={raffleSectionRef} className="stats-collapsible" style={{ marginTop: 8 }}>
-          <button
-            type="button"
-            className="stats-toggle"
-            onClick={() => setRaffleOpen((o) => !o)}
-          >
-            <span>🎟️ Raffle · $0.10</span>
-            <span className="stats-chevron">{raffleOpen ? "▲" : "▼"}</span>
-          </button>
-
-          {raffleOpen && (
-            <div
-              className="stats-body"
-              style={{ display: "flex", flexDirection: "column", gap: 12, padding: "14px 10px" }}
-            >
-              {/* Countdown — first thing you see when the block opens */}
-              <div
-                style={{
-                  textAlign: "center",
-                  background: "#fff7ed",
-                  border: "1px solid #fdba74",
-                  borderRadius: 10,
-                  padding: "8px 10px",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: "#9a3412",
-                }}
-              >
-                {raffleRound?.status === "open"
-                  ? `⏳ ${raffleCountdownLabel()}`
-                  : raffleLoading
-                    ? "Loading round…"
-                    : "⏳ Drawing soon — new round opens shortly"}
-              </div>
-
-              {/* Ticket status row */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, color: "#49332d", fontWeight: 600 }}>
-                <span>Round {raffleRound?.id ?? "—"} · {raffleRound?.ticketCount ?? 0} ticket{(raffleRound?.ticketCount ?? 0) === 1 ? "" : "s"} sold</span>
-                <span>You: {raffleMyTickets}/{raffleMaxTickets}</span>
-              </div>
-
-              {/* Buy button */}
-              <button
-                type="button"
-                onClick={buyRaffleTicket}
-                disabled={raffleBuying || raffleRound?.status !== "open" || raffleMyTickets >= raffleMaxTickets}
-                style={{
-                  width: "100%",
-                  background: raffleBuying || raffleRound?.status !== "open" || raffleMyTickets >= raffleMaxTickets ? "#d6d3d1" : "#f59e0b",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 10,
-                  padding: "11px",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: raffleBuying ? "wait" : "pointer",
-                }}
-              >
-                {raffleBuying
-                  ? "Buying…"
-                  : raffleMyTickets >= raffleMaxTickets
-                    ? "Max tickets reached"
-                    : `🎟️ Buy Ticket · $${RAFFLE_USD.toFixed(2)}`}
-              </button>
-
-              {raffleError && (
-                <div style={{ fontSize: 12, color: "#b91c1c", fontWeight: 600, textAlign: "center" }}>{raffleError}</div>
-              )}
-              {raffleMessage && (
-                <div style={{ fontSize: 12, color: "#15803d", fontWeight: 600, textAlign: "center" }}>{raffleMessage}</div>
-              )}
-
-              {/* How it works — collapsible FAQ */}
-              <div style={{ borderTop: "1px solid #eee", paddingTop: 10 }}>
-                <button
-                  type="button"
-                  onClick={() => setRaffleInfoOpen((o) => !o)}
-                  style={{
-                    width: "100%",
-                    background: "transparent",
-                    border: "none",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    fontSize: 12,
-                    fontWeight: 700,
-                    color: "#7c3aed",
-                    cursor: "pointer",
-                    padding: 0,
-                  }}
-                >
-                  <span>ℹ️ How the raffle works</span>
-                  <span>{raffleInfoOpen ? "▲" : "▼"}</span>
-                </button>
-                {raffleInfoOpen && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: "#57534e", lineHeight: 1.6 }}>
-                    <p style={{ margin: "0 0 6px" }}>
-                      Every ticket is $0.10 on Base, up to {raffleMaxTickets} per person per round. More tickets = better odds, not a bigger prize — everyone who wins gets the same tier.
-                    </p>
-                    <p style={{ margin: "0 0 6px" }}>
-                      The round closes every Sunday. The winner is picked from a Base block hash committed to before the block exists — so the outcome can't be known or influenced by anyone, including us, until it's mined.
-                    </p>
-                    <p style={{ margin: 0 }}>
-                      1+ ticket sold gets a small XP prize; 7+ tickets sold in the round bumps it to a bigger XP prize. If nobody buys a ticket, that round just rolls over with no winner.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Previous rounds / winners */}
-              <div style={{ borderTop: "1px solid #eee", paddingTop: 10 }}>
-                <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "#a8a29e", margin: "0 0 8px" }}>
-                  Previous rounds
-                </p>
-                {raffleRecentWinners.length === 0 ? (
-                  <p style={{ fontSize: 12, color: "#a8a29e", margin: 0 }}>No rounds closed yet.</p>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {raffleRecentWinners.map((r) => (
-                      <div
-                        key={r.id}
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: 12,
-                          color: "#49332d",
-                          background: "#fafaf9",
-                          border: "1px solid #eee",
-                          borderRadius: 8,
-                          padding: "6px 10px",
-                        }}
-                      >
-                        <span>{r.id}</span>
-                        <span>
-                          {r.status === "resolved" && r.winner
-                            ? `🏆 ${r.winner} +${r.prizeTier?.value ?? 0} XP`
-                            : r.status === "no_entrants"
-                              ? "No entrants"
-                              : r.status === "void"
-                                ? "Voided"
-                                : "—"}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
           )}
         </section>
@@ -6337,10 +5849,6 @@ const faqSections = [
   {
     title: "🎡 Spin Wheel",
     content: "Spin the wheel for $0.01 (USDC on Base) and win a reward:\n\n• +1 XP — 29%\n• +2 XP — 24%\n• +3 XP — 19%\n• +5 XP — 8%\n• +10 XP — 7%\n• Free Check-in — 5% (waives tomorrow's $0.01 check-in)\n• Streak Save — 5% (auto-protects your streak the next time you miss a day)\n• 🌟 Rare Accessory — 3% (pick ANY not-yet-unlocked accessory for your cat's current stage, free — if you already own everything for that stage, you get +10 XP instead)\n\nBanked Free Check-ins and Streak Saves stack up and are used automatically — a Free Check-in is applied the next time you check in, and a Streak Save kicks in automatically if you ever miss a day.",
-  },
-  {
-    title: "🎟️ Raffle",
-    content: "Buy raffle tickets for $0.10 each (USDC on Base), up to 3 per person per round.\n\nHow it works:\n• Every round runs for one week, closing each Sunday\n• More tickets = better odds, but the prize is the same for whoever wins\n• The winner is picked using a Base block hash committed to before that block is mined — nobody, including us, can know or influence the outcome ahead of time\n• If a round gets 1+ ticket sold, the winner gets a small XP prize; 7+ tickets sold bumps that to a bigger XP prize\n• A round with zero tickets sold has no winner and simply rolls into the next week\n\nCheck the Raffle block's 'Previous rounds' list to see past winners and results.",
   },
   {
     title: "⚠️ Going Feral",

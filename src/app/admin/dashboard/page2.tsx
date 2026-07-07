@@ -123,19 +123,6 @@ function timeAgo(ts: number): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-// Same idea as timeAgo but for a FUTURE timestamp — used for the raffle's
-// open-round lock countdown, which timeAgo can't express (it only ever
-// reads "Xm ago").
-function timeUntil(ts: number): string {
-  const diff = ts - Date.now();
-  if (diff <= 0) return "any moment";
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ${mins % 60}m`;
-  return `${Math.floor(hrs / 24)}d ${hrs % 24}h`;
-}
-
 function shortAddr(s?: string): string {
   if (!s) return "";
   return s.length > 10 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
@@ -461,10 +448,6 @@ function AdminDashboardInner() {
   const [accessoryToUnlock, setAccessoryToUnlock] = useState("");
   const [newReferrerFid, setNewReferrerFid] = useState("");
   const [triggerRealPayout, setTriggerRealPayout] = useState(false);
-  const [raffleAdmin, setRaffleAdmin] = useState<any>(null);
-  const [raffleAdminLoading, setRaffleAdminLoading] = useState(true);
-  const [raffleAdminError, setRaffleAdminError] = useState<string | null>(null);
-  const [raffleActionLoading, setRaffleActionLoading] = useState<string | null>(null);
 
   const authedGet = useCallback(async (path: string) => {
     const token = await getToken();
@@ -689,72 +672,6 @@ function AdminDashboardInner() {
   useEffect(() => {
     load();
   }, [load]);
-
-  // ── Raffle admin data — independent of the main load(), same reasoning
-  // as the treasury/pool fetch above: a raffle hiccup shouldn't block the
-  // rest of the dashboard from loading.
-  const loadRaffleAdmin = useCallback(async () => {
-    setRaffleAdminLoading(true);
-    setRaffleAdminError(null);
-    try {
-      const res = await authedGet("/api/admin/raffle");
-      if (res?.reason === "Unauthorized" || res?.ok === false) {
-        setRaffleAdminError(res?.reason ?? "Failed to load raffle data");
-        return;
-      }
-      setRaffleAdmin(res);
-    } catch (err: any) {
-      setRaffleAdminError(err?.message ?? "Failed to load raffle data");
-    } finally {
-      setRaffleAdminLoading(false);
-    }
-  }, [authedGet]);
-
-  useEffect(() => {
-    loadRaffleAdmin();
-  }, [loadRaffleAdmin]);
-
-  // Runs the same reveal→lock→open sequence the Sunday cron does, out of
-  // schedule. Safe to click any time — each step is a no-op if there's
-  // nothing for it to do.
-  const forceDrawRaffle = useCallback(async () => {
-    if (!window.confirm("Force a raffle draw right now? This reveals any round awaiting reveal, locks the current open round, and opens a new one.")) return;
-    setRaffleActionLoading("force_draw");
-    try {
-      const res = await authedPost("/api/admin/raffle", { action: "force_draw" });
-      if (res?.ok) {
-        addToast("✓ Raffle draw forced.", "success");
-        loadRaffleAdmin();
-      } else {
-        addToast(`✕ ${res?.reason ?? "Force draw failed"}`, "error");
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Force draw failed"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadRaffleAdmin]);
-
-  // Voids an in-flight round without drawing a winner. Does not auto-refund
-  // entrants — same philosophy as the rest of the admin toolkit.
-  const voidRaffleRound = useCallback(async (roundId: string) => {
-    const reason = window.prompt(`Void round ${roundId}? Tickets are NOT auto-refunded. Enter a reason:`);
-    if (reason === null) return;
-    setRaffleActionLoading(`void_${roundId}`);
-    try {
-      const res = await authedPost("/api/admin/raffle", { action: "void_round", roundId, reason: reason || "voided by admin" });
-      if (res?.ok) {
-        addToast(`✓ Round ${roundId} voided.`, "success");
-        loadRaffleAdmin();
-      } else {
-        addToast(`✕ ${res?.reason ?? "Void failed"}`, "error");
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Void failed"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadRaffleAdmin]);
 
   // Resolve FID -> Farcaster username/displayName once users are loaded.
   // Only fetches fids we don't already have cached.
@@ -1591,154 +1508,6 @@ function AdminDashboardInner() {
                           ↗ view
                         </a>
                       </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* ── Raffle ── */}
-        <SectionLabel dark={dark} accent="#fbbf24">🎟️ Raffle</SectionLabel>
-        {raffleAdminError && (
-          <div style={{ background: C.redDim, border: `1px solid ${C.red}`, borderRadius: 10, padding: "10px 14px", marginBottom: "1rem", color: C.red, fontSize: 12 }}>
-            {raffleAdminError}
-          </div>
-        )}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: "1rem" }}>
-          {[
-            { key: "open", label: "Open Round", value: raffleAdmin?.open?.id ?? "—", color: "#fbbf24" },
-            { key: "tickets", label: "Tickets Sold (open)", value: raffleAdmin?.open?.ticketCount ?? 0, color: C.green },
-            { key: "entrants", label: "Entrants (open)", value: raffleAdmin?.open?.entrants?.length ?? 0, color: C.blue },
-            { key: "awaiting", label: "Awaiting Reveal", value: raffleAdmin?.awaitingReveal?.id ?? "none", color: C.purple },
-          ].map((card) => (
-            <div key={card.key} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 14px" }}>
-              <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 6px" }}>{card.label}</p>
-              <p style={{ fontSize: 18, fontWeight: 800, color: card.color, margin: 0, fontVariantNumeric: "tabular-nums" }}>{String(card.value)}</p>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ display: "flex", gap: 10, marginBottom: "1rem", flexWrap: "wrap" }}>
-          <button
-            onClick={forceDrawRaffle}
-            disabled={raffleActionLoading === "force_draw"}
-            style={{
-              background: "#fbbf24", color: "#1a1305", border: "none", borderRadius: 8,
-              padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
-            }}
-          >
-            {raffleActionLoading === "force_draw" ? "Drawing…" : "⚡ Force Draw Now"}
-          </button>
-          {raffleAdmin?.open && (
-            <button
-              onClick={() => voidRaffleRound(raffleAdmin.open.id)}
-              disabled={raffleActionLoading === `void_${raffleAdmin.open.id}`}
-              style={{
-                background: "transparent", color: C.red, border: `1px solid ${C.red}`, borderRadius: 8,
-                padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
-              }}
-            >
-              {raffleActionLoading === `void_${raffleAdmin.open.id}` ? "Voiding…" : `Void Open Round (${raffleAdmin.open.id})`}
-            </button>
-          )}
-          {raffleAdmin?.awaitingReveal && (
-            <button
-              onClick={() => voidRaffleRound(raffleAdmin.awaitingReveal.id)}
-              disabled={raffleActionLoading === `void_${raffleAdmin.awaitingReveal.id}`}
-              style={{
-                background: "transparent", color: C.red, border: `1px solid ${C.red}`, borderRadius: 8,
-                padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
-              }}
-            >
-              {raffleActionLoading === `void_${raffleAdmin.awaitingReveal.id}` ? "Voiding…" : `Void Awaiting-Reveal (${raffleAdmin.awaitingReveal.id})`}
-            </button>
-          )}
-          <button
-            onClick={loadRaffleAdmin}
-            disabled={raffleAdminLoading}
-            style={{
-              background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 8,
-              padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
-            }}
-          >
-            {raffleAdminLoading ? "Loading…" : "↻ Refresh"}
-          </button>
-        </div>
-
-        {/* Entrants — open round */}
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1rem" }}>
-          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
-            <span style={{ fontSize: 12, color: T.textMute }}>
-              Entrants — open round {raffleAdmin?.open?.id ?? ""} {raffleAdmin?.open?.locksAt ? `· locks in ${timeUntil(raffleAdmin.open.locksAt)}` : ""}
-            </span>
-          </div>
-          <div style={{ overflowX: "auto", maxHeight: 240, overflowY: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
-                  {["Identity", "Tickets"].map((h, i) => (
-                    <th key={h} style={{
-                      textAlign: i >= 1 ? "right" : "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700,
-                      letterSpacing: "0.06em", textTransform: "uppercase", fontSize: 10,
-                      borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt,
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {!raffleAdmin?.open?.entrants?.length ? (
-                  <tr><td colSpan={2} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No entrants yet this round.</td></tr>
-                ) : raffleAdmin.open.entrants.map((e: any, i: number) => (
-                  <tr key={e.identityKey} style={{ borderBottom: `1px solid ${T.borderSub}`, background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55" }}>
-                    <td style={{ padding: "9px 14px", fontFamily: "monospace", color: dark ? C.amberGlow : "#7c3aed", fontSize: 11 }}>{e.identityKey}</td>
-                    <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 700, color: C.green }}>{e.tickets}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Awaiting-reveal round detail, only shown when one exists */}
-        {raffleAdmin?.awaitingReveal && (
-          <div style={{ background: T.surface, border: `1px solid ${C.purple}`, borderRadius: 12, padding: "12px 16px", marginBottom: "1rem", fontSize: 12, color: T.textMute }}>
-            Round {raffleAdmin.awaitingReveal.id} locked with {raffleAdmin.awaitingReveal.ticketCountAtLock ?? 0} ticket(s), target block {raffleAdmin.awaitingReveal.targetBlock ?? "—"} — will reveal automatically once that block is mined (or use Force Draw above).
-          </div>
-        )}
-
-        {/* History */}
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
-            <span style={{ fontSize: 12, color: T.textMute }}>Round History</span>
-          </div>
-          <div style={{ overflowX: "auto", maxHeight: 280, overflowY: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
-                  {["Round", "Status", "Tickets", "Winner", "Prize", "Resolved"].map((h, i) => (
-                    <th key={h} style={{
-                      textAlign: i >= 2 ? "right" : "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700,
-                      letterSpacing: "0.06em", textTransform: "uppercase", fontSize: 10,
-                      borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt,
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {!raffleAdmin?.history?.length ? (
-                  <tr><td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No rounds resolved yet.</td></tr>
-                ) : raffleAdmin.history.map((r: any, i: number) => {
-                  const statusColor = r.status === "resolved" ? C.green : r.status === "void" ? C.red : r.status === "no_entrants" ? T.creamMute : C.blue;
-                  return (
-                    <tr key={r.id} style={{ borderBottom: `1px solid ${T.borderSub}`, background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55" }}>
-                      <td style={{ padding: "9px 14px", fontWeight: 600 }}>{r.id}</td>
-                      <td style={{ padding: "9px 14px", color: statusColor, fontWeight: 700, textTransform: "capitalize" }}>{r.status.replace("_", " ")}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right" }}>{r.ticketCountAtLock ?? 0}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", fontFamily: "monospace", fontSize: 11, color: dark ? C.amberGlow : "#7c3aed" }}>{r.winnerKey ?? "—"}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: C.amberGlow }}>{r.prizeTier ? `+${r.prizeTier.value} XP` : "—"}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute, whiteSpace: "nowrap" }}>{r.resolvedAt ? timeAgo(r.resolvedAt) : r.voidedAt ? timeAgo(r.voidedAt) : "—"}</td>
                     </tr>
                   );
                 })}

@@ -3,10 +3,6 @@
     {
       "path": "/api/cron/hunger-alert",
       "schedule": "0 9 * * *"
-    },
-    {
-      "path": "/api/cron/raffle-draw",
-      "schedule": "0 0 * * 0"
     }
   ]
 }
