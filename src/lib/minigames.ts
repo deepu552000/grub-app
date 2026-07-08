@@ -97,6 +97,31 @@ async function adjustBalance(identityKey: string, delta: number): Promise<number
   return next;
 }
 
+// ── Manual credit log (admin top-ups) ───────────────────────────────────
+export type CreditHistoryEntry = {
+  id: string;
+  identityKey: string;
+  amountDegen: number;
+  reason: string;
+  newBalance: number;
+  ts: number;
+};
+
+const CREDIT_HISTORY_KEY = "grub:minigames:credithistory";
+const MAX_LOGGED_CREDITS = 200; // trim so this key doesn't grow unbounded
+
+async function logCredit(entry: CreditHistoryEntry) {
+  const list = (await kv.get<CreditHistoryEntry[]>(CREDIT_HISTORY_KEY)) ?? [];
+  list.unshift(entry);
+  if (list.length > MAX_LOGGED_CREDITS) list.length = MAX_LOGGED_CREDITS;
+  await kv.set(CREDIT_HISTORY_KEY, list);
+}
+
+export async function getCreditHistory(limit = 50): Promise<CreditHistoryEntry[]> {
+  const list = (await kv.get<CreditHistoryEntry[]>(CREDIT_HISTORY_KEY)) ?? [];
+  return list.slice(0, limit);
+}
+
 /**
  * Admin-only top-up — the only way DEGEN gets INTO a player's internal
  * balance today is this, or a raffle DEGEN prize being routed here instead
@@ -106,6 +131,14 @@ async function adjustBalance(identityKey: string, delta: number): Promise<number
 export async function creditBalance(identityKey: string, amountDegen: number, reason: string): Promise<number> {
   const next = await adjustBalance(identityKey, amountDegen);
   console.log(`[minigames] credited ${amountDegen} DEGEN to ${identityKey} (${reason}) — new balance ${next}`);
+  await logCredit({
+    id: randomBytes(8).toString("hex"),
+    identityKey,
+    amountDegen,
+    reason,
+    newBalance: next,
+    ts: Date.now(),
+  });
   return next;
 }
 
