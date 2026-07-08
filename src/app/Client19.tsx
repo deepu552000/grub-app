@@ -1703,9 +1703,7 @@ function ClientPageInner() {
   const [raffleLoading, setRaffleLoading] = useState(false);
 
   // ── Coin Toss (Mini Games) state ─────────────────────────────────────────
-  const minigamesSectionRef = useRef<HTMLElement>(null);
-  const [minigamesOpen, setMinigamesOpen] = useState(false);
-  const cointossSectionRef = useRef<HTMLDivElement>(null);
+  const cointossSectionRef = useRef<HTMLElement>(null);
   const [cointossOpen, setCointossOpen] = useState(false);
   const [cointossConfig, setCointossConfig] = useState<{ enabled: boolean; minBetDegen: number; maxBetDegen: number; feePercentOnWin: number } | null>(null);
   const [cointossBalance, setCointossBalance] = useState(0);
@@ -4604,7 +4602,6 @@ function ClientPageInner() {
         {showCointossBanner && (
           <div
             onClick={() => {
-              setMinigamesOpen(true);
               setCointossOpen(true);
               requestAnimationFrame(() => {
                 cointossSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -4614,8 +4611,8 @@ function ClientPageInner() {
               position: "relative",
               margin: "8px 8px 0",
               padding: "12px 14px",
-              background: "#fff8e6",
-              border: "1.5px dashed #b45309",
+              background: "#1a1a1a",
+              border: "1.5px dashed #dc2626",
               borderRadius: 12,
               display: "flex",
               alignItems: "center",
@@ -4631,8 +4628,8 @@ function ClientPageInner() {
                 top: 7,
                 right: -26,
                 transform: "rotate(35deg)",
-                background: "#e63946",
-                color: "#fff",
+                background: "#facc15",
+                color: "#1a1a1a",
                 fontSize: "0.6rem",
                 fontWeight: 800,
                 padding: "2px 28px",
@@ -4649,7 +4646,7 @@ function ClientPageInner() {
                 width: 34,
                 height: 34,
                 borderRadius: "50%",
-                background: "#b45309",
+                background: "#dc2626",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -4658,16 +4655,56 @@ function ClientPageInner() {
               🪙
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#49332d", marginBottom: 1 }}>
+              <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#fff", marginBottom: 1 }}>
                 Mini Games: Coin Toss is live!
               </div>
-              <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
+              <div style={{ fontSize: "0.70rem", color: "#d4d4d4" }}>
                 Bet DEGEN, call heads or tails, double your bet instantly.
               </div>
             </div>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); dismissCointossBanner(); }}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "#a3a3a3", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
+                flexShrink: 0,
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* ── CLOSET / ACCESSORY XP BANNER ── */}
+        {showAccessoryBanner && (
+          <div
+            onClick={() => setClosetOpen(true)}
+            style={{
+              margin: "8px 8px 0",
+              padding: "10px 14px",
+              background: "linear-gradient(135deg, rgba(110,210,190,0.28), rgba(70,180,190,0.20))",
+              border: "1.5px solid rgba(30,140,140,0.35)",
+              borderRadius: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              cursor: "pointer",
+              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
+            }}
+          >
+            <span style={{ fontSize: "1.3rem", lineHeight: 1, flexShrink: 0 }}>👗</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#49332d", marginBottom: 1 }}>
+                Dress up Grub & earn XP
+              </div>
+              <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
+                Buy an accessory in the Closet for one-time XP, plus daily XP for every day it's equipped!
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); dismissAccessoryBanner(); }}
               style={{
                 background: "none", border: "none", cursor: "pointer",
                 color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
@@ -5623,60 +5660,37 @@ function ClientPageInner() {
           )}
         </section>
 
-        {/* ── MINI GAMES ──
-            Parent block for all mini games. Each game (Coin Toss, and any
-            future additions) lives as its own nested collapsible inside
-            here — add new games by copying the Coin Toss <div> pattern
-            below and giving it its own open/close state + ref. */}
-        <section ref={minigamesSectionRef} className="stats-collapsible" style={{ marginTop: 8 }}>
+        {/* ── COIN TOSS ── */}
+        <section ref={cointossSectionRef} className="stats-collapsible" style={{ marginTop: 8 }}>
           <button
             type="button"
             className="stats-toggle"
-            onClick={() => setMinigamesOpen((o) => !o)}
+            onClick={() => setCointossOpen((o) => !o)}
+            style={{ background: "#1a1a1a", color: "#fff" }}
           >
-            <span>🎮 Mini Games</span>
-            <span className="stats-chevron">{minigamesOpen ? "▲" : "▼"}</span>
+            <span>🪙 Coin Toss</span>
+            <span className="stats-chevron" style={{ color: "#fff" }}>{cointossOpen ? "▲" : "▼"}</span>
           </button>
 
-          {minigamesOpen && (
+          {cointossOpen && (
             <div
               className="stats-body"
-              style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 8px" }}
+              style={{ display: "flex", flexDirection: "column", gap: 12, padding: "14px 10px", background: "#1a1a1a", borderRadius: "0 0 12px 12px" }}
             >
-              {/* ── Coin Toss (game 1) ── */}
-              <div
-                ref={cointossSectionRef}
-                className="stats-collapsible"
-                style={{ border: "1px solid #eee0d8", borderRadius: 10, overflow: "hidden" }}
-              >
-                <button
-                  type="button"
-                  className="stats-toggle"
-                  onClick={() => setCointossOpen((o) => !o)}
-                >
-                  <span>🪙 Coin Toss</span>
-                  <span className="stats-chevron">{cointossOpen ? "▲" : "▼"}</span>
-                </button>
-
-                {cointossOpen && (
-                  <div
-                    className="stats-body"
-                    style={{ display: "flex", flexDirection: "column", gap: 12, padding: "14px 10px" }}
-                  >
-                    {!cointossConfig?.enabled && cointossConfig && (
-                <div style={{ textAlign: "center", fontSize: 12, color: "#92400e", fontWeight: 700, background: "#fef3c7", borderRadius: 8, padding: "8px 10px" }}>
+              {!cointossConfig?.enabled && cointossConfig && (
+                <div style={{ textAlign: "center", fontSize: 12, color: "#facc15", fontWeight: 700, background: "#2a2a2a", borderRadius: 8, padding: "8px 10px" }}>
                   ⏸ Coin Toss is paused right now — check back soon.
                 </div>
               )}
 
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, color: "#49332d", fontWeight: 600 }}>
-                <span>Balance: <b style={{ color: "#b45309" }}>{cointossBalance.toFixed(1)} DEGEN</b></span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, color: "#d4d4d4", fontWeight: 600 }}>
+                <span>Balance: <b style={{ color: "#facc15" }}>{cointossBalance.toFixed(1)} DEGEN</b></span>
                 {cointossConfig && <span>Bet: {cointossConfig.minBetDegen}–{cointossConfig.maxBetDegen} · Fee {cointossConfig.feePercentOnWin}% on wins</span>}
               </div>
 
-              {/* Coin — cat-face coin = heads, paw-print coin = tails.
-                  Real coin art (public/coins/coin-heads.png / coin-tails.png)
-                  on a CSS 3D flip. */}
+              {/* Coin — kitty face = heads, paw print = tails. Simple CSS 3D
+                  flip using existing emoji/art rather than new dedicated
+                  assets — swap in real art here later if you want. */}
               <div style={{ display: "flex", justifyContent: "center", padding: "8px 0", perspective: 600 }}>
                 <div
                   style={{
@@ -5692,32 +5706,24 @@ function ClientPageInner() {
                 >
                   <div style={{
                     position: "absolute", inset: 0, borderRadius: "50%", backfaceVisibility: "hidden",
-                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: "linear-gradient(135deg, #facc15, #f59e0b)", display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 36, border: "3px solid #dc2626", boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
                   }}>
-                    <img
-                      src="/coins/coin-heads.png"
-                      alt="Heads — cat face coin"
-                      draggable={false}
-                      style={{ width: "100%", height: "100%", objectFit: "contain", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.25))" }}
-                    />
+                    🐱
                   </div>
                   <div style={{
                     position: "absolute", inset: 0, borderRadius: "50%", backfaceVisibility: "hidden",
-                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: "linear-gradient(135deg, #facc15, #f59e0b)", display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 36, border: "3px solid #dc2626", boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
                     transform: "rotateY(180deg)",
                   }}>
-                    <img
-                      src="/coins/coin-tails.png"
-                      alt="Tails — paw print coin"
-                      draggable={false}
-                      style={{ width: "100%", height: "100%", objectFit: "contain", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.25))" }}
-                    />
+                    🐾
                   </div>
                 </div>
               </div>
 
               {cointossLastResult && !cointossFlipping && (
-                <div style={{ textAlign: "center", fontSize: 13, fontWeight: 800, color: cointossLastResult.won ? "#16a34a" : "#dc2626" }}>
+                <div style={{ textAlign: "center", fontSize: 13, fontWeight: 800, color: cointossLastResult.won ? "#4ade80" : "#f87171" }}>
                   {cointossLastResult.result === "heads" ? "🐱 Heads" : "🐾 Tails"} — {cointossLastResult.won ? `You won ${cointossLastResult.payoutDegen.toFixed(1)} DEGEN!` : "You lost this one."}
                 </div>
               )}
@@ -5732,9 +5738,9 @@ function ClientPageInner() {
                     disabled={cointossFlipping}
                     style={{
                       flex: 1, maxWidth: 120, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                      border: `2px solid ${cointossChoice === c ? "#f59e0b" : "#eee0d8"}`,
-                      background: cointossChoice === c ? "#f59e0b" : "#fff",
-                      color: cointossChoice === c ? "#fff" : "#49332d",
+                      border: `2px solid ${cointossChoice === c ? "#facc15" : "#3f3f3f"}`,
+                      background: cointossChoice === c ? "#facc15" : "#2a2a2a",
+                      color: cointossChoice === c ? "#1a1a1a" : "#d4d4d4",
                       cursor: cointossFlipping ? "default" : "pointer",
                     }}
                   >
@@ -5744,7 +5750,7 @@ function ClientPageInner() {
               </div>
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, color: "#49332d" }}>Bet:</span>
+                <span style={{ fontSize: 12, color: "#d4d4d4" }}>Bet:</span>
                 <input
                   type="number"
                   value={cointossBet}
@@ -5752,9 +5758,9 @@ function ClientPageInner() {
                   min={cointossConfig?.minBetDegen ?? 10}
                   max={cointossConfig?.maxBetDegen ?? 50}
                   disabled={cointossFlipping}
-                  style={{ width: 80, background: "#fff", color: "#49332d", border: "1px solid #eee0d8", borderRadius: 6, padding: "6px 8px", fontSize: 13, textAlign: "center" }}
+                  style={{ width: 80, background: "#2a2a2a", color: "#fff", border: "1px solid #3f3f3f", borderRadius: 6, padding: "6px 8px", fontSize: 13, textAlign: "center" }}
                 />
-                <span style={{ fontSize: 12, color: "#49332d" }}>DEGEN</span>
+                <span style={{ fontSize: 12, color: "#d4d4d4" }}>DEGEN</span>
               </div>
 
               <button
@@ -5763,14 +5769,14 @@ function ClientPageInner() {
                 disabled={cointossFlipping || !cointossConfig?.enabled || cointossBalance < cointossBet}
                 style={{
                   padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 800, border: "none",
-                  background: cointossFlipping || !cointossConfig?.enabled || cointossBalance < cointossBet ? "#d6d3d1" : "#f59e0b",
+                  background: cointossFlipping || !cointossConfig?.enabled ? "#7f1d1d" : "#dc2626",
                   color: "#fff", cursor: cointossFlipping || !cointossConfig?.enabled ? "default" : "pointer",
                 }}
               >
                 {cointossFlipping ? "🪙 Flipping…" : `🪙 Toss for ${cointossBet} DEGEN`}
               </button>
               {cointossBalance < cointossBet && (
-                <div style={{ textAlign: "center", fontSize: 11, color: "#dc2626" }}>Not enough balance for that bet.</div>
+                <div style={{ textAlign: "center", fontSize: 11, color: "#f87171" }}>Not enough balance for that bet.</div>
               )}
 
               {/* Recent flips ticker */}
@@ -5783,7 +5789,7 @@ function ClientPageInner() {
                       style={{
                         flexShrink: 0, width: 22, height: 22, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
                         fontSize: 11, fontWeight: 800, color: "#fff",
-                        background: f.won ? "#16a34a" : "#dc2626",
+                        background: f.won ? "#166534" : "#7f1d1d",
                       }}
                     >
                       {f.won ? "W" : "L"}
@@ -5793,38 +5799,33 @@ function ClientPageInner() {
               )}
 
               {/* Cash-out */}
-              <div style={{ borderTop: "1px solid #eee0d8", paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={{ fontSize: 11, color: "#8a7060", fontWeight: 700 }}>Cash out to your wallet</span>
+              <div style={{ borderTop: "1px solid #3f3f3f", paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: 11, color: "#a3a3a3", fontWeight: 700 }}>Cash out to your wallet</span>
                 <div style={{ display: "flex", gap: 6 }}>
                   <input
                     type="text"
                     placeholder="0xYourWallet..."
                     value={cointossCashoutWallet}
                     onChange={(e) => setCointossCashoutWallet(e.target.value)}
-                    style={{ flex: 2, background: "#fff", color: "#49332d", border: "1px solid #eee0d8", borderRadius: 6, padding: "6px 8px", fontSize: 12 }}
+                    style={{ flex: 2, background: "#2a2a2a", color: "#fff", border: "1px solid #3f3f3f", borderRadius: 6, padding: "6px 8px", fontSize: 12 }}
                   />
                   <input
                     type="number"
                     placeholder="Amount"
                     value={cointossCashoutAmount || ""}
                     onChange={(e) => setCointossCashoutAmount(Number(e.target.value))}
-                    style={{ flex: 1, background: "#fff", color: "#49332d", border: "1px solid #eee0d8", borderRadius: 6, padding: "6px 8px", fontSize: 12 }}
+                    style={{ flex: 1, background: "#2a2a2a", color: "#fff", border: "1px solid #3f3f3f", borderRadius: 6, padding: "6px 8px", fontSize: 12 }}
                   />
                 </div>
                 <button
                   type="button"
                   onClick={doCointossCashout}
                   disabled={cointossCashoutLoading}
-                  style={{ padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1px solid #f59e0b", background: "transparent", color: "#b45309", cursor: "pointer" }}
+                  style={{ padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1px solid #facc15", background: "transparent", color: "#facc15", cursor: "pointer" }}
                 >
                   {cointossCashoutLoading ? "Sending…" : "Cash Out"}
                 </button>
               </div>
-                  </div>
-                )}
-              </div>
-              {/* Future games go here — add another nested collapsible like
-                  the Coin Toss block above, each with its own state/ref. */}
             </div>
           )}
         </section>
