@@ -20,7 +20,6 @@ import {
   getRecentFlips,
   placeCoinTossBet,
   requestCashout,
-  getCashoutsForIdentity,
 } from "@/lib/minigames";
 
 export async function GET(req: NextRequest) {
@@ -31,23 +30,6 @@ export async function GET(req: NextRequest) {
 
     const config = await getCoinTossConfig();
     const balance = key ? await getBalance(key) : 0;
-
-    // The caller's own withdrawal history (pending + recently fulfilled) —
-    // this is the missing piece that was letting a queued cash-out vanish
-    // from the UI the moment the toast disappeared, with no way to see it
-    // land once an admin fulfilled it from the dashboard. Safe to return
-    // in full for this identity: it's the player's own data, keyed to the
-    // same fid/wallet they just sent us.
-    const myCashouts = key
-      ? (await getCashoutsForIdentity(key, 5)).map((c) => ({
-          id: c.id,
-          amountDegen: c.amountDegen,
-          status: c.status,
-          txHash: c.txHash,
-          requestedAt: c.requestedAt,
-          fulfilledAt: c.fulfilledAt,
-        }))
-      : [];
 
     // Anonymized feed — identityKey never leaves the server, same care
     // taken with raffle winners via publicWinnerLabel().
@@ -70,7 +52,6 @@ export async function GET(req: NextRequest) {
       },
       balance,
       recentFlips: recent,
-      myCashouts,
     });
   } catch (err: any) {
     console.error("[minigames/cointoss] GET error:", err);
