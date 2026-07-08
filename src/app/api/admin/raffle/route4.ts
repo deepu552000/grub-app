@@ -6,13 +6,8 @@
 //        dashboard's new Raffle section.
 //
 //   POST /api/admin/raffle
-//        Body: { action, roundId?, reason?, identityKey?, prizeKind?, accessoryId? }
-//        action = "force_draw" | "force_reveal_only" | "set_prize_kind" |
-//                 "send_degen_prize" | "grant_accessory_prize" |
-//                 "void_round" | "refund_entrant" | "refund_all"
-//        set_prize_kind needs roundId + prizeKind (only while round is open).
-//        send_degen_prize / grant_accessory_prize need roundId (+ accessoryId
-//        for the latter) — fulfill a resolved round's pending prize.
+//        Body: { action, roundId?, reason?, identityKey? }
+//        action = "force_draw" | "void_round" | "refund_entrant" | "refund_all"
 //        refund_entrant needs identityKey too; refund_all only needs roundId
 //        and only works on a "void" round (sends real USDC out of treasury).
 //
@@ -35,13 +30,6 @@ import {
   ensureOpenRound,
   refundEntrant,
   getCurrentBlockNumberSafe,
-  setRoundPrizeKind,
-  payDegenPrize,
-  grantAccessoryPrize,
-  getFailedPrizePayouts,
-  PRIZE_KINDS,
-  PRIZE_KIND_LABELS,
-  type PrizeKind,
 } from "@/lib/raffle";
 
 function unauthorized() {
@@ -102,14 +90,7 @@ export async function GET(req: NextRequest) {
       history.map(async (r) => (r.status === "void" ? { ...r, entrants: await entrantsWithCounts(r.id) } : r)),
     );
 
-    return NextResponse.json({
-      ok: true,
-      open: openDetail,
-      awaitingReveal: awaitingDetail,
-      history: historyWithEntrants,
-      prizeKinds: PRIZE_KINDS.map((k) => ({ id: k, label: PRIZE_KIND_LABELS[k] })),
-      failedPrizePayouts: await getFailedPrizePayouts(),
-    });
+    return NextResponse.json({ ok: true, open: openDetail, awaitingReveal: awaitingDetail, history: historyWithEntrants });
   } catch (err: any) {
     console.error("[admin/raffle] GET error:", err);
     return NextResponse.json({ ok: false, reason: err?.message }, { status: 500 });
@@ -121,7 +102,7 @@ export async function POST(req: NextRequest) {
     if (!(await checkAuth(req))) return unauthorized();
 
     const body = await req.json();
-    const { action, roundId, reason, identityKey, prizeKind, accessoryId } = body;
+    const { action, roundId, reason, identityKey } = body;
 
     // ── Force a draw right now, out of schedule ─────────────────────────
     // Runs the same reveal→lock→open sequence the Sunday cron does. Use
@@ -200,51 +181,6 @@ export async function POST(req: NextRequest) {
           { status: 502 },
         );
       }
-    }
-
-    // ── Set (or change) the open round's prize kind ─────────────────────
-    // Only works while the round is still "open" — setRoundPrizeKind()
-    // itself enforces this and throws otherwise, so tickets already sold
-    // never get retroactively promised a different prize.
-    if (action === "set_prize_kind") {
-      if (!roundId || !prizeKind) {
-        return NextResponse.json({ ok: false, reason: "missing roundId or prizeKind" }, { status: 400 });
-      }
-      if (!PRIZE_KINDS.includes(prizeKind as PrizeKind)) {
-        return NextResponse.json({ ok: false, reason: `unknown prizeKind "${prizeKind}"` }, { status: 400 });
-      }
-      try {
-        const updated = await setRoundPrizeKind(roundId, prizeKind as PrizeKind);
-        if (!updated) {
-          return NextResponse.json({ ok: false, reason: `no round found with id ${roundId}` }, { status: 404 });
-        }
-        return NextResponse.json({ ok: true, action, roundId, prizeKind: updated.prizeKind });
-      } catch (err: any) {
-        return NextResponse.json({ ok: false, reason: err?.message ?? "could not set prize kind" }, { status: 400 });
-      }
-    }
-
-    // ── Send a round's pending DEGEN prize ──────────────────────────────
-    // Admin clicks this, the system builds and broadcasts the transfer from
-    // the treasury wallet itself (same sendDegen() the referral payouts
-    // use) — admin never enters an amount or tx hash by hand.
-    if (action === "send_degen_prize") {
-      if (!roundId) {
-        return NextResponse.json({ ok: false, reason: "missing roundId" }, { status: 400 });
-      }
-      const result = await payDegenPrize(roundId);
-      return NextResponse.json({ action, roundId, ...result });
-    }
-
-    // ── Grant a round's pending accessory prize ─────────────────────────
-    // Admin picks the specific accessory (any stage/level) from a dropdown
-    // and this writes it straight into the winner's closet.
-    if (action === "grant_accessory_prize") {
-      if (!roundId || !accessoryId) {
-        return NextResponse.json({ ok: false, reason: "missing roundId or accessoryId" }, { status: 400 });
-      }
-      const result = await grantAccessoryPrize(roundId, accessoryId);
-      return NextResponse.json({ action, roundId, accessoryId, ...result });
     }
 
     // ── Void an in-flight round without drawing a winner ────────────────

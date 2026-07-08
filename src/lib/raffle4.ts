@@ -35,7 +35,7 @@
 
 import { kv } from "@vercel/kv";
 import { ethers } from "ethers";
-import { acquireLock, releaseLock, getWalletFromNeynar, sendDegen } from "@/lib/referral";
+import { acquireLock, releaseLock, getWalletFromNeynar } from "@/lib/referral";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 export const TICKET_PRICE_MICRO_USDC = 100_000; // $0.10
@@ -56,90 +56,31 @@ export const BLOCKS_AHEAD_FOR_DRAW = 300;
 
 const BASE_RPC = process.env.ALCHEMY_BASE_RPC_URL ?? "https://mainnet.base.org";
 
-export type PrizeKind = "xp" | "degen" | "spins" | "checkin" | "checkin_save" | "accessory";
-
-// Every kind admin can choose for a round. "accessory" has no numeric ladder
-// — the admin hand-picks the specific item after reveal instead — so it's
-// excluded from PRIZE_CATALOG but still a valid selectable kind everywhere
-// else (dropdown, auto-pick pool, etc).
-export const PRIZE_KINDS: PrizeKind[] = ["xp", "degen", "spins", "checkin", "checkin_save", "accessory"];
-
-export const PRIZE_KIND_LABELS: Record<PrizeKind, string> = {
-  xp: "XP",
-  degen: "DEGEN",
-  spins: "Free Spins",
-  checkin: "Free Check-in",
-  checkin_save: "Free Check-in Save",
-  accessory: "Accessory Unlock",
-};
-
-// Which kinds grant instantly at reveal vs. need an admin click afterward
-// (real money/manual item choice — same "deliberate, not automated" spirit
-// as refunds elsewhere in this file).
-export const AUTO_GRANT_KINDS: PrizeKind[] = ["xp", "spins", "checkin", "checkin_save"];
-export const PENDING_GRANT_KINDS: PrizeKind[] = ["degen", "accessory"];
-
 export type PrizeTier = {
-  id: string; // "small" | "medium" | "large"
+  id: string;
+  type: "xp"; // "accessory" | "degen" land here later — see grantPrize()
   value: number;
   minTickets: number;
 };
 
-// Ordered low → high per kind. pickTierForKind() walks the ladder and keeps
-// the last one whose minTickets is met. "accessory" isn't here — see above.
-export const PRIZE_CATALOG: Record<Exclude<PrizeKind, "accessory">, PrizeTier[]> = {
-  xp: [
-    { id: "small", value: 50, minTickets: 1 },
-    { id: "medium", value: 75, minTickets: 3 },
-    { id: "large", value: 125, minTickets: 7 },
-  ],
-  degen: [
-    { id: "small", value: 30, minTickets: 1 },
-    { id: "medium", value: 50, minTickets: 3 },
-    { id: "large", value: 100, minTickets: 7 },
-  ],
-  spins: [
-    { id: "small", value: 3, minTickets: 1 },
-    { id: "medium", value: 5, minTickets: 3 },
-    { id: "large", value: 8, minTickets: 7 },
-  ],
-  checkin: [
-    { id: "small", value: 3, minTickets: 1 },
-    { id: "medium", value: 5, minTickets: 3 },
-    { id: "large", value: 8, minTickets: 7 },
-  ],
-  checkin_save: [
-    { id: "small", value: 3, minTickets: 1 },
-    { id: "medium", value: 5, minTickets: 3 },
-    { id: "large", value: 8, minTickets: 7 },
-  ],
-};
+// Ordered low → high. pickTier() walks this and keeps the last one whose
+// minTickets is met, so add new tiers here without touching any call site.
+// Only "xp" is populated for v1, per plan — the shape already supports
+// heavier tiers (accessory/degen) so adding one later is a data change,
+// not a code change, as long as grantPrize() below gets a matching case.
+export const PRIZE_TIERS: PrizeTier[] = [
+  { id: "small", type: "xp", value: 25, minTickets: 1 },
+  { id: "medium", type: "xp", value: 100, minTickets: 7 },
+];
 
-export function pickTierForKind(kind: Exclude<PrizeKind, "accessory">, ticketCount: number): PrizeTier | null {
+export function pickTier(ticketCount: number): PrizeTier | null {
   if (ticketCount <= 0) return null;
   let tier: PrizeTier | null = null;
-  for (const t of PRIZE_CATALOG[kind]) {
+  for (const t of PRIZE_TIERS) {
     if (ticketCount >= t.minTickets) tier = t;
   }
   return tier;
 }
-
-/**
- * A round's degen/accessory prize isn't grantable automatically at reveal —
- * this is the record of that "still owed" state until an admin fulfills it
- * from the dashboard. Mirrors the shape of the existing refunds/failed-refund
- * records elsewhere in this file.
- */
-export type PendingPrize = {
-  kind: "degen" | "accessory";
-  status: "pending" | "fulfilled";
-  winnerKey: string;
-  amountDegen?: number; // degen only
-  txHash?: string; // degen only, once fulfilled
-  wallet?: string; // degen only, once fulfilled
-  accessoryId?: string; // accessory only, once fulfilled
-  fulfilledAt?: number;
-};
 
 export type RaffleRoundStatus = "open" | "awaiting_reveal" | "resolved" | "no_entrants" | "void";
 
@@ -155,15 +96,6 @@ export type RaffleRound = {
   drawnBlockHash?: string;
   winnerKey?: string; // petKey() of the winner, once resolved
   prizeTier?: PrizeTier;
-  // Which prize this round pays out — admin-selected once the round opens
-  // (dropdown on the open-round card). If admin never picks one before lock,
-  // lockRound() auto-picks a random kind so the round is never blocked on a
-  // missed selection — prizeKindAutoSelected distinguishes the two cases for
-  // the dashboard ("Prize: XP" vs "Prize: XP (auto-selected)").
-  prizeKind?: PrizeKind;
-  prizeKindAutoSelected?: boolean;
-  // Only set for degen/accessory wins — see PendingPrize's comment.
-  pendingPrize?: PendingPrize;
   resolvedAt?: number;
   voidedAt?: number;
   voidReason?: string;
@@ -221,24 +153,6 @@ function nextSundayUtc(from: number): number {
   const daysUntilSunday = day === 0 ? 7 : 7 - day;
   const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + daysUntilSunday));
   return next.getTime();
-}
-
-/**
- * Admin picks (or changes) what this round's prize will be, any time while
- * it's still open. Locked out once the round locks — at that point
- * lockRound() has either kept the admin's pick or auto-picked one, and
- * changing it after tickets are sold under one assumption would be
- * confusing/unfair, so this intentionally throws rather than silently no-op.
- */
-export async function setRoundPrizeKind(roundId: string, kind: PrizeKind): Promise<RaffleRound | null> {
-  const round = await getRound(roundId);
-  if (!round) return null;
-  if (round.status !== "open") {
-    throw new Error(`prize kind can only be set while a round is open (this round is "${round.status}")`);
-  }
-  const updated: RaffleRound = { ...round, prizeKind: kind, prizeKindAutoSelected: false };
-  await kv.set(roundKey(roundId), updated);
-  return updated;
 }
 
 /**
@@ -397,21 +311,12 @@ export async function lockRound(round: RaffleRound): Promise<RaffleRound> {
   const currentBlock = await getCurrentBlockNumber();
   const targetBlock = currentBlock + BLOCKS_AHEAD_FOR_DRAW;
 
-  // Admin didn't pick a prize while this round was open — rather than block
-  // the draw on a missed selection, auto-pick one at random from every
-  // available kind. prizeKindAutoSelected lets the dashboard be honest about
-  // which happened ("Prize: DEGEN" vs "Prize: DEGEN (auto-selected)").
-  const prizeKind = round.prizeKind ?? PRIZE_KINDS[Math.floor(Math.random() * PRIZE_KINDS.length)];
-  const prizeKindAutoSelected = !round.prizeKind;
-
   const locked: RaffleRound = {
     ...round,
     status: "awaiting_reveal",
     ticketCountAtLock: ticketCount,
     targetBlock,
     lockedAt: now,
-    prizeKind,
-    prizeKindAutoSelected,
   };
   await kv.set(roundKey(round.id), locked);
   const pointers = await getPointers();
@@ -460,31 +365,7 @@ export async function revealRound(round: RaffleRound): Promise<RaffleRound | nul
   const winnerIndex = Number(seed % BigInt(weighted.length));
   const winnerKey = weighted[winnerIndex];
 
-  // Fallback to "xp" covers rounds that locked before this multi-prize
-  // system existed (prizeKind will be undefined on them) — preserves the
-  // exact old behavior for anything already mid-flight at deploy time.
-  const kind: PrizeKind = round.prizeKind ?? "xp";
-  const ticketCount = round.ticketCountAtLock ?? weighted.length;
-
-  let tier: PrizeTier | null = null;
-  let pendingPrize: PendingPrize | undefined;
-
-  if (kind === "accessory") {
-    // No numeric ladder — admin hand-picks the actual item after reveal,
-    // regardless of round size (see PendingPrize's comment).
-    pendingPrize = { kind: "accessory", status: "pending", winnerKey };
-  } else {
-    tier = pickTierForKind(kind, ticketCount);
-    if (tier) {
-      if (kind === "degen") {
-        // Real money — never auto-sent. Admin clicks "Send Prize" in the
-        // dashboard, same deliberate-trigger pattern as refunds.
-        pendingPrize = { kind: "degen", status: "pending", winnerKey, amountDegen: tier.value };
-      } else {
-        await grantPrize(winnerKey, kind, tier);
-      }
-    }
-  }
+  const tier = pickTier(round.ticketCountAtLock ?? weighted.length);
 
   const resolved: RaffleRound = {
     ...round,
@@ -492,10 +373,11 @@ export async function revealRound(round: RaffleRound): Promise<RaffleRound | nul
     drawnBlockHash: hash,
     winnerKey,
     prizeTier: tier ?? undefined,
-    pendingPrize,
     resolvedAt: Date.now(),
   };
   await kv.set(roundKey(round.id), resolved);
+
+  if (tier) await grantPrize(winnerKey, tier);
 
   await pushHistory(resolved);
   const pointers = await getPointers();
@@ -503,27 +385,19 @@ export async function revealRound(round: RaffleRound): Promise<RaffleRound | nul
   return resolved;
 }
 
-/**
- * Grants an auto-grant-kind prize (xp/spins/checkin/checkin_save) straight
- * to the winner's pet record. degen/accessory never reach here — those go
- * through pendingPrize + the admin-triggered payDegenPrize()/
- * grantAccessoryPrize() functions below instead.
- */
-async function grantPrize(winnerKey: string, kind: PrizeKind, tier: PrizeTier) {
+/** Grants the tier's prize to the winner's pet record. XP-only for v1 — see PrizeTier's type comment for how future tiers plug in here. */
+async function grantPrize(winnerKey: string, tier: PrizeTier) {
   const state = await kv.get<any>(winnerKey);
   if (!state) {
     console.error(`[raffle] winner key ${winnerKey} has no pet state — cannot grant prize`);
     return;
   }
-  if (kind === "xp") {
+  if (tier.type === "xp") {
     await kv.set(winnerKey, { ...state, xp: (state.xp ?? 0) + tier.value });
-  } else if (kind === "spins") {
-    await kv.set(winnerKey, { ...state, spinCredits: (state.spinCredits ?? 0) + tier.value });
-  } else if (kind === "checkin") {
-    await kv.set(winnerKey, { ...state, freeCheckinCredits: (state.freeCheckinCredits ?? 0) + tier.value });
-  } else if (kind === "checkin_save") {
-    await kv.set(winnerKey, { ...state, streakSaveCredits: (state.streakSaveCredits ?? 0) + tier.value });
   }
+  // "accessory" / "degen" tiers land here later, each granting via the same
+  // helpers unlock_accessory / sendDegen already use elsewhere — this
+  // function is the one place a new tier type needs a matching case.
 }
 
 async function pushHistory(round: RaffleRound) {
@@ -746,157 +620,4 @@ export async function refundEntrant(roundId: string, identityKey: string): Promi
   } finally {
     await releaseLock(lockKey);
   }
-}
-
-// ── Prize fulfillment (degen / accessory) ───────────────────────────────────
-// Both are "pending" the moment a round resolves into one of these kinds —
-// see revealRound()'s branch. Nothing sends/grants automatically; an admin
-// clicking a dashboard button is what triggers it, same deliberate-action
-// spirit as refunds above. Idempotent the same way too: pendingPrize.status
-// guards against a double-click sending/granting twice.
-
-export type FailedRafflePrizePayout = {
-  id: string;
-  roundId: string;
-  winnerKey: string;
-  wallet: string;
-  amountDegen: number;
-  reason: string;
-  ts: number;
-  broadcastTxHash?: string | null; // present ⇒ verify on Basescan before ever retrying
-};
-
-const FAILED_PRIZES_KEY = "grub:raffle:failed-prizes";
-
-async function recordFailedPrizePayout(entry: Omit<FailedRafflePrizePayout, "id" | "ts">): Promise<FailedRafflePrizePayout> {
-  const record: FailedRafflePrizePayout = { ...entry, id: `${entry.roundId}:${Date.now()}`, ts: Date.now() };
-  const list = (await kv.get<FailedRafflePrizePayout[]>(FAILED_PRIZES_KEY)) ?? [];
-  list.push(record);
-  await kv.set(FAILED_PRIZES_KEY, list);
-  console.error(`[raffle] DEGEN prize payout FAILED — logged for retry: ${record.id} (${record.reason})`);
-  return record;
-}
-
-export async function getFailedPrizePayouts(): Promise<FailedRafflePrizePayout[]> {
-  return (await kv.get<FailedRafflePrizePayout[]>(FAILED_PRIZES_KEY)) ?? [];
-}
-
-export type PrizePayoutResult =
-  | { ok: true; txHash: string; amountDegen: number; wallet: string }
-  | { ok: false; reason: string };
-
-/**
- * Sends a round's pending DEGEN prize from the treasury wallet — reuses
- * sendDegen() from lib/referral.ts, the exact same treasury/contract that
- * pays referral check-in bonuses. Admin-triggered only (dashboard "Send
- * Prize" button); nothing calls this automatically.
- */
-export async function payDegenPrize(roundId: string): Promise<PrizePayoutResult> {
-  const round = await getRound(roundId);
-  if (!round) return { ok: false, reason: "round not found" };
-  if (!round.pendingPrize || round.pendingPrize.kind !== "degen") {
-    return { ok: false, reason: "this round has no pending DEGEN prize" };
-  }
-  if (round.pendingPrize.status === "fulfilled") {
-    return { ok: false, reason: "already paid" };
-  }
-
-  const { winnerKey, amountDegen } = round.pendingPrize;
-  if (!winnerKey || !amountDegen) {
-    return { ok: false, reason: "pending prize is missing a winner or amount" };
-  }
-
-  const wallet = await resolveEntrantWallet(winnerKey);
-  if (!wallet) {
-    return { ok: false, reason: "could not resolve a payout wallet for the winner" };
-  }
-
-  // Same lock primitive refunds/referral payouts use — stops a double-click
-  // (or a dashboard refresh + re-click race) from sending twice.
-  const lockKey = `grub:raffle:prizelock:${roundId}`;
-  const gotLock = await acquireLock(lockKey, 30);
-  if (!gotLock) {
-    return { ok: false, reason: "a payout for this round is already in progress — try again shortly" };
-  }
-
-  try {
-    let txHash: string;
-    try {
-      txHash = await sendDegen(wallet, amountDegen);
-    } catch (err: any) {
-      console.error("[raffle] payDegenPrize sendDegen failed:", err);
-      await recordFailedPrizePayout({
-        roundId,
-        winnerKey,
-        wallet,
-        amountDegen,
-        reason: err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error",
-        broadcastTxHash: err?.broadcastTxHash ?? null,
-      });
-      return {
-        ok: false,
-        reason:
-          "DEGEN prize payout failed to send — logged in the failed-prizes list for retry. If a tx hash was broadcast, verify it on Basescan before retrying to avoid a double-send.",
-      };
-    }
-
-    const fresh = (await getRound(roundId)) ?? round;
-    const updated: RaffleRound = {
-      ...fresh,
-      pendingPrize: { ...fresh.pendingPrize!, status: "fulfilled", txHash, wallet, fulfilledAt: Date.now() },
-    };
-    await kv.set(roundKey(roundId), updated);
-    await updateHistoryEntry(updated);
-
-    console.log(`[raffle] paid ${amountDegen} DEGEN prize to ${wallet} (round ${roundId}) tx=${txHash}`);
-    return { ok: true, txHash, amountDegen, wallet };
-  } finally {
-    await releaseLock(lockKey);
-  }
-}
-
-export type AccessoryGrantResult = { ok: true } | { ok: false; reason: string };
-
-/**
- * Grants a specific accessory the admin picked to the round's winner.
- * Writes into state.accessories.unlocked — the exact same shape
- * lib/pet-accessories-state.ts's AccessoryState uses and the
- * unlock_accessory route writes to, so this shows up in the winner's real
- * closet (not a second, disconnected list). Deliberately mirrors that
- * route's own merge pattern (spread existing state.accessories, append the
- * id) rather than reinventing it.
- */
-export async function grantAccessoryPrize(roundId: string, accessoryId: string): Promise<AccessoryGrantResult> {
-  const round = await getRound(roundId);
-  if (!round) return { ok: false, reason: "round not found" };
-  if (!round.pendingPrize || round.pendingPrize.kind !== "accessory") {
-    return { ok: false, reason: "this round has no pending accessory prize" };
-  }
-  if (round.pendingPrize.status === "fulfilled") {
-    return { ok: false, reason: "already granted" };
-  }
-
-  const { winnerKey } = round.pendingPrize;
-  if (!winnerKey) return { ok: false, reason: "pending prize is missing a winner" };
-
-  const state = await kv.get<any>(winnerKey);
-  if (!state) return { ok: false, reason: "winner has no pet state — cannot grant accessory" };
-
-  const existingUnlocked: string[] = state?.accessories?.unlocked ?? [];
-  if (!existingUnlocked.includes(accessoryId)) {
-    await kv.set(winnerKey, {
-      ...state,
-      accessories: { ...state?.accessories, unlocked: [...existingUnlocked, accessoryId] },
-    });
-  }
-
-  const updated: RaffleRound = {
-    ...round,
-    pendingPrize: { ...round.pendingPrize, status: "fulfilled", accessoryId, fulfilledAt: Date.now() },
-  };
-  await kv.set(roundKey(roundId), updated);
-  await updateHistoryEntry(updated);
-
-  console.log(`[raffle] granted accessory "${accessoryId}" to ${winnerKey} (round ${roundId})`);
-  return { ok: true };
 }

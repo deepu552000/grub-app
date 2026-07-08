@@ -32,7 +32,6 @@ import {
   recordTicketPurchase,
   MAX_TICKETS_PER_USER_PER_ROUND,
   TICKET_PRICE_MICRO_USDC,
-  PRIZE_KIND_LABELS,
 } from "@/lib/raffle";
 
 const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -113,11 +112,6 @@ export async function GET(req: NextRequest) {
       ticketCount: r.ticketCountAtLock ?? 0,
       winner: publicWinnerLabel(r.winnerKey),
       prizeTier: r.prizeTier ?? null,
-      prizeKindLabel: r.prizeKind ? (PRIZE_KIND_LABELS as any)[r.prizeKind] ?? null : null,
-      // degen/accessory wins are momentarily "pending" between reveal and the
-      // admin fulfilling them — surfaced so the UI can say "prize on the way"
-      // instead of showing nothing for a winner who did in fact win.
-      prizePending: r.pendingPrize ? r.pendingPrize.status !== "fulfilled" : false,
       resolvedAt: r.resolvedAt ?? r.voidedAt ?? null,
     }));
 
@@ -130,9 +124,6 @@ export async function GET(req: NextRequest) {
         openedAt: round.openedAt,
         locksAt: round.locksAt,
         ticketCount: roundTotal,
-        // null until admin picks one from the dashboard — UI should show
-        // "prize: to be announced" rather than nothing in that case.
-        prizeKindLabel: round.prizeKind ? (PRIZE_KIND_LABELS as any)[round.prizeKind] ?? null : null,
       },
       myTickets,
       maxTicketsPerUser: MAX_TICKETS_PER_USER_PER_ROUND,

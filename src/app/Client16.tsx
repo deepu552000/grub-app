@@ -1707,21 +1707,11 @@ function ClientPageInner() {
     ticketPriceMicroUsdc: number;
     locksAt: number;
     ticketCount: number;
-    prizeKindLabel: string | null;
   } | null>(null);
   const [raffleMyTickets, setRaffleMyTickets] = useState(0);
   const [raffleMaxTickets, setRaffleMaxTickets] = useState(3);
   const [raffleRecentWinners, setRaffleRecentWinners] = useState<
-    Array<{
-      id: string;
-      status: string;
-      ticketCount: number;
-      winner: string | null;
-      prizeTier: { id: string; type: string; value: number } | null;
-      prizeKindLabel: string | null;
-      prizePending: boolean;
-      resolvedAt: number | null;
-    }>
+    Array<{ id: string; status: string; ticketCount: number; winner: string | null; prizeTier: { id: string; type: string; value: number } | null; resolvedAt: number | null }>
   >([]);
   const [raffleBuying, setRaffleBuying] = useState(false);
   const [raffleError, setRaffleError] = useState<string | null>(null);
@@ -5349,11 +5339,6 @@ function ClientPageInner() {
                 <span>Round {raffleRound?.id ?? "—"} · {raffleRound?.ticketCount ?? 0} ticket{(raffleRound?.ticketCount ?? 0) === 1 ? "" : "s"} sold</span>
                 <span>You: {raffleMyTickets}/{raffleMaxTickets}</span>
               </div>
-              {raffleRound?.status === "open" && (
-                <div style={{ textAlign: "center", fontSize: 12, color: "#a16207", fontWeight: 700, marginTop: -4 }}>
-                  🎁 This round's prize: {raffleRound.prizeKindLabel ?? "to be announced"}
-                </div>
-              )}
 
               {/* Buy button */}
               <button
@@ -5417,7 +5402,7 @@ function ClientPageInner() {
                       The round closes every Sunday. The winner is picked from a Base block hash committed to before the block exists — so the outcome can't be known or influenced by anyone, including us, until it's mined.
                     </p>
                     <p style={{ margin: 0 }}>
-                      Each round has its own prize — XP, DEGEN, free spins, free check-ins, or an accessory unlock — shown above once it's set. 1+ ticket sold gets the small tier; 7+ tickets sold in the round bumps it to the biggest tier. If nobody buys a ticket, that round just rolls over with no winner.
+                      1+ ticket sold gets a small XP prize; 7+ tickets sold in the round bumps it to a bigger XP prize. If nobody buys a ticket, that round just rolls over with no winner.
                     </p>
                   </div>
                 )}
@@ -5449,9 +5434,7 @@ function ClientPageInner() {
                         <span>{r.id}</span>
                         <span>
                           {r.status === "resolved" && r.winner
-                            ? r.prizePending
-                              ? `🏆 ${r.winner} — ${r.prizeKindLabel ?? "prize"} on the way`
-                              : `🏆 ${r.winner} +${r.prizeTier?.value ?? 0} ${r.prizeKindLabel ?? "XP"}`
+                            ? `🏆 ${r.winner} +${r.prizeTier?.value ?? 0} XP`
                             : r.status === "no_entrants"
                               ? "No entrants"
                               : r.status === "void"

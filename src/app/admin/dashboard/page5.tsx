@@ -466,7 +466,6 @@ function AdminDashboardInner() {
   const [raffleAdminError, setRaffleAdminError] = useState<string | null>(null);
   const [raffleActionLoading, setRaffleActionLoading] = useState<string | null>(null);
   const [expandedVoidRoundId, setExpandedVoidRoundId] = useState<string | null>(null);
-  const [raffleAccessoryInputs, setRaffleAccessoryInputs] = useState<Record<string, string>>({});
 
   const authedGet = useCallback(async (path: string) => {
     const token = await getToken();
@@ -837,74 +836,7 @@ function AdminDashboardInner() {
     }
   }, [authedPost, addToast, loadRaffleAdmin]);
 
-  // Picks/changes the open round's prize kind. Server-side enforces
-  // "only while open" — setRoundPrizeKind() throws once the round locks, so
-  // a stale dropdown click after a lock can't retroactively change what's
-  // already been auto-picked.
-  const setRafflePrizeKind = useCallback(async (roundId: string, kind: string) => {
-    setRaffleActionLoading(`prizekind_${roundId}`);
-    try {
-      const res = await authedPost("/api/admin/raffle", { action: "set_prize_kind", roundId, prizeKind: kind });
-      if (res?.ok) {
-        addToast(`✓ Prize set to ${kind.toUpperCase()} for round ${roundId}.`, "success");
-        loadRaffleAdmin();
-      } else {
-        addToast(`✕ ${res?.reason ?? "Could not set prize"}`, "error");
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Could not set prize"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadRaffleAdmin]);
-
-  // Sends a round's pending DEGEN prize. System builds and broadcasts the
-  // transfer itself (same treasury/sendDegen as referral payouts) — admin
-  // only clicks the button, no amount or tx hash entry.
-  const sendDegenPrize = useCallback(async (roundId: string, amountDegen: number, winnerKey: string) => {
-    if (!window.confirm(`Send ${amountDegen} DEGEN to ${winnerKey}? This sends real tokens from the treasury.`)) return;
-    const loadingKey = `degenprize_${roundId}`;
-    setRaffleActionLoading(loadingKey);
-    try {
-      const res = await authedPost("/api/admin/raffle", { action: "send_degen_prize", roundId });
-      if (res?.ok) {
-        addToast(`✓ Sent ${amountDegen} DEGEN (tx ${String(res.txHash ?? "").slice(0, 10)}…)`, "success");
-        loadRaffleAdmin();
-      } else {
-        addToast(`✕ ${res?.reason ?? "DEGEN payout failed"}`, "error");
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "DEGEN payout failed"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadRaffleAdmin]);
-
-  // Grants a round's pending accessory prize — admin types/picks the
-  // accessory id, writes straight into the winner's closet.
-  const grantRaffleAccessory = useCallback(async (roundId: string, accessoryId: string) => {
-    if (!accessoryId.trim()) {
-      addToast("✕ Enter an accessory id first.", "error");
-      return;
-    }
-    const loadingKey = `accessoryprize_${roundId}`;
-    setRaffleActionLoading(loadingKey);
-    try {
-      const res = await authedPost("/api/admin/raffle", { action: "grant_accessory_prize", roundId, accessoryId: accessoryId.trim() });
-      if (res?.ok) {
-        addToast(`✓ Granted accessory "${accessoryId.trim()}".`, "success");
-        loadRaffleAdmin();
-      } else {
-        addToast(`✕ ${res?.reason ?? "Accessory grant failed"}`, "error");
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Accessory grant failed"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadRaffleAdmin]);
-
-
+  // Resolve FID -> Farcaster username/displayName once users are loaded.
   // Only fetches fids we don't already have cached.
   useEffect(() => {
     if (users.length === 0) return;
@@ -1768,37 +1700,6 @@ function AdminDashboardInner() {
           ))}
         </div>
 
-        {raffleAdmin?.open && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-            background: T.surface, border: `1px solid ${raffleAdmin.open.prizeKind ? T.border : C.red}`, borderRadius: 12,
-            padding: "10px 14px", marginBottom: "1rem",
-          }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>
-              Prize for round {raffleAdmin.open.id}:
-            </span>
-            <select
-              value={raffleAdmin.open.prizeKind ?? ""}
-              onChange={(e) => e.target.value && setRafflePrizeKind(raffleAdmin.open.id, e.target.value)}
-              disabled={raffleActionLoading === `prizekind_${raffleAdmin.open.id}`}
-              style={{
-                background: T.surfaceAlt, color: T.cream, border: `1px solid ${T.border}`, borderRadius: 6,
-                padding: "5px 8px", fontSize: 12, fontWeight: 600,
-              }}
-            >
-              <option value="" disabled>— Pending, select one —</option>
-              {(raffleAdmin.prizeKinds ?? []).map((k: any) => (
-                <option key={k.id} value={k.id}>{k.label}</option>
-              ))}
-            </select>
-            {!raffleAdmin.open.prizeKind && (
-              <span style={{ fontSize: 11, color: C.red }}>
-                Pending — if not set before lock, system will auto-pick one at random.
-              </span>
-            )}
-          </div>
-        )}
-
         <div style={{ display: "flex", gap: 10, marginBottom: "1rem", flexWrap: "wrap" }}>
           <button
             onClick={forceDrawRaffle}
@@ -1896,9 +1797,6 @@ function AdminDashboardInner() {
         {raffleAdmin?.awaitingReveal && (
           <div style={{ background: T.surface, border: `1px solid ${C.purple}`, borderRadius: 12, padding: "12px 16px", marginBottom: "1rem", fontSize: 12, color: T.textMute }}>
             Round {raffleAdmin.awaitingReveal.id} locked with {raffleAdmin.awaitingReveal.ticketCountAtLock ?? 0} ticket(s).
-            {" "}Prize: <b>{raffleAdmin.awaitingReveal.prizeKind ? (raffleAdmin.prizeKinds ?? []).find((k: any) => k.id === raffleAdmin.awaitingReveal.prizeKind)?.label ?? raffleAdmin.awaitingReveal.prizeKind : "—"}</b>
-            {raffleAdmin.awaitingReveal.prizeKindAutoSelected && <span style={{ color: C.red }}> (auto-selected — none was set before lock)</span>}
-            .
             {" "}Target block {raffleAdmin.awaitingReveal.targetBlock ?? "—"}
             {raffleAdmin.awaitingReveal.currentBlock != null && raffleAdmin.awaitingReveal.targetBlock != null && (
               <>
@@ -1948,56 +1846,7 @@ function AdminDashboardInner() {
                         <td style={{ padding: "9px 14px", color: statusColor, fontWeight: 700, textTransform: "capitalize" }}>{r.status.replace("_", " ")}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right" }}>{r.ticketCountAtLock ?? 0}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", fontFamily: "monospace", fontSize: 11, color: dark ? C.amberGlow : "#7c3aed" }}>{r.winnerKey ?? "—"}</td>
-                        <td style={{ padding: "9px 14px", textAlign: "right", color: C.amberGlow }}>
-                          {r.pendingPrize ? (
-                            r.pendingPrize.kind === "degen" ? (
-                              r.pendingPrize.status === "fulfilled" ? (
-                                <span style={{ color: C.green, fontSize: 11 }} title={r.pendingPrize.txHash}>
-                                  ✓ {r.pendingPrize.amountDegen} DEGEN sent
-                                </span>
-                              ) : (
-                                <button
-                                  onClick={() => sendDegenPrize(r.id, r.pendingPrize.amountDegen, r.pendingPrize.winnerKey)}
-                                  disabled={raffleActionLoading === `degenprize_${r.id}`}
-                                  style={{
-                                    background: C.amberGlow, color: "#1a1305", border: "none", borderRadius: 6,
-                                    padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
-                                  }}
-                                >
-                                  {raffleActionLoading === `degenprize_${r.id}` ? "Sending…" : `Send ${r.pendingPrize.amountDegen} DEGEN`}
-                                </button>
-                              )
-                            ) : r.pendingPrize.status === "fulfilled" ? (
-                              <span style={{ color: C.green, fontSize: 11 }}>✓ granted "{r.pendingPrize.accessoryId}"</span>
-                            ) : (
-                              <div style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                                <input
-                                  value={raffleAccessoryInputs[r.id] ?? ""}
-                                  onChange={(e) => setRaffleAccessoryInputs((prev) => ({ ...prev, [r.id]: e.target.value }))}
-                                  placeholder="accessory id"
-                                  style={{
-                                    width: 90, background: T.surfaceAlt, color: T.cream, border: `1px solid ${T.border}`,
-                                    borderRadius: 6, padding: "3px 6px", fontSize: 10,
-                                  }}
-                                />
-                                <button
-                                  onClick={() => grantRaffleAccessory(r.id, raffleAccessoryInputs[r.id] ?? "")}
-                                  disabled={raffleActionLoading === `accessoryprize_${r.id}`}
-                                  style={{
-                                    background: C.amberGlow, color: "#1a1305", border: "none", borderRadius: 6,
-                                    padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
-                                  }}
-                                >
-                                  {raffleActionLoading === `accessoryprize_${r.id}` ? "Granting…" : "Grant"}
-                                </button>
-                              </div>
-                            )
-                          ) : r.prizeTier ? (
-                            `+${r.prizeTier.value} ${(raffleAdmin.prizeKinds ?? []).find((k: any) => k.id === r.prizeKind)?.label ?? r.prizeKind ?? "XP"}`
-                          ) : (
-                            "—"
-                          )}
-                        </td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: C.amberGlow }}>{r.prizeTier ? `+${r.prizeTier.value} XP` : "—"}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute, whiteSpace: "nowrap" }}>{r.resolvedAt ? timeAgo(r.resolvedAt) : r.voidedAt ? timeAgo(r.voidedAt) : "—"}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
                           {r.status !== "void" ? (
