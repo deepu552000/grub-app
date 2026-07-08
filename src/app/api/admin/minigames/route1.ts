@@ -14,7 +14,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAuth } from "@clerk/nextjs/server";
-import { petKey } from "@/lib/pet-key";
 import {
   getCoinTossConfig,
   setCoinTossConfig,
@@ -22,8 +21,6 @@ import {
   getAlerts,
   getPendingCashouts,
   fulfillCashout,
-  creditBalance,
-  getBalance,
   type CoinTossConfig,
 } from "@/lib/minigames";
 
@@ -103,37 +100,6 @@ export async function POST(req: NextRequest) {
       }
       const result = await fulfillCashout(cashoutId);
       return NextResponse.json({ action, cashoutId, ...result });
-    }
-
-    // ── Manually credit a player's internal DEGEN balance — the admin-side
-    // top-up path. Same underlying creditBalance() that an on-chain deposit
-    // flow will call later once that's built; for now this is the only way
-    // DEGEN gets into a player's balance short of winning a flip ────────────
-    if (action === "credit_balance") {
-      const { fid, wallet, amountDegen, reason } = body;
-      const key = petKey(fid ?? null, wallet ?? null);
-      if (!key) {
-        return NextResponse.json({ ok: false, reason: "missing fid or wallet" }, { status: 400 });
-      }
-      const amount = Number(amountDegen);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        return NextResponse.json({ ok: false, reason: "invalid amount" }, { status: 400 });
-      }
-      const newBalance = await creditBalance(key, amount, reason?.trim() || "manual admin top-up");
-      return NextResponse.json({ ok: true, action, identityKey: key, newBalance });
-    }
-
-    // ── Look up a player's current internal balance by fid/wallet — lets
-    // the admin dashboard confirm a credit landed before/without a full
-    // page reload of the whole mini-games panel ────────────────────────────
-    if (action === "lookup_balance") {
-      const { fid, wallet } = body;
-      const key = petKey(fid ?? null, wallet ?? null);
-      if (!key) {
-        return NextResponse.json({ ok: false, reason: "missing fid or wallet" }, { status: 400 });
-      }
-      const balance = await getBalance(key);
-      return NextResponse.json({ ok: true, action, identityKey: key, balance });
     }
 
     return NextResponse.json({ ok: false, reason: `unknown action "${action}"` }, { status: 400 });
