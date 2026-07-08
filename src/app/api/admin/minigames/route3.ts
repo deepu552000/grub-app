@@ -23,7 +23,6 @@ import {
   getPendingCashouts,
   fulfillCashout,
   creditBalance,
-  cancelCredit,
   getBalance,
   getCreditHistory,
   type CoinTossConfig,
@@ -124,18 +123,6 @@ export async function POST(req: NextRequest) {
       }
       const newBalance = await creditBalance(key, amount, reason?.trim() || "manual admin top-up");
       return NextResponse.json({ ok: true, action, identityKey: key, newBalance });
-    }
-
-    // ── Reverse a manual top-up — pulls the credited amount back out of the
-    // player's internal balance and marks the log entry cancelled, for when
-    // an admin credit was a mistake (wrong amount, wrong player, etc.) ──────
-    if (action === "cancel_credit") {
-      const { creditId } = body;
-      if (!creditId) {
-        return NextResponse.json({ ok: false, reason: "missing creditId" }, { status: 400 });
-      }
-      const result = await cancelCredit(creditId);
-      return NextResponse.json({ action, creditId, ...result });
     }
 
     // ── Look up a player's current internal balance by fid/wallet — lets

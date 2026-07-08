@@ -65,9 +65,22 @@ type FailedPayout = {
   broadcastTxHash?: string | null;
 };
 
+// Mirrors CoinTossCredit in lib/minigames.ts — manual balance top-ups only.
+// Deliberately separate from TxnEntry/txn-log: these aren't blockchain
+// transactions, just internal balance adjustments, so they only ever show
+// up in the mini-games admin block below, never in the main Transaction Log.
+type CoinTossCreditEntry = {
+  id: string;
+  identityKey: string;
+  amountDegen: number;
+  reason: string;
+  newBalance: number;
+  ts: number;
+};
+
 type TxnEntry = {
   fid: number | string; // string for Base App wallet-only users, e.g. "wallet:0xabc..."
-  type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin" | "wheel_spin";
+  type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin" | "wheel_spin" | "minigame_cashout";
   txHash: string;
   amountUsd: number;
   amountDegen?: number;
@@ -111,6 +124,7 @@ const TYPE_META: Record<string, { color: string; bg: string; label: string }> = 
   referral_join:    { color: C.amberGlow, bg: "#3b1f6e",  label: "Ref Join"  },
   referral_checkin: { color: C.purple,  bg: "#2e1f5e",   label: "Ref Check" },
   wheel_spin:       { color: "#e879f9", bg: "#4a1d5e",   label: "Spin Wheel" },
+  minigame_cashout: { color: "#dc2626", bg: "#450a0a",   label: "Coin Toss Cash-out" },
 };
 
 function timeAgo(ts: number): string {
@@ -468,6 +482,11 @@ function AdminDashboardInner() {
   const [minigamesAdminLoading, setMinigamesAdminLoading] = useState(true);
   const [minigamesAdminError, setMinigamesAdminError] = useState<string | null>(null);
   const [minigamesConfigDraft, setMinigamesConfigDraft] = useState<Record<string, string>>({});
+  const [creditFid, setCreditFid] = useState("");
+  const [creditWallet, setCreditWallet] = useState("");
+  const [creditAmount, setCreditAmount] = useState("");
+  const [creditReason, setCreditReason] = useState("");
+  const [creditResult, setCreditResult] = useState<string | null>(null);
   const [raffleActionLoading, setRaffleActionLoading] = useState<string | null>(null);
   const [expandedVoidRoundId, setExpandedVoidRoundId] = useState<string | null>(null);
   const [raffleAccessoryInputs, setRaffleAccessoryInputs] = useState<Record<string, string>>({});
@@ -806,6 +825,42 @@ function AdminDashboardInner() {
       setRaffleActionLoading(null);
     }
   }, [authedPost, addToast, loadMinigamesAdmin]);
+
+  const creditPlayerBalance = useCallback(async () => {
+    if (!creditFid.trim() && !creditWallet.trim()) {
+      addToast("✕ Enter an FID or wallet address.", "error");
+      return;
+    }
+    const amount = Number(creditAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      addToast("✕ Enter a valid amount.", "error");
+      return;
+    }
+    setRaffleActionLoading("minigames_credit");
+    setCreditResult(null);
+    try {
+      const res = await authedPost("/api/admin/minigames", {
+        action: "credit_balance",
+        fid: creditFid.trim() || undefined,
+        wallet: creditWallet.trim() || undefined,
+        amountDegen: amount,
+        reason: creditReason.trim() || undefined,
+      });
+      if (res?.ok) {
+        addToast(`✓ Credited ${amount} DEGEN — new balance ${res.newBalance}.`, "success");
+        setCreditResult(`${res.identityKey} → ${res.newBalance} DEGEN`);
+        setCreditAmount("");
+        setCreditReason("");
+        loadMinigamesAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Credit failed"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Credit failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, creditFid, creditWallet, creditAmount, creditReason, loadMinigamesAdmin]);
 
   // Runs the same reveal→lock→open sequence the Sunday cron does, out of
   // schedule. Safe to click any time — each step is a no-op if there's
@@ -2289,6 +2344,82 @@ function AdminDashboardInner() {
 
             <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
               <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: T.creamMute, borderBottom: `1px solid ${T.border}` }}>
+                Add DEGEN Balance
+              </div>
+              <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 11, color: T.textMute, lineHeight: 1.5 }}>
+                  Manual top-up — same balance a player spins/tosses with. Enter either an FID or a
+                  wallet address (whichever the player used). This is a placeholder for the on-chain
+                  deposit flow — once that ships, a real deposit will credit here automatically instead.
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <input
+                    placeholder="FID"
+                    value={creditFid}
+                    onChange={(e) => setCreditFid(e.target.value)}
+                    style={{ flex: "1 1 90px", minWidth: 90, background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 9px", fontSize: 12, color: T.cream }}
+                  />
+                  <input
+                    placeholder="Wallet address (0x…)"
+                    value={creditWallet}
+                    onChange={(e) => setCreditWallet(e.target.value)}
+                    style={{ flex: "2 1 200px", minWidth: 160, background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 9px", fontSize: 12, fontFamily: "monospace", color: T.cream }}
+                  />
+                  <input
+                    placeholder="Amount DEGEN"
+                    type="number"
+                    min={0}
+                    value={creditAmount}
+                    onChange={(e) => setCreditAmount(e.target.value)}
+                    style={{ flex: "1 1 110px", minWidth: 100, background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 9px", fontSize: 12, color: T.cream }}
+                  />
+                  <input
+                    placeholder="Reason (optional)"
+                    value={creditReason}
+                    onChange={(e) => setCreditReason(e.target.value)}
+                    style={{ flex: "2 1 160px", minWidth: 140, background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 9px", fontSize: 12, color: T.cream }}
+                  />
+                  <button
+                    onClick={creditPlayerBalance}
+                    disabled={raffleActionLoading === "minigames_credit"}
+                    style={{ background: C.green, color: "#fff", border: "none", borderRadius: 6, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    {raffleActionLoading === "minigames_credit" ? "Adding…" : "Add Balance"}
+                  </button>
+                </div>
+                {creditResult && (
+                  <div style={{ fontSize: 11, fontFamily: "monospace", color: T.textMute }}>{creditResult}</div>
+                )}
+              </div>
+              {/* Manual top-ups only — internal balance adjustments, not
+                  blockchain transactions, so this history lives only here
+                  and never in the main Transaction Log below. */}
+              <div style={{ borderTop: `1px solid ${T.border}` }}>
+                <div style={{ padding: "8px 14px", fontSize: 11, fontWeight: 700, color: T.creamMute, background: T.surfaceAlt }}>
+                  Recent Manual Credits
+                </div>
+                <div style={{ maxHeight: 180, overflowY: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                    <tbody>
+                      {(minigamesAdmin?.creditHistory ?? []).length === 0 ? (
+                        <tr><td style={{ padding: "14px", textAlign: "center", color: T.textMute }}>No manual credits yet.</td></tr>
+                      ) : (minigamesAdmin.creditHistory as CoinTossCreditEntry[]).map((c) => (
+                        <tr key={c.id} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
+                          <td style={{ padding: "7px 14px", fontFamily: "monospace" }}>{c.identityKey}</td>
+                          <td style={{ padding: "7px 14px", color: T.textSub, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.reason}>{c.reason}</td>
+                          <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: C.green }}>+{c.amountDegen} DEGEN</td>
+                          <td style={{ padding: "7px 14px", textAlign: "right", color: T.textMute }}>bal {c.newBalance}</td>
+                          <td style={{ padding: "7px 14px", textAlign: "right", color: T.textMute }}>{timeAgo(c.ts)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: T.creamMute, borderBottom: `1px solid ${T.border}` }}>
                 Pending Cash-outs {(minigamesAdmin?.pendingCashouts ?? []).length > 0 && `(${minigamesAdmin.pendingCashouts.length})`}
               </div>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -2376,6 +2507,10 @@ function AdminDashboardInner() {
                     detail = `→ fid ${t.toFid ?? "?"} ${shortAddr(t.toWallet) ? `(${shortAddr(t.toWallet)})` : ""}`;
                     amount = `${t.amountDegen ?? 0} DEGEN`;
                     amountColor = dark ? C.amberGlow : "#92400e";
+                  } else if (t.type === "minigame_cashout") {
+                    detail = "Coin Toss cash-out";
+                    amount = `${t.amountDegen ?? 0} DEGEN`;
+                    amountColor = "#dc2626";
                   } else if (t.amountUsd > 0) {
                     amount = `$${t.amountUsd.toFixed(2)}`;
                     amountColor = C.green;

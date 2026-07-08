@@ -76,6 +76,8 @@ type CoinTossCreditEntry = {
   reason: string;
   newBalance: number;
   ts: number;
+  cancelled?: boolean;
+  cancelledAt?: number;
 };
 
 type TxnEntry = {
@@ -821,6 +823,24 @@ function AdminDashboardInner() {
       }
     } catch (err: any) {
       addToast(`✕ ${err?.message ?? "Cash-out failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadMinigamesAdmin]);
+
+  const cancelMinigamesCredit = useCallback(async (creditId: string) => {
+    const loadingKey = `credit_cancel_${creditId}`;
+    setRaffleActionLoading(loadingKey);
+    try {
+      const res = await authedPost("/api/admin/minigames", { action: "cancel_credit", creditId });
+      if (res?.ok) {
+        addToast(`✓ Cancelled — balance now ${res.newBalance} DEGEN.`, "success");
+        loadMinigamesAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Cancel failed"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Cancel failed"}`, "error");
     } finally {
       setRaffleActionLoading(null);
     }
@@ -2404,12 +2424,25 @@ function AdminDashboardInner() {
                       {(minigamesAdmin?.creditHistory ?? []).length === 0 ? (
                         <tr><td style={{ padding: "14px", textAlign: "center", color: T.textMute }}>No manual credits yet.</td></tr>
                       ) : (minigamesAdmin.creditHistory as CoinTossCreditEntry[]).map((c) => (
-                        <tr key={c.id} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
+                        <tr key={c.id} style={{ borderBottom: `1px solid ${T.borderSub}`, opacity: c.cancelled ? 0.5 : 1 }}>
                           <td style={{ padding: "7px 14px", fontFamily: "monospace" }}>{c.identityKey}</td>
                           <td style={{ padding: "7px 14px", color: T.textSub, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.reason}>{c.reason}</td>
-                          <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: C.green }}>+{c.amountDegen} DEGEN</td>
+                          <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: c.cancelled ? T.textMute : C.green, textDecoration: c.cancelled ? "line-through" : "none" }}>+{c.amountDegen} DEGEN</td>
                           <td style={{ padding: "7px 14px", textAlign: "right", color: T.textMute }}>bal {c.newBalance}</td>
                           <td style={{ padding: "7px 14px", textAlign: "right", color: T.textMute }}>{timeAgo(c.ts)}</td>
+                          <td style={{ padding: "7px 14px", textAlign: "right" }}>
+                            {c.cancelled ? (
+                              <span style={{ fontSize: 10, fontWeight: 700, color: T.textMute }}>Cancelled</span>
+                            ) : (
+                              <button
+                                onClick={() => cancelMinigamesCredit(c.id)}
+                                disabled={raffleActionLoading === `credit_cancel_${c.id}`}
+                                style={{ background: "transparent", border: `1px solid ${C.red}`, color: C.red, borderRadius: 5, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+                              >
+                                {raffleActionLoading === `credit_cancel_${c.id}` ? "…" : "Cancel"}
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

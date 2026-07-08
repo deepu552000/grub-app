@@ -105,8 +105,6 @@ export type CreditHistoryEntry = {
   reason: string;
   newBalance: number;
   ts: number;
-  cancelled?: boolean;
-  cancelledAt?: number;
 };
 
 const CREDIT_HISTORY_KEY = "grub:minigames:credithistory";
@@ -142,30 +140,6 @@ export async function creditBalance(identityKey: string, amountDegen: number, re
     ts: Date.now(),
   });
   return next;
-}
-
-/**
- * Reverses a manual top-up — pulls the same amount back out of the
- * player's internal balance and marks the log entry as cancelled so the
- * admin dashboard can grey it out instead of re-showing a "Cancel" button.
- * Only ever touches entries created by creditBalance() above; never used
- * for game-outcome balance changes.
- */
-export async function cancelCredit(creditId: string): Promise<
-  { ok: true; identityKey: string; newBalance: number } | { ok: false; reason: string }
-> {
-  const list = (await kv.get<CreditHistoryEntry[]>(CREDIT_HISTORY_KEY)) ?? [];
-  const entry = list.find((c) => c.id === creditId);
-  if (!entry) return { ok: false, reason: "credit entry not found" };
-  if (entry.cancelled) return { ok: false, reason: "already cancelled" };
-
-  const newBalance = await adjustBalance(entry.identityKey, -entry.amountDegen);
-  entry.cancelled = true;
-  entry.cancelledAt = Date.now();
-  await kv.set(CREDIT_HISTORY_KEY, list);
-
-  console.log(`[minigames] cancelled credit ${creditId} — reversed ${entry.amountDegen} DEGEN from ${entry.identityKey}, new balance ${newBalance}`);
-  return { ok: true, identityKey: entry.identityKey, newBalance };
 }
 
 // ── Flip log + rolling P&L ───────────────────────────────────────────────
