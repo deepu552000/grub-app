@@ -33,6 +33,7 @@ import {
   MAX_TICKETS_PER_USER_PER_ROUND,
   TICKET_PRICE_MICRO_USDC,
   PRIZE_KIND_LABELS,
+  pickTierForKind,
 } from "@/lib/raffle";
 
 const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -133,6 +134,13 @@ export async function GET(req: NextRequest) {
         // null until admin picks one from the dashboard — UI should show
         // "prize: to be announced" rather than nothing in that case.
         prizeKindLabel: round.prizeKind ? (PRIZE_KIND_LABELS as any)[round.prizeKind] ?? null : null,
+        // Live estimate, not final — can still go up as more tickets sell
+        // this week. null for "accessory" (no numeric ladder) or if no
+        // prize kind has been picked yet.
+        projectedPrizeValue:
+          round.prizeKind && round.prizeKind !== "accessory"
+            ? pickTierForKind(round.prizeKind as any, roundTotal)?.value ?? null
+            : null,
       },
       myTickets,
       maxTicketsPerUser: MAX_TICKETS_PER_USER_PER_ROUND,

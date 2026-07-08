@@ -1796,6 +1796,14 @@ function AdminDashboardInner() {
                 Pending — if not set before lock, system will auto-pick one at random.
               </span>
             )}
+            {raffleAdmin.open.prizeKind && raffleAdmin.open.projectedPrize && (
+              <span style={{ fontSize: 11, color: T.textMute }}>
+                Projected: <b style={{ color: C.amberGlow }}>{raffleAdmin.open.projectedPrize.value} {raffleAdmin.open.projectedPrize.label}</b> at current {raffleAdmin.open.ticketCount ?? 0} ticket(s) — updates live as tickets sell, final at lock
+              </span>
+            )}
+            {raffleAdmin.open.prizeKind === "accessory" && (
+              <span style={{ fontSize: 11, color: T.textMute }}>Accessory — you'll pick the specific item after reveal, no ticket-based amount.</span>
+            )}
           </div>
         )}
 
@@ -1897,6 +1905,9 @@ function AdminDashboardInner() {
           <div style={{ background: T.surface, border: `1px solid ${C.purple}`, borderRadius: 12, padding: "12px 16px", marginBottom: "1rem", fontSize: 12, color: T.textMute }}>
             Round {raffleAdmin.awaitingReveal.id} locked with {raffleAdmin.awaitingReveal.ticketCountAtLock ?? 0} ticket(s).
             {" "}Prize: <b>{raffleAdmin.awaitingReveal.prizeKind ? (raffleAdmin.prizeKinds ?? []).find((k: any) => k.id === raffleAdmin.awaitingReveal.prizeKind)?.label ?? raffleAdmin.awaitingReveal.prizeKind : "—"}</b>
+            {raffleAdmin.awaitingReveal.projectedPrize && (
+              <> — <b style={{ color: C.amberGlow }}>{raffleAdmin.awaitingReveal.projectedPrize.value} {raffleAdmin.awaitingReveal.projectedPrize.label}</b> (final, locked in)</>
+            )}
             {raffleAdmin.awaitingReveal.prizeKindAutoSelected && <span style={{ color: C.red }}> (auto-selected — none was set before lock)</span>}
             .
             {" "}Target block {raffleAdmin.awaitingReveal.targetBlock ?? "—"}

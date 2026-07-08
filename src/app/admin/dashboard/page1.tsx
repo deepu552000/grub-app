@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, Suspense, Fragment } from "react";
 import { useAuth, useClerk } from "@clerk/nextjs";
 
 type DebugUser = {
@@ -121,6 +121,19 @@ function timeAgo(ts: number): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// Same idea as timeAgo but for a FUTURE timestamp — used for the raffle's
+// open-round lock countdown, which timeAgo can't express (it only ever
+// reads "Xm ago").
+function timeUntil(ts: number): string {
+  const diff = ts - Date.now();
+  if (diff <= 0) return "any moment";
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ${mins % 60}m`;
+  return `${Math.floor(hrs / 24)}d ${hrs % 24}h`;
 }
 
 function shortAddr(s?: string): string {
@@ -448,6 +461,12 @@ function AdminDashboardInner() {
   const [accessoryToUnlock, setAccessoryToUnlock] = useState("");
   const [newReferrerFid, setNewReferrerFid] = useState("");
   const [triggerRealPayout, setTriggerRealPayout] = useState(false);
+  const [raffleAdmin, setRaffleAdmin] = useState<any>(null);
+  const [raffleAdminLoading, setRaffleAdminLoading] = useState(true);
+  const [raffleAdminError, setRaffleAdminError] = useState<string | null>(null);
+  const [raffleActionLoading, setRaffleActionLoading] = useState<string | null>(null);
+  const [expandedVoidRoundId, setExpandedVoidRoundId] = useState<string | null>(null);
+  const [raffleAccessoryInputs, setRaffleAccessoryInputs] = useState<Record<string, string>>({});
 
   const authedGet = useCallback(async (path: string) => {
     const token = await getToken();
@@ -673,7 +692,219 @@ function AdminDashboardInner() {
     load();
   }, [load]);
 
-  // Resolve FID -> Farcaster username/displayName once users are loaded.
+  // ── Raffle admin data — independent of the main load(), same reasoning
+  // as the treasury/pool fetch above: a raffle hiccup shouldn't block the
+  // rest of the dashboard from loading.
+  const loadRaffleAdmin = useCallback(async () => {
+    setRaffleAdminLoading(true);
+    setRaffleAdminError(null);
+    try {
+      const res = await authedGet("/api/admin/raffle");
+      if (res?.reason === "Unauthorized" || res?.ok === false) {
+        setRaffleAdminError(res?.reason ?? "Failed to load raffle data");
+        return;
+      }
+      setRaffleAdmin(res);
+    } catch (err: any) {
+      setRaffleAdminError(err?.message ?? "Failed to load raffle data");
+    } finally {
+      setRaffleAdminLoading(false);
+    }
+  }, [authedGet]);
+
+  useEffect(() => {
+    loadRaffleAdmin();
+  }, [loadRaffleAdmin]);
+
+  // Runs the same reveal→lock→open sequence the Sunday cron does, out of
+  // schedule. Safe to click any time — each step is a no-op if there's
+  // nothing for it to do.
+  const forceDrawRaffle = useCallback(async () => {
+    if (!window.confirm("Force a raffle draw right now? This reveals any round awaiting reveal, locks the current open round, and opens a new one.")) return;
+    setRaffleActionLoading("force_draw");
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "force_draw" });
+      if (res?.ok) {
+        addToast("✓ Raffle draw forced.", "success");
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Force draw failed"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Force draw failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
+
+  // Reveals a stuck "awaiting reveal" round WITHOUT locking/opening the
+  // currently-open round — safe to click repeatedly while waiting on the
+  // target block, unlike Force Draw Now which also force-locks whatever
+  // round is open right now.
+  const forceRevealOnly = useCallback(async () => {
+    setRaffleActionLoading("force_reveal_only");
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "force_reveal_only" });
+      if (res?.ok && res.revealed) {
+        addToast("✓ Round revealed.", "success");
+      } else if (res?.ok) {
+        addToast(`ℹ ${res?.reason ?? "Not revealed yet"}${res?.currentBlock != null ? ` (block ${res.currentBlock}/${res.targetBlock})` : ""}`, "error");
+      } else {
+        addToast(`✕ ${res?.reason ?? "Force reveal failed"}`, "error");
+      }
+      loadRaffleAdmin();
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Force reveal failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
+
+  // Voids an in-flight round without drawing a winner. Does not auto-refund
+  // entrants — same philosophy as the rest of the admin toolkit.
+  const voidRaffleRound = useCallback(async (roundId: string) => {
+    const reason = window.prompt(`Void round ${roundId}? Tickets are NOT auto-refunded. Enter a reason:`);
+    if (reason === null) return;
+    setRaffleActionLoading(`void_${roundId}`);
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "void_round", roundId, reason: reason || "voided by admin" });
+      if (res?.ok) {
+        addToast(`✓ Round ${roundId} voided.`, "success");
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Void failed"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Void failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
+
+  // Refunds one entrant of a voided round — sends real USDC out of the
+  // treasury (same env-configured wallet the referral DEGEN payouts use).
+  // Idempotent server-side via round.refunds, so a repeated click after a
+  // refresh just comes back "already refunded" instead of double-paying.
+  const refundRaffleEntrant = useCallback(async (roundId: string, identityKey: string, amountMicroUsdc: number) => {
+    const amountUsd = (amountMicroUsdc / 1_000_000).toFixed(2);
+    if (!window.confirm(`Refund $${amountUsd} USDC to ${identityKey}? This sends real money from the treasury.`)) return;
+    const loadingKey = `refund_${roundId}_${identityKey}`;
+    setRaffleActionLoading(loadingKey);
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "refund_entrant", roundId, identityKey });
+      if (res?.ok) {
+        addToast(`✓ Refunded $${amountUsd} to ${identityKey} (tx ${String(res.txHash ?? "").slice(0, 10)}…)`, "success");
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Refund failed"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Refund failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
+
+  // Refunds every entrant of a voided round, one USDC send each. Each
+  // entrant refunds independently server-side — a single bad wallet lookup
+  // or RPC hiccup doesn't block or roll back the others, so check the
+  // partial-failure toast below and retry just the failed ones individually.
+  const refundRaffleAll = useCallback(async (roundId: string, entrantCount: number) => {
+    if (!window.confirm(`Refund ALL ${entrantCount} entrant(s) in round ${roundId}? This sends real USDC from the treasury — one transaction per entrant.`)) return;
+    const loadingKey = `refundall_${roundId}`;
+    setRaffleActionLoading(loadingKey);
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "refund_all", roundId });
+      if (res?.ok) {
+        const results = res.results ?? [];
+        const okCount = results.filter((r: any) => r.ok).length;
+        const failCount = results.length - okCount;
+        addToast(
+          failCount > 0
+            ? `✓ Refunded ${okCount}/${results.length} — ${failCount} failed (see console + failed-refunds log)`
+            : `✓ Refunded all ${okCount} entrant(s).`,
+          failCount > 0 ? "error" : "success",
+        );
+        if (failCount > 0) console.error("[raffle] refund_all partial failures:", results.filter((r: any) => !r.ok));
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Refund all failed"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Refund all failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
+
+  // Picks/changes the open round's prize kind. Server-side enforces
+  // "only while open" — setRoundPrizeKind() throws once the round locks, so
+  // a stale dropdown click after a lock can't retroactively change what's
+  // already been auto-picked.
+  const setRafflePrizeKind = useCallback(async (roundId: string, kind: string) => {
+    setRaffleActionLoading(`prizekind_${roundId}`);
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "set_prize_kind", roundId, prizeKind: kind });
+      if (res?.ok) {
+        addToast(`✓ Prize set to ${kind.toUpperCase()} for round ${roundId}.`, "success");
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Could not set prize"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Could not set prize"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
+
+  // Sends a round's pending DEGEN prize. System builds and broadcasts the
+  // transfer itself (same treasury/sendDegen as referral payouts) — admin
+  // only clicks the button, no amount or tx hash entry.
+  const sendDegenPrize = useCallback(async (roundId: string, amountDegen: number, winnerKey: string) => {
+    if (!window.confirm(`Send ${amountDegen} DEGEN to ${winnerKey}? This sends real tokens from the treasury.`)) return;
+    const loadingKey = `degenprize_${roundId}`;
+    setRaffleActionLoading(loadingKey);
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "send_degen_prize", roundId });
+      if (res?.ok) {
+        addToast(`✓ Sent ${amountDegen} DEGEN (tx ${String(res.txHash ?? "").slice(0, 10)}…)`, "success");
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "DEGEN payout failed"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "DEGEN payout failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
+
+  // Grants a round's pending accessory prize — admin types/picks the
+  // accessory id, writes straight into the winner's closet.
+  const grantRaffleAccessory = useCallback(async (roundId: string, accessoryId: string) => {
+    if (!accessoryId.trim()) {
+      addToast("✕ Enter an accessory id first.", "error");
+      return;
+    }
+    const loadingKey = `accessoryprize_${roundId}`;
+    setRaffleActionLoading(loadingKey);
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "grant_accessory_prize", roundId, accessoryId: accessoryId.trim() });
+      if (res?.ok) {
+        addToast(`✓ Granted accessory "${accessoryId.trim()}".`, "success");
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Accessory grant failed"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Accessory grant failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
+
+
   // Only fetches fids we don't already have cached.
   useEffect(() => {
     if (users.length === 0) return;
@@ -1255,6 +1486,19 @@ function AdminDashboardInner() {
                               <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textSub }}>—</span>
                             )
                           )}
+                          {u.accessoriesUnlocked && u.accessoriesUnlocked.length > 0 && (
+                            <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, minWidth: 0 }}>
+                              {u.accessoriesUnlocked.map((id) => (
+                                <span key={id} title={id} style={{
+                                  fontSize: 10, padding: "2px 8px", borderRadius: 5,
+                                  background: T.bg, border: `1px solid ${dark ? C.amberGlow : "#7c3aed"}55`,
+                                  color: dark ? C.amberGlow : "#7c3aed", fontWeight: 500, whiteSpace: "nowrap",
+                                }}>
+                                  {id}
+                                </span>
+                              ))}
+                            </span>
+                          )}
                           <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textMute, marginLeft: "auto", flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp · {u.totalCheckIns || 0} checkin</span>
                         </div>
                       );
@@ -1307,6 +1551,19 @@ function AdminDashboardInner() {
                             ) : (
                               <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textSub }}>—</span>
                             )
+                          )}
+                          {u.accessoriesUnlocked && u.accessoriesUnlocked.length > 0 && (
+                            <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, minWidth: 0 }}>
+                              {u.accessoriesUnlocked.map((id) => (
+                                <span key={id} title={id} style={{
+                                  fontSize: 10, padding: "2px 8px", borderRadius: 5,
+                                  background: T.bg, border: `1px solid ${dark ? C.amberGlow : "#7c3aed"}55`,
+                                  color: dark ? C.amberGlow : "#7c3aed", fontWeight: 500, whiteSpace: "nowrap",
+                                }}>
+                                  {id}
+                                </span>
+                              ))}
+                            </span>
                           )}
                           <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textMute, marginLeft: "auto", flexShrink: 0 }}>0 xp · 0 checkin</span>
                         </div>
@@ -1483,6 +1740,357 @@ function AdminDashboardInner() {
                         </a>
                       </td>
                     </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* ── Raffle ── */}
+        <SectionLabel dark={dark} accent="#fbbf24">🎟️ Raffle</SectionLabel>
+        {raffleAdminError && (
+          <div style={{ background: C.redDim, border: `1px solid ${C.red}`, borderRadius: 10, padding: "10px 14px", marginBottom: "1rem", color: C.red, fontSize: 12 }}>
+            {raffleAdminError}
+          </div>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: "1rem" }}>
+          {[
+            { key: "open", label: "Open Round", value: raffleAdmin?.open?.id ?? "—", color: "#fbbf24" },
+            { key: "tickets", label: "Tickets Sold (open)", value: raffleAdmin?.open?.ticketCount ?? 0, color: C.green },
+            { key: "entrants", label: "Entrants (open)", value: raffleAdmin?.open?.entrants?.length ?? 0, color: C.blue },
+            { key: "awaiting", label: "Awaiting Reveal", value: raffleAdmin?.awaitingReveal?.id ?? "none", color: C.purple },
+          ].map((card) => (
+            <div key={card.key} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 14px" }}>
+              <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.creamMute, margin: "0 0 6px" }}>{card.label}</p>
+              <p style={{ fontSize: 18, fontWeight: 800, color: card.color, margin: 0, fontVariantNumeric: "tabular-nums" }}>{String(card.value)}</p>
+            </div>
+          ))}
+        </div>
+
+        {raffleAdmin?.open && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+            background: T.surface, border: `1px solid ${raffleAdmin.open.prizeKind ? T.border : C.red}`, borderRadius: 12,
+            padding: "10px 14px", marginBottom: "1rem",
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>
+              Prize for round {raffleAdmin.open.id}:
+            </span>
+            <select
+              value={raffleAdmin.open.prizeKind ?? ""}
+              onChange={(e) => e.target.value && setRafflePrizeKind(raffleAdmin.open.id, e.target.value)}
+              disabled={raffleActionLoading === `prizekind_${raffleAdmin.open.id}`}
+              style={{
+                background: T.surfaceAlt, color: T.cream, border: `1px solid ${T.border}`, borderRadius: 6,
+                padding: "5px 8px", fontSize: 12, fontWeight: 600,
+              }}
+            >
+              <option value="" disabled>— Pending, select one —</option>
+              {(raffleAdmin.prizeKinds ?? []).map((k: any) => (
+                <option key={k.id} value={k.id}>{k.label}</option>
+              ))}
+            </select>
+            {!raffleAdmin.open.prizeKind && (
+              <span style={{ fontSize: 11, color: C.red }}>
+                Pending — if not set before lock, system will auto-pick one at random.
+              </span>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginBottom: "1rem", flexWrap: "wrap" }}>
+          <button
+            onClick={forceDrawRaffle}
+            disabled={raffleActionLoading === "force_draw"}
+            style={{
+              background: "#fbbf24", color: "#1a1305", border: "none", borderRadius: 8,
+              padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
+            }}
+          >
+            {raffleActionLoading === "force_draw" ? "Drawing…" : "⚡ Force Draw Now"}
+          </button>
+          {raffleAdmin?.awaitingReveal && (
+            <button
+              onClick={forceRevealOnly}
+              disabled={raffleActionLoading === "force_reveal_only"}
+              style={{
+                background: C.purple, color: "#fff", border: "none", borderRadius: 8,
+                padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
+              }}
+            >
+              {raffleActionLoading === "force_reveal_only" ? "Revealing…" : "🔮 Force Reveal Only"}
+            </button>
+          )}
+          {raffleAdmin?.open && (
+            <button
+              onClick={() => voidRaffleRound(raffleAdmin.open.id)}
+              disabled={raffleActionLoading === `void_${raffleAdmin.open.id}`}
+              style={{
+                background: "transparent", color: C.red, border: `1px solid ${C.red}`, borderRadius: 8,
+                padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+              }}
+            >
+              {raffleActionLoading === `void_${raffleAdmin.open.id}` ? "Voiding…" : `Void Open Round (${raffleAdmin.open.id})`}
+            </button>
+          )}
+          {raffleAdmin?.awaitingReveal && (
+            <button
+              onClick={() => voidRaffleRound(raffleAdmin.awaitingReveal.id)}
+              disabled={raffleActionLoading === `void_${raffleAdmin.awaitingReveal.id}`}
+              style={{
+                background: "transparent", color: C.red, border: `1px solid ${C.red}`, borderRadius: 8,
+                padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+              }}
+            >
+              {raffleActionLoading === `void_${raffleAdmin.awaitingReveal.id}` ? "Voiding…" : `Void Awaiting-Reveal (${raffleAdmin.awaitingReveal.id})`}
+            </button>
+          )}
+          <button
+            onClick={loadRaffleAdmin}
+            disabled={raffleAdminLoading}
+            style={{
+              background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 8,
+              padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+            }}
+          >
+            {raffleAdminLoading ? "Loading…" : "↻ Refresh"}
+          </button>
+        </div>
+
+        {/* Entrants — open round */}
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1rem" }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
+            <span style={{ fontSize: 12, color: T.textMute }}>
+              Entrants — open round {raffleAdmin?.open?.id ?? ""} {raffleAdmin?.open?.locksAt ? `· locks in ${timeUntil(raffleAdmin.open.locksAt)}` : ""}
+            </span>
+          </div>
+          <div style={{ overflowX: "auto", maxHeight: 240, overflowY: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
+                  {["Identity", "Tickets"].map((h, i) => (
+                    <th key={h} style={{
+                      textAlign: i >= 1 ? "right" : "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700,
+                      letterSpacing: "0.06em", textTransform: "uppercase", fontSize: 10,
+                      borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt,
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {!raffleAdmin?.open?.entrants?.length ? (
+                  <tr><td colSpan={2} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No entrants yet this round.</td></tr>
+                ) : raffleAdmin.open.entrants.map((e: any, i: number) => (
+                  <tr key={e.identityKey} style={{ borderBottom: `1px solid ${T.borderSub}`, background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55" }}>
+                    <td style={{ padding: "9px 14px", fontFamily: "monospace", color: dark ? C.amberGlow : "#7c3aed", fontSize: 11 }}>{e.identityKey}</td>
+                    <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 700, color: C.green }}>{e.tickets}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Awaiting-reveal round detail, only shown when one exists */}
+        {raffleAdmin?.awaitingReveal && (
+          <div style={{ background: T.surface, border: `1px solid ${C.purple}`, borderRadius: 12, padding: "12px 16px", marginBottom: "1rem", fontSize: 12, color: T.textMute }}>
+            Round {raffleAdmin.awaitingReveal.id} locked with {raffleAdmin.awaitingReveal.ticketCountAtLock ?? 0} ticket(s).
+            {" "}Prize: <b>{raffleAdmin.awaitingReveal.prizeKind ? (raffleAdmin.prizeKinds ?? []).find((k: any) => k.id === raffleAdmin.awaitingReveal.prizeKind)?.label ?? raffleAdmin.awaitingReveal.prizeKind : "—"}</b>
+            {raffleAdmin.awaitingReveal.prizeKindAutoSelected && <span style={{ color: C.red }}> (auto-selected — none was set before lock)</span>}
+            .
+            {" "}Target block {raffleAdmin.awaitingReveal.targetBlock ?? "—"}
+            {raffleAdmin.awaitingReveal.currentBlock != null && raffleAdmin.awaitingReveal.targetBlock != null && (
+              <>
+                {" "}· currently at <b style={{ color: raffleAdmin.awaitingReveal.currentBlock >= raffleAdmin.awaitingReveal.targetBlock ? C.green : T.textMute }}>
+                  {raffleAdmin.awaitingReveal.currentBlock}/{raffleAdmin.awaitingReveal.targetBlock}
+                </b>
+                {raffleAdmin.awaitingReveal.currentBlock >= raffleAdmin.awaitingReveal.targetBlock
+                  ? " (past target — safe to Force Reveal Only)"
+                  : ` (${raffleAdmin.awaitingReveal.targetBlock - raffleAdmin.awaitingReveal.currentBlock} blocks left)`}
+              </>
+            )}
+            {" "}— will reveal automatically once that block is mined, or click Force Reveal Only above (updates on manual Refresh, not automatically).
+          </div>
+        )}
+
+        {/* History */}
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.borderSub}` }}>
+            <span style={{ fontSize: 12, color: T.textMute }}>Round History</span>
+          </div>
+          <div style={{ overflowX: "auto", maxHeight: 280, overflowY: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: T.surfaceAlt, position: "sticky", top: 0 }}>
+                  {["Round", "Status", "Tickets", "Winner", "Prize", "Resolved", "Refunds"].map((h, i) => (
+                    <th key={h} style={{
+                      textAlign: i >= 2 ? "right" : "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700,
+                      letterSpacing: "0.06em", textTransform: "uppercase", fontSize: 10,
+                      borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt,
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {!raffleAdmin?.history?.length ? (
+                  <tr><td colSpan={7} style={{ padding: "24px 14px", textAlign: "center", color: T.textMute }}>No rounds resolved yet.</td></tr>
+                ) : raffleAdmin.history.map((r: any, i: number) => {
+                  const statusColor = r.status === "resolved" ? C.green : r.status === "void" ? C.red : r.status === "no_entrants" ? T.creamMute : C.blue;
+                  const ticketPrice = r.ticketPriceMicroUsdc ?? 100_000;
+                  const entrants = r.entrants ?? []; // only populated by the API for void rounds
+                  const refundedCount = entrants.filter((e: any) => r.refunds?.[e.identityKey]).length;
+                  const isExpanded = expandedVoidRoundId === r.id;
+                  return (
+                    <Fragment key={r.id}>
+                      <tr style={{ borderBottom: `1px solid ${T.borderSub}`, background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55" }}>
+                        <td style={{ padding: "9px 14px", fontWeight: 600 }}>{r.id}</td>
+                        <td style={{ padding: "9px 14px", color: statusColor, fontWeight: 700, textTransform: "capitalize" }}>{r.status.replace("_", " ")}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right" }}>{r.ticketCountAtLock ?? 0}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", fontFamily: "monospace", fontSize: 11, color: dark ? C.amberGlow : "#7c3aed" }}>{r.winnerKey ?? "—"}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: C.amberGlow }}>
+                          {r.pendingPrize ? (
+                            r.pendingPrize.kind === "degen" ? (
+                              r.pendingPrize.status === "fulfilled" ? (
+                                <span style={{ color: C.green, fontSize: 11 }} title={r.pendingPrize.txHash}>
+                                  ✓ {r.pendingPrize.amountDegen} DEGEN sent
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => sendDegenPrize(r.id, r.pendingPrize.amountDegen, r.pendingPrize.winnerKey)}
+                                  disabled={raffleActionLoading === `degenprize_${r.id}`}
+                                  style={{
+                                    background: C.amberGlow, color: "#1a1305", border: "none", borderRadius: 6,
+                                    padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
+                                  }}
+                                >
+                                  {raffleActionLoading === `degenprize_${r.id}` ? "Sending…" : `Send ${r.pendingPrize.amountDegen} DEGEN`}
+                                </button>
+                              )
+                            ) : r.pendingPrize.status === "fulfilled" ? (
+                              <span style={{ color: C.green, fontSize: 11 }}>✓ granted "{r.pendingPrize.accessoryId}"</span>
+                            ) : (
+                              <div style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                                <input
+                                  value={raffleAccessoryInputs[r.id] ?? ""}
+                                  onChange={(e) => setRaffleAccessoryInputs((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                                  placeholder="accessory id"
+                                  style={{
+                                    width: 90, background: T.surfaceAlt, color: T.cream, border: `1px solid ${T.border}`,
+                                    borderRadius: 6, padding: "3px 6px", fontSize: 10,
+                                  }}
+                                />
+                                <button
+                                  onClick={() => grantRaffleAccessory(r.id, raffleAccessoryInputs[r.id] ?? "")}
+                                  disabled={raffleActionLoading === `accessoryprize_${r.id}`}
+                                  style={{
+                                    background: C.amberGlow, color: "#1a1305", border: "none", borderRadius: 6,
+                                    padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
+                                  }}
+                                >
+                                  {raffleActionLoading === `accessoryprize_${r.id}` ? "Granting…" : "Grant"}
+                                </button>
+                              </div>
+                            )
+                          ) : r.prizeTier ? (
+                            `+${r.prizeTier.value} ${(raffleAdmin.prizeKinds ?? []).find((k: any) => k.id === r.prizeKind)?.label ?? r.prizeKind ?? "XP"}`
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute, whiteSpace: "nowrap" }}>{r.resolvedAt ? timeAgo(r.resolvedAt) : r.voidedAt ? timeAgo(r.voidedAt) : "—"}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
+                          {r.status !== "void" ? (
+                            <span style={{ color: T.textMute }}>—</span>
+                          ) : entrants.length === 0 ? (
+                            <span style={{ color: T.textMute }}>no entrants</span>
+                          ) : (
+                            <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                              <span style={{ color: refundedCount === entrants.length ? C.green : T.textMute, fontSize: 11 }}>
+                                {refundedCount}/{entrants.length} refunded
+                              </span>
+                              <button
+                                onClick={() => setExpandedVoidRoundId(isExpanded ? null : r.id)}
+                                style={{
+                                  background: "transparent", color: dark ? C.amberGlow : "#7c3aed", border: `1px solid ${T.border}`, borderRadius: 6,
+                                  padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                                }}
+                              >
+                                {isExpanded ? "Hide" : "View"}
+                              </button>
+                              {refundedCount < entrants.length && (
+                                <button
+                                  onClick={() => refundRaffleAll(r.id, entrants.length)}
+                                  disabled={raffleActionLoading === `refundall_${r.id}`}
+                                  style={{
+                                    background: C.red, color: "#fff", border: "none", borderRadius: 6,
+                                    padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
+                                  }}
+                                >
+                                  {raffleActionLoading === `refundall_${r.id}` ? "Refunding…" : "Refund All"}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                      {isExpanded && r.status === "void" && (
+                        <tr>
+                          <td colSpan={7} style={{ padding: 0, background: dark ? "#0a0a0f" : "#faf7f2" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                              <thead>
+                                <tr>
+                                  {["Identity", "Tickets", "Amount", "Status", ""].map((h, hi) => (
+                                    <th key={h} style={{
+                                      textAlign: hi >= 1 && hi <= 2 ? "right" : "left", padding: "7px 14px 7px 28px",
+                                      color: T.creamMute, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", fontSize: 9,
+                                      borderBottom: `1px solid ${T.borderSub}`,
+                                    }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {entrants.map((e: any) => {
+                                  const amountMicroUsdc = e.tickets * ticketPrice;
+                                  const refund = r.refunds?.[e.identityKey];
+                                  const loadingKey = `refund_${r.id}_${e.identityKey}`;
+                                  return (
+                                    <tr key={e.identityKey} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
+                                      <td style={{ padding: "7px 14px 7px 28px", fontFamily: "monospace", fontSize: 11, color: dark ? C.amberGlow : "#7c3aed" }}>{e.identityKey}</td>
+                                      <td style={{ padding: "7px 14px", textAlign: "right" }}>{e.tickets}</td>
+                                      <td style={{ padding: "7px 14px", textAlign: "right", color: C.green }}>${(amountMicroUsdc / 1_000_000).toFixed(2)}</td>
+                                      <td style={{ padding: "7px 14px", textAlign: "right" }}>
+                                        {refund ? (
+                                          <span style={{ color: C.green, fontSize: 10 }} title={refund.txHash}>
+                                            ✓ refunded ({refund.txHash?.slice(0, 8)}…)
+                                          </span>
+                                        ) : (
+                                          <span style={{ color: T.textMute, fontSize: 10 }}>not refunded</span>
+                                        )}
+                                      </td>
+                                      <td style={{ padding: "7px 14px", textAlign: "right" }}>
+                                        {!refund && (
+                                          <button
+                                            onClick={() => refundRaffleEntrant(r.id, e.identityKey, amountMicroUsdc)}
+                                            disabled={raffleActionLoading === loadingKey}
+                                            style={{
+                                              background: "transparent", color: C.red, border: `1px solid ${C.red}`, borderRadius: 6,
+                                              padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: raffleActionLoading ? "wait" : "pointer",
+                                            }}
+                                          >
+                                            {raffleActionLoading === loadingKey ? "Sending…" : "Refund"}
+                                          </button>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>

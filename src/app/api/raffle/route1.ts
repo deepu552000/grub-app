@@ -27,14 +27,17 @@ import {
   getOpenRound,
   getTicketCount,
   getLiveTicketTotal,
+  getHistory,
+  publicWinnerLabel,
   recordTicketPurchase,
   MAX_TICKETS_PER_USER_PER_ROUND,
   TICKET_PRICE_MICRO_USDC,
+  PRIZE_KIND_LABELS,
 } from "@/lib/raffle";
 
 const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const RECIPIENT = "0xCF8A44059652DB5Af8B4CB62938c5DC6916eB082";
-const BASE_RPC = "https://mainnet.base.org";
+const BASE_RPC = process.env.ALCHEMY_BASE_RPC_URL ?? "https://mainnet.base.org";
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 async function verifyUsdcTransfer(
@@ -98,6 +101,26 @@ export async function GET(req: NextRequest) {
     const key = petKey(fid, wallet);
     if (key) myTickets = await getTicketCount(round.id, key);
 
+    // getHistory() is already newest-first and only ever contains finalized
+    // rounds (resolved/no_entrants/void — pushHistory() is only called from
+    // those code paths), so no extra filtering needed here. Trim to 10 and
+    // strip everything down to a display-safe shape — raw identityKeys never
+    // leave the server; see publicWinnerLabel().
+    const history = await getHistory();
+    const recentWinners = history.slice(0, 10).map((r) => ({
+      id: r.id,
+      status: r.status,
+      ticketCount: r.ticketCountAtLock ?? 0,
+      winner: publicWinnerLabel(r.winnerKey),
+      prizeTier: r.prizeTier ?? null,
+      prizeKindLabel: r.prizeKind ? (PRIZE_KIND_LABELS as any)[r.prizeKind] ?? null : null,
+      // degen/accessory wins are momentarily "pending" between reveal and the
+      // admin fulfilling them — surfaced so the UI can say "prize on the way"
+      // instead of showing nothing for a winner who did in fact win.
+      prizePending: r.pendingPrize ? r.pendingPrize.status !== "fulfilled" : false,
+      resolvedAt: r.resolvedAt ?? r.voidedAt ?? null,
+    }));
+
     return NextResponse.json({
       ok: true,
       round: {
@@ -107,9 +130,13 @@ export async function GET(req: NextRequest) {
         openedAt: round.openedAt,
         locksAt: round.locksAt,
         ticketCount: roundTotal,
+        // null until admin picks one from the dashboard — UI should show
+        // "prize: to be announced" rather than nothing in that case.
+        prizeKindLabel: round.prizeKind ? (PRIZE_KIND_LABELS as any)[round.prizeKind] ?? null : null,
       },
       myTickets,
       maxTicketsPerUser: MAX_TICKETS_PER_USER_PER_ROUND,
+      recentWinners,
     });
   } catch (err: any) {
     console.error("[raffle] GET error:", err);

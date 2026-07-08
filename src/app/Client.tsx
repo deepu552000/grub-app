@@ -1708,6 +1708,7 @@ function ClientPageInner() {
     locksAt: number;
     ticketCount: number;
     prizeKindLabel: string | null;
+    projectedPrizeValue: number | null;
   } | null>(null);
   const [raffleMyTickets, setRaffleMyTickets] = useState(0);
   const [raffleMaxTickets, setRaffleMaxTickets] = useState(3);
@@ -5352,6 +5353,9 @@ function ClientPageInner() {
               {raffleRound?.status === "open" && (
                 <div style={{ textAlign: "center", fontSize: 12, color: "#a16207", fontWeight: 700, marginTop: -4 }}>
                   🎁 This round's prize: {raffleRound.prizeKindLabel ?? "to be announced"}
+                  {raffleRound.projectedPrizeValue != null && (
+                    <span style={{ fontWeight: 600 }}> · currently {raffleRound.projectedPrizeValue} (grows with more tickets)</span>
+                  )}
                 </div>
               )}
 
@@ -5417,7 +5421,7 @@ function ClientPageInner() {
                       The round closes every Sunday. The winner is picked from a Base block hash committed to before the block exists — so the outcome can't be known or influenced by anyone, including us, until it's mined.
                     </p>
                     <p style={{ margin: 0 }}>
-                      Each round has its own prize — XP, DEGEN, free spins, free check-ins, or an accessory unlock — shown above once it's set. 1+ ticket sold gets the small tier; 7+ tickets sold in the round bumps it to the biggest tier. If nobody buys a ticket, that round just rolls over with no winner.
+                      Each round has its own prize — XP, DEGEN, free spins, free check-ins, or an accessory unlock — shown above once it's set. The amount scales with how many tickets get sold that round: 1+ ticket sold gets the small tier, 3+ tickets bumps it to medium, and 7+ tickets gets the biggest tier. More tickets sold = bigger prize for whoever wins, not better odds for any one person. If nobody buys a ticket, that round just rolls over with no winner.
                     </p>
                   </div>
                 )}

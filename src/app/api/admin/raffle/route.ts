@@ -39,10 +39,23 @@ import {
   payDegenPrize,
   grantAccessoryPrize,
   getFailedPrizePayouts,
+  pickTierForKind,
   PRIZE_KINDS,
   PRIZE_KIND_LABELS,
   type PrizeKind,
 } from "@/lib/raffle";
+
+// Projects what the prize tier/amount would be for a given ticket count —
+// used for both the open round (live, can still change as tickets sell) and
+// the awaiting-reveal round (final, since ticketCountAtLock is frozen).
+// "accessory" has no numeric tier — admin hand-picks the item at reveal —
+// so this returns null for that kind rather than a fake amount.
+function projectPrize(kind: PrizeKind | undefined | null, ticketCount: number) {
+  if (!kind || kind === "accessory") return null;
+  const tier = pickTierForKind(kind, ticketCount);
+  if (!tier) return null;
+  return { tierId: tier.id, value: tier.value, label: PRIZE_KIND_LABELS[kind] };
+}
 
 function unauthorized() {
   return NextResponse.json({ ok: false, reason: "Unauthorized" }, { status: 401 });
@@ -76,8 +89,17 @@ export async function GET(req: NextRequest) {
     const open = await getOpenRound();
     const awaiting = await getAwaitingRevealRound();
 
+    const openTicketTotal = open ? await getLiveTicketTotal(open.id) : 0;
     const openDetail = open
-      ? { ...open, ticketCount: await getLiveTicketTotal(open.id), entrants: await entrantsWithCounts(open.id) }
+      ? {
+          ...open,
+          ticketCount: openTicketTotal,
+          entrants: await entrantsWithCounts(open.id),
+          // Live projection — recomputes on every refresh as tickets sell,
+          // so this can go up during the week; the real, frozen number is
+          // whatever it shows the instant the round locks.
+          projectedPrize: projectPrize(open.prizeKind, openTicketTotal),
+        }
       : null;
     // currentBlock is only fetched here (on-demand, admin-triggered GET) —
     // never polled — so it costs one extra RPC call per manual dashboard
@@ -89,6 +111,9 @@ export async function GET(req: NextRequest) {
           ...awaiting,
           entrants: await entrantsWithCounts(awaiting.id),
           currentBlock: awaiting.targetBlock ? await getCurrentBlockNumberSafe() : null,
+          // Final — ticketCountAtLock is frozen at lock time, so unlike the
+          // open round's projection, this number will not change again.
+          projectedPrize: projectPrize(awaiting.prizeKind, awaiting.ticketCountAtLock ?? 0),
         }
       : null;
 
