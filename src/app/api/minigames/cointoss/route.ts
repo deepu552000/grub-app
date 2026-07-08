@@ -72,9 +72,9 @@ export async function POST(req: NextRequest) {
       const { betDegen, choice } = body;
       const result = await placeCoinTossBet(key, Number(betDegen), choice);
       if (!result.ok) {
-        return NextResponse.json({ ok: false, reason: result.reason }, { status: 400 });
+        return NextResponse.json({ ...result, ok: false }, { status: 400 });
       }
-      return NextResponse.json({ ok: true, ...result });
+      return NextResponse.json({ ...result, ok: true });
     }
 
     if (action === "cashout") {
@@ -84,9 +84,9 @@ export async function POST(req: NextRequest) {
       }
       const result = await requestCashout(key, Number(amountDegen), cashoutWallet);
       if (!result.ok) {
-        return NextResponse.json({ ok: false, reason: result.reason }, { status: 400 });
+        return NextResponse.json({ ...result, ok: false }, { status: 400 });
       }
-      return NextResponse.json({ ok: true, ...result });
+      return NextResponse.json({ ...result, ok: true });
     }
 
     return NextResponse.json({ ok: false, reason: `unknown action "${action}"` }, { status: 400 });
