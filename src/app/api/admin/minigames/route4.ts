@@ -22,7 +22,6 @@ import {
   getAlerts,
   getPendingCashouts,
   fulfillCashout,
-  cancelCashout,
   creditBalance,
   cancelCredit,
   getBalance,
@@ -106,18 +105,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, reason: "missing cashoutId" }, { status: 400 });
       }
       const result = await fulfillCashout(cashoutId);
-      return NextResponse.json({ action, cashoutId, ...result });
-    }
-
-    // ── Cancel a still-pending cash-out — refunds the internal balance
-    // instead of sending it, for when a request was a mistake or the
-    // player wants to keep gambling instead of withdrawing ────────────────
-    if (action === "cancel_cashout") {
-      const { cashoutId } = body;
-      if (!cashoutId) {
-        return NextResponse.json({ ok: false, reason: "missing cashoutId" }, { status: 400 });
-      }
-      const result = await cancelCashout(cashoutId);
       return NextResponse.json({ action, cashoutId, ...result });
     }
 

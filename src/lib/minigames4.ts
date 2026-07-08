@@ -159,20 +159,6 @@ export async function cancelCredit(creditId: string): Promise<
   if (!entry) return { ok: false, reason: "credit entry not found" };
   if (entry.cancelled) return { ok: false, reason: "already cancelled" };
 
-  // Guard against reversing a credit whose funds have already moved on —
-  // spent on a bet, cashed out, etc. Without this, adjustBalance's
-  // Math.max(0, ...) floor would silently zero out whatever balance is
-  // left (which may include unrelated winnings or other credits) instead
-  // of accurately reversing just this one credit. If less than the
-  // credited amount remains, there's nothing logically correct to cancel.
-  const currentBalance = await getBalance(entry.identityKey);
-  if (currentBalance < entry.amountDegen) {
-    return {
-      ok: false,
-      reason: `Can't cancel — only ${currentBalance} DEGEN of the ${entry.amountDegen} credited remains; the rest has already been spent or cashed out.`,
-    };
-  }
-
   const newBalance = await adjustBalance(entry.identityKey, -entry.amountDegen);
   entry.cancelled = true;
   entry.cancelledAt = Date.now();
@@ -368,56 +354,16 @@ export type PendingCashout = {
   identityKey: string;
   wallet: string;
   amountDegen: number;
-  status: "pending" | "fulfilled" | "cancelled";
+  status: "pending" | "fulfilled";
   txHash?: string;
   requestedAt: number;
   fulfilledAt?: number;
-  cancelledAt?: number;
 };
 
 const CASHOUTS_KEY = "grub:minigames:cointoss:cashouts";
 
 async function getAllCashouts(): Promise<PendingCashout[]> {
   return (await kv.get<PendingCashout[]>(CASHOUTS_KEY)) ?? [];
-}
-
-/**
- * Writes a "minigame_cashout" entry into the same txn-log KV lists that
- * app/api/txn-log/route.ts's POST handler writes — a self-contained copy
- * of that write path (per this file's convention for wallet-string
- * identities, same reasoning as that route's own header comment) rather
- * than an HTTP round-trip back to our own API. This was previously only
- * documented in txn-log/route.ts's comments but never actually implemented
- * here, which is why Coin Toss cash-outs stopped showing up in the
- * Transaction Log — this fixes that gap.
- */
-async function logCashoutTxn(identityKey: string, amountDegen: number, txHash: string) {
-  const entry = {
-    fid: identityKey,
-    type: "minigame_cashout" as const,
-    txHash,
-    amountUsd: 0, // internal-balance DEGEN cash-out, no USD leg tracked here
-    amountDegen,
-    ts: Date.now(),
-  };
-
-  try {
-    const userKey = `txn-log:${identityKey}`;
-    const userLog = (await kv.get<any[]>(userKey)) ?? [];
-    userLog.push(entry);
-    if (userLog.length > 200) userLog.splice(0, userLog.length - 200);
-    await kv.set(userKey, userLog);
-
-    const globalKey = "txn-log:all";
-    const globalLog = (await kv.get<any[]>(globalKey)) ?? [];
-    globalLog.push(entry);
-    if (globalLog.length > 1000) globalLog.splice(0, globalLog.length - 1000);
-    await kv.set(globalKey, globalLog);
-  } catch (err) {
-    // Never let a logging failure block or roll back a cash-out that
-    // already sent real DEGEN on-chain — just surface it loudly.
-    console.error("[minigames] logCashoutTxn failed:", err);
-  }
 }
 
 export async function getPendingCashouts(): Promise<PendingCashout[]> {
@@ -488,7 +434,6 @@ export async function requestCashout(identityKey: string, amountDegen: number, w
         const list = await getAllCashouts();
         list.unshift(fulfilled);
         await kv.set(CASHOUTS_KEY, list);
-        await logCashoutTxn(identityKey, amountDegen, txHash);
         return { ok: true, status: "fulfilled", txHash };
       } catch (err: any) {
         console.error("[minigames] auto-cashout sendDegen failed, falling back to pending queue:", err);
@@ -506,32 +451,6 @@ export async function requestCashout(identityKey: string, amountDegen: number, w
   }
 }
 
-/**
- * Cancels a still-pending cash-out (never sent on-chain — anything that
- * reached "fulfilled" already moved real DEGEN and can't be undone here).
- * Refunds the amount that requestCashout() deducted up front back into the
- * player's internal balance, mirroring cancelCredit()'s reversal pattern.
- */
-export async function cancelCashout(cashoutId: string): Promise<
-  { ok: true; identityKey: string; newBalance: number } | { ok: false; reason: string }
-> {
-  const list = await getAllCashouts();
-  const idx = list.findIndex((c) => c.id === cashoutId);
-  if (idx === -1) return { ok: false, reason: "cash-out not found" };
-
-  const record = list[idx];
-  if (record.status !== "pending") {
-    return { ok: false, reason: `already ${record.status} — can't cancel` };
-  }
-
-  const newBalance = await adjustBalance(record.identityKey, record.amountDegen);
-  list[idx] = { ...record, status: "cancelled", cancelledAt: Date.now() };
-  await kv.set(CASHOUTS_KEY, list);
-
-  console.log(`[minigames] cancelled cash-out ${cashoutId} — refunded ${record.amountDegen} DEGEN to ${record.identityKey}, new balance ${newBalance}`);
-  return { ok: true, identityKey: record.identityKey, newBalance };
-}
-
 /** Admin-triggered fulfillment for anything that landed in the pending queue. */
 export async function fulfillCashout(cashoutId: string): Promise<{ ok: true; txHash: string } | { ok: false; reason: string }> {
   const list = await getAllCashouts();
@@ -544,7 +463,6 @@ export async function fulfillCashout(cashoutId: string): Promise<{ ok: true; txH
     const txHash = await sendDegen(record.wallet, record.amountDegen);
     list[idx] = { ...record, status: "fulfilled", txHash, fulfilledAt: Date.now() };
     await kv.set(CASHOUTS_KEY, list);
-    await logCashoutTxn(record.identityKey, record.amountDegen, txHash);
     return { ok: true, txHash };
   } catch (err: any) {
     console.error("[minigames] fulfillCashout sendDegen failed:", err);

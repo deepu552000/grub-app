@@ -828,24 +828,6 @@ function AdminDashboardInner() {
     }
   }, [authedPost, addToast, loadMinigamesAdmin]);
 
-  const cancelMinigamesCashout = useCallback(async (cashoutId: string) => {
-    const loadingKey = `cashout_cancel_${cashoutId}`;
-    setRaffleActionLoading(loadingKey);
-    try {
-      const res = await authedPost("/api/admin/minigames", { action: "cancel_cashout", cashoutId });
-      if (res?.ok) {
-        addToast(`✓ Cancelled — refunded, balance now ${res.newBalance} DEGEN.`, "success");
-        loadMinigamesAdmin();
-      } else {
-        addToast(`✕ ${res?.reason ?? "Cancel failed"}`, "error");
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Cancel failed"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadMinigamesAdmin]);
-
   const cancelMinigamesCredit = useCallback(async (creditId: string) => {
     const loadingKey = `credit_cancel_${creditId}`;
     setRaffleActionLoading(loadingKey);
@@ -2491,22 +2473,13 @@ function AdminDashboardInner() {
                       <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 700, color: "#dc2626" }}>{c.amountDegen} DEGEN</td>
                       <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{timeAgo(c.requestedAt)}</td>
                       <td style={{ padding: "9px 14px", textAlign: "right" }}>
-                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                          <button
-                            onClick={() => cancelMinigamesCashout(c.id)}
-                            disabled={raffleActionLoading === `cashout_${c.id}` || raffleActionLoading === `cashout_cancel_${c.id}`}
-                            style={{ background: "transparent", color: "#dc2626", border: "1px solid #dc2626", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                          >
-                            {raffleActionLoading === `cashout_cancel_${c.id}` ? "…" : "Cancel"}
-                          </button>
-                          <button
-                            onClick={() => fulfillMinigamesCashout(c.id)}
-                            disabled={raffleActionLoading === `cashout_${c.id}` || raffleActionLoading === `cashout_cancel_${c.id}`}
-                            style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                          >
-                            {raffleActionLoading === `cashout_${c.id}` ? "Sending…" : "Send"}
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => fulfillMinigamesCashout(c.id)}
+                          disabled={raffleActionLoading === `cashout_${c.id}`}
+                          style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                        >
+                          {raffleActionLoading === `cashout_${c.id}` ? "Sending…" : "Send"}
+                        </button>
                       </td>
                     </tr>
                   ))}
