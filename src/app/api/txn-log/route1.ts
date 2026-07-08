@@ -10,12 +10,7 @@ export type TxnLogEntry = {
   // for Base users; this type was just never updated to match, which is
   // exactly the kind of drift that broke the admin/failed-payouts build.
   fid: number | string;
-  // "minigame_cashout" is written directly by lib/minigames.ts's
-  // logCashoutTxn() (self-contained copy of this route's write path, same
-  // reasoning as this file's own header comment about drift) — covers a
-  // Coin Toss cash-out that actually sent DEGEN on-chain, whether auto-sent
-  // or fulfilled from the admin queue.
-  type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin" | "wheel_spin" | "minigame_cashout";
+  type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin";
   txHash: string;
   amountUsd: number;
   amountDegen?: number;

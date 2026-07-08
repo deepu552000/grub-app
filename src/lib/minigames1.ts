@@ -102,88 +102,11 @@ async function adjustBalance(identityKey: string, delta: number): Promise<number
  * balance today is this, or a raffle DEGEN prize being routed here instead
  * of straight on-chain (your call later). Kept separate from adjustBalance
  * so every credit that isn't a game outcome is deliberate and logged.
- *
- * This is an internal-balance adjustment only — nothing moves on-chain, so
- * it deliberately does NOT go into the main txn-log (that log is reserved
- * for real blockchain transactions — see logCashoutTxn below). It's logged
- * to its own history instead, surfaced only in the mini-games admin block.
  */
 export async function creditBalance(identityKey: string, amountDegen: number, reason: string): Promise<number> {
   const next = await adjustBalance(identityKey, amountDegen);
-  await logCredit({
-    id: `${identityKey}:${Date.now()}`,
-    identityKey,
-    amountDegen,
-    reason,
-    newBalance: next,
-    ts: Date.now(),
-  });
   console.log(`[minigames] credited ${amountDegen} DEGEN to ${identityKey} (${reason}) — new balance ${next}`);
   return next;
-}
-
-// ── Manual credit history ────────────────────────────────────────────────
-// Separate from the flip/cashout logs above and from the app-wide txn-log —
-// a manual top-up isn't a game outcome and isn't a blockchain transaction,
-// so it belongs only here, surfaced in the mini-games admin block's "Add
-// DEGEN Balance" panel rather than the dashboard's main Transaction Log.
-export type CoinTossCredit = {
-  id: string;
-  identityKey: string;
-  amountDegen: number;
-  reason: string;
-  newBalance: number;
-  ts: number;
-};
-
-const CREDITS_KEY = "grub:minigames:cointoss:credits";
-const MAX_LOGGED_CREDITS = 200;
-
-async function logCredit(entry: CoinTossCredit) {
-  const list = (await kv.get<CoinTossCredit[]>(CREDITS_KEY)) ?? [];
-  list.unshift(entry);
-  if (list.length > MAX_LOGGED_CREDITS) list.length = MAX_LOGGED_CREDITS;
-  await kv.set(CREDITS_KEY, list);
-}
-
-export async function getCreditHistory(limit = 50): Promise<CoinTossCredit[]> {
-  const list = (await kv.get<CoinTossCredit[]>(CREDITS_KEY)) ?? [];
-  return list.slice(0, limit);
-}
-
-// ── Txn-log entries for completed cash-outs ─────────────────────────────
-// A cash-out that actually sends real DEGEN on-chain (auto-send or admin
-// "Send") is a genuine blockchain transaction, same category as referral
-// payouts and raffle prizes — so unlike the manual-credit log above, this
-// one DOES belong in the app-wide txn-log the main dashboard reads (see
-// app/api/txn-log/route.ts), so it shows up in both "All Transactions" /
-// "Transactions by Type" AND the mini-games block's own history.
-//
-// Self-contained copy of that route's write path rather than an HTTP
-// round-trip or a shared import — same reasoning as getTreasuryDegenBalance
-// above (small, stable pattern; not worth coupling this file's deploy to
-// that route's).
-async function logCashoutTxn(identityKey: string, amountDegen: number, txHash: string) {
-  const entry = {
-    fid: identityKey,
-    type: "minigame_cashout" as const,
-    txHash,
-    amountUsd: 0,
-    amountDegen,
-    ts: Date.now(),
-  };
-
-  const userKey = `txn-log:${identityKey}`;
-  const userLog = (await kv.get<any[]>(userKey)) ?? [];
-  userLog.push(entry);
-  if (userLog.length > 200) userLog.splice(0, userLog.length - 200);
-  await kv.set(userKey, userLog);
-
-  const globalKey = "txn-log:all";
-  const globalLog = (await kv.get<any[]>(globalKey)) ?? [];
-  globalLog.push(entry);
-  if (globalLog.length > 1000) globalLog.splice(0, globalLog.length - 1000);
-  await kv.set(globalKey, globalLog);
 }
 
 // ── Flip log + rolling P&L ───────────────────────────────────────────────
@@ -440,7 +363,6 @@ export async function requestCashout(identityKey: string, amountDegen: number, w
         const list = await getAllCashouts();
         list.unshift(fulfilled);
         await kv.set(CASHOUTS_KEY, list);
-        await logCashoutTxn(identityKey, amountDegen, txHash);
         return { ok: true, status: "fulfilled", txHash };
       } catch (err: any) {
         console.error("[minigames] auto-cashout sendDegen failed, falling back to pending queue:", err);
@@ -470,7 +392,6 @@ export async function fulfillCashout(cashoutId: string): Promise<{ ok: true; txH
     const txHash = await sendDegen(record.wallet, record.amountDegen);
     list[idx] = { ...record, status: "fulfilled", txHash, fulfilledAt: Date.now() };
     await kv.set(CASHOUTS_KEY, list);
-    await logCashoutTxn(record.identityKey, record.amountDegen, txHash);
     return { ok: true, txHash };
   } catch (err: any) {
     console.error("[minigames] fulfillCashout sendDegen failed:", err);

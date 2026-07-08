@@ -24,7 +24,6 @@ import {
   fulfillCashout,
   creditBalance,
   getBalance,
-  getCreditHistory,
   type CoinTossConfig,
 } from "@/lib/minigames";
 
@@ -45,14 +44,13 @@ export async function GET(req: NextRequest) {
   if (!(await checkAuth(req))) return unauthorized();
 
   try {
-    const [config, stats, alerts, pendingCashouts, creditHistory] = await Promise.all([
+    const [config, stats, alerts, pendingCashouts] = await Promise.all([
       getCoinTossConfig(),
       getCoinTossStats(),
       getAlerts(),
       getPendingCashouts(),
-      getCreditHistory(50),
     ]);
-    return NextResponse.json({ ok: true, config, stats, alerts, pendingCashouts, creditHistory });
+    return NextResponse.json({ ok: true, config, stats, alerts, pendingCashouts });
   } catch (err: any) {
     console.error("[admin/minigames] GET error:", err);
     return NextResponse.json({ ok: false, reason: err?.message }, { status: 500 });
