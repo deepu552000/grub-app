@@ -5807,26 +5807,20 @@ function ClientPageInner() {
                 <div style={{ textAlign: "center", fontSize: 11, color: "#dc2626" }}>Not enough balance for that bet.</div>
               )}
 
-              {/* Recent flips ticker — casino-style chips showing the actual
-                  win/loss amount (not just a bare W/L letter), so the strip
-                  reads like a real stakes history at a glance. */}
+              {/* Recent flips ticker */}
               {cointossRecentFlips.length > 0 && (
                 <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "4px 0" }}>
                   {cointossRecentFlips.slice(0, 12).map((f, i) => (
                     <span
                       key={i}
-                      title={`${f.choice} → ${f.result} (bet ${f.betDegen} DEGEN)`}
+                      title={`${f.choice} → ${f.result}`}
                       style={{
-                        flexShrink: 0, minWidth: 40, height: 22, borderRadius: 11, padding: "0 8px",
-                        display: "flex", alignItems: "center", justifyContent: "center", gap: 3,
-                        fontSize: 11, fontWeight: 800, whiteSpace: "nowrap",
-                        color: f.won ? "#15803d" : "#b91c1c",
-                        background: f.won ? "#dcfce7" : "#fee2e2",
-                        border: `1px solid ${f.won ? "#86efac" : "#fca5a5"}`,
+                        flexShrink: 0, width: 22, height: 22, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 11, fontWeight: 800, color: "#fff",
+                        background: f.won ? "#16a34a" : "#dc2626",
                       }}
                     >
-                      <span>{f.choice === "heads" ? "🐱" : "🐾"}</span>
-                      <span>{f.won ? `+${f.payoutDegen.toFixed(1)}` : `-${f.betDegen.toFixed(1)}`}</span>
+                      {f.won ? "W" : "L"}
                     </span>
                   ))}
                 </div>
@@ -5879,19 +5873,7 @@ function ClientPageInner() {
                         <span>
                           {c.amountDegen} DEGEN — {c.status === "pending" ? "queued, awaiting admin" : "sent"}
                         </span>
-                        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          {c.status === "fulfilled" && c.txHash && (
-                            <a
-                              href={`https://basescan.org/tx/${c.txHash}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ color: "#1d4ed8", fontSize: 11, fontWeight: 700, textDecoration: "none" }}
-                            >
-                              ↗ view
-                            </a>
-                          )}
-                          <span style={{ fontWeight: 700 }}>{c.status === "pending" ? "⏳" : "✓"}</span>
-                        </span>
+                        <span style={{ fontWeight: 700 }}>{c.status === "pending" ? "⏳" : "✓"}</span>
                       </div>
                     ))}
                   </div>
