@@ -7,11 +7,10 @@
 //        scheme — see lib/minigames.ts's file header.
 //
 //   POST /api/minigames/cointoss
-//        Body: { fid?, wallet?, action, betDegen?, choice?, amountDegen?, cashoutWallet?, txHash? }
-//        action = "flip" | "cashout" | "deposit"
+//        Body: { fid?, wallet?, action, betDegen?, choice?, amountDegen?, cashoutWallet? }
+//        action = "flip" | "cashout"
 //        flip needs betDegen + choice ("heads"|"tails")
 //        cashout needs amountDegen + cashoutWallet (where to send real DEGEN)
-//        deposit needs txHash + amountDegen (on-chain DEGEN sent to treasury)
 
 import { NextRequest, NextResponse } from "next/server";
 import { petKey } from "@/lib/pet-key";
@@ -22,7 +21,6 @@ import {
   placeCoinTossBet,
   requestCashout,
   getCashoutsForIdentity,
-  depositDegen,
 } from "@/lib/minigames";
 
 export async function GET(req: NextRequest) {
@@ -104,21 +102,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, reason: "missing cashoutWallet" }, { status: 400 });
       }
       const result = await requestCashout(key, Number(amountDegen), cashoutWallet);
-      if (!result.ok) {
-        return NextResponse.json({ ...result, ok: false }, { status: 400 });
-      }
-      return NextResponse.json({ ...result, ok: true });
-    }
-
-    // ── On-chain DEGEN deposit — player already sent the tx client-side
-    // (sendDegenDeposit in Client.tsx); we just verify it landed at the
-    // treasury and credit the same balance flip/cashout use ─────────────────
-    if (action === "deposit") {
-      const { txHash, amountDegen } = body;
-      if (!txHash || typeof txHash !== "string") {
-        return NextResponse.json({ ok: false, reason: "missing txHash" }, { status: 400 });
-      }
-      const result = await depositDegen(key, txHash, Number(amountDegen));
       if (!result.ok) {
         return NextResponse.json({ ...result, ok: false }, { status: 400 });
       }

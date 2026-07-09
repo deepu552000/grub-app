@@ -1717,6 +1717,14 @@ function ClientPageInner() {
   const [cointossCashoutWallet, setCointossCashoutWallet] = useState("");
   const [cointossCashoutAmount, setCointossCashoutAmount] = useState(0);
   const [cointossCashoutLoading, setCointossCashoutLoading] = useState(false);
+  // The caller's own withdrawal history (pending + recently fulfilled), as
+  // returned by GET /api/minigames/cointoss. This is what lets a queued
+  // cash-out stay visible in the UI after the initial toast fades, and
+  // flip to "sent" on its own once an admin fulfills it from the
+  // dashboard — polled below, not just refreshed on user action.
+  const [cointossMyCashouts, setCointossMyCashouts] = useState<
+    Array<{ id: string; amountDegen: number; status: "pending" | "fulfilled"; txHash?: string; requestedAt: number; fulfilledAt?: number }>
+  >([]);
 
   const fetchCointossStatus = useCallback(async () => {
     try {
@@ -1728,6 +1736,20 @@ function ClientPageInner() {
         setCointossConfig(res.config);
         setCointossBalance(res.balance ?? 0);
         setCointossRecentFlips(res.recentFlips ?? []);
+
+        const nextCashouts: typeof cointossMyCashouts = res.myCashouts ?? [];
+        // Surface a one-time toast the moment a queued withdrawal flips
+        // from "pending" to "fulfilled" between polls — otherwise an
+        // admin-fulfilled cash-out pays out silently with nothing telling
+        // the player it actually landed.
+        setCointossMyCashouts((prev) => {
+          const prevPendingIds = new Set(prev.filter((c) => c.status === "pending").map((c) => c.id));
+          const justFulfilled = nextCashouts.find((c) => c.status === "fulfilled" && prevPendingIds.has(c.id));
+          if (justFulfilled) {
+            setLastAction(`✓ Your ${justFulfilled.amountDegen} DEGEN withdrawal was sent.`);
+          }
+          return nextCashouts;
+        });
       }
     } catch { /* non-blocking — section just shows stale/empty state until next refresh */ }
   }, [fid, walletAddress]);
@@ -1736,6 +1758,18 @@ function ClientPageInner() {
     if (!cointossOpen) return;
     fetchCointossStatus();
   }, [cointossOpen, fetchCointossStatus]);
+
+  // Poll while the Coin Toss panel is open so a cash-out that got queued
+  // for the admin dashboard (anything over autoCashoutMaxDegen) updates in
+  // this UI on its own once fulfilled, instead of only ever refreshing on
+  // the next flip/cash-out button press.
+  useEffect(() => {
+    if (!cointossOpen) return;
+    const hasPending = cointossMyCashouts.some((c) => c.status === "pending");
+    if (!hasPending) return;
+    const interval = setInterval(fetchCointossStatus, 15_000);
+    return () => clearInterval(interval);
+  }, [cointossOpen, cointossMyCashouts, fetchCointossStatus]);
 
   async function doCoinToss() {
     if (cointossFlipping || !cointossConfig?.enabled) return;
@@ -5773,20 +5807,26 @@ function ClientPageInner() {
                 <div style={{ textAlign: "center", fontSize: 11, color: "#dc2626" }}>Not enough balance for that bet.</div>
               )}
 
-              {/* Recent flips ticker */}
+              {/* Recent flips ticker — casino-style chips showing the actual
+                  win/loss amount (not just a bare W/L letter), so the strip
+                  reads like a real stakes history at a glance. */}
               {cointossRecentFlips.length > 0 && (
                 <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "4px 0" }}>
                   {cointossRecentFlips.slice(0, 12).map((f, i) => (
                     <span
                       key={i}
-                      title={`${f.choice} → ${f.result}`}
+                      title={`${f.choice} → ${f.result} (bet ${f.betDegen} DEGEN)`}
                       style={{
-                        flexShrink: 0, width: 22, height: 22, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 11, fontWeight: 800, color: "#fff",
-                        background: f.won ? "#16a34a" : "#dc2626",
+                        flexShrink: 0, minWidth: 40, height: 22, borderRadius: 11, padding: "0 8px",
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 3,
+                        fontSize: 11, fontWeight: 800, whiteSpace: "nowrap",
+                        color: f.won ? "#15803d" : "#b91c1c",
+                        background: f.won ? "#dcfce7" : "#fee2e2",
+                        border: `1px solid ${f.won ? "#86efac" : "#fca5a5"}`,
                       }}
                     >
-                      {f.won ? "W" : "L"}
+                      <span>{f.choice === "heads" ? "🐱" : "🐾"}</span>
+                      <span>{f.won ? `+${f.payoutDegen.toFixed(1)}` : `-${f.betDegen.toFixed(1)}`}</span>
                     </span>
                   ))}
                 </div>
@@ -5819,6 +5859,43 @@ function ClientPageInner() {
                 >
                   {cointossCashoutLoading ? "Sending…" : "Cash Out"}
                 </button>
+
+                {/* Withdrawal status — larger cash-outs queue for an admin
+                    to fulfill from the dashboard, so this stays visible
+                    (not just a toast) until it's actually sent. */}
+                {cointossMyCashouts.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
+                    {cointossMyCashouts.slice(0, 3).map((c) => (
+                      <div
+                        key={c.id}
+                        style={{
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                          fontSize: 11, borderRadius: 6, padding: "6px 8px",
+                          background: c.status === "pending" ? "#fff7ed" : "#f0fdf4",
+                          border: `1px solid ${c.status === "pending" ? "#fed7aa" : "#bbf7d0"}`,
+                          color: c.status === "pending" ? "#b45309" : "#15803d",
+                        }}
+                      >
+                        <span>
+                          {c.amountDegen} DEGEN — {c.status === "pending" ? "queued, awaiting admin" : "sent"}
+                        </span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {c.status === "fulfilled" && c.txHash && (
+                            <a
+                              href={`https://basescan.org/tx/${c.txHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: "#1d4ed8", fontSize: 11, fontWeight: 700, textDecoration: "none" }}
+                            >
+                              ↗ view
+                            </a>
+                          )}
+                          <span style={{ fontWeight: 700 }}>{c.status === "pending" ? "⏳" : "✓"}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
                   </div>
                 )}

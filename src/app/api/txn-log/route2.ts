@@ -15,17 +15,7 @@ export type TxnLogEntry = {
   // reasoning as this file's own header comment about drift) — covers a
   // Coin Toss cash-out that actually sent DEGEN on-chain, whether auto-sent
   // or fulfilled from the admin queue.
-  // "minigame_deposit" is the mirror image, written by lib/minigames.ts's
-  // logDepositTxn() — a player sending real DEGEN on-chain to top up their
-  // Coin Toss balance. Same self-contained-copy reasoning applies.
-  type:
-    | "accessory_unlock"
-    | "checkin"
-    | "referral_join"
-    | "referral_checkin"
-    | "wheel_spin"
-    | "minigame_cashout"
-    | "minigame_deposit";
+  type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin" | "wheel_spin" | "minigame_cashout";
   txHash: string;
   amountUsd: number;
   amountDegen?: number;

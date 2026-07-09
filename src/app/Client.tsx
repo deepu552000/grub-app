@@ -1717,6 +1717,12 @@ function ClientPageInner() {
   const [cointossCashoutWallet, setCointossCashoutWallet] = useState("");
   const [cointossCashoutAmount, setCointossCashoutAmount] = useState(0);
   const [cointossCashoutLoading, setCointossCashoutLoading] = useState(false);
+  // On-chain DEGEN deposit — the counterpart to Cash Out. Player sends
+  // real DEGEN to the treasury (sendDegenDeposit, same wallet flow as USDC
+  // checkin/accessory payments), we verify the transfer server-side and
+  // credit the same internal balance Cash Out spends from.
+  const [cointossDepositAmount, setCointossDepositAmount] = useState(0);
+  const [cointossDepositLoading, setCointossDepositLoading] = useState(false);
   // The caller's own withdrawal history (pending + recently fulfilled), as
   // returned by GET /api/minigames/cointoss. This is what lets a queued
   // cash-out stay visible in the UI after the initial toast fades, and
@@ -1838,6 +1844,53 @@ function ClientPageInner() {
       setLastAction(`✕ ${err?.message ?? "Cash-out failed"}`);
     } finally {
       setCointossCashoutLoading(false);
+    }
+  }
+
+  async function doCointossDeposit() {
+    if (cointossDepositLoading || cointossDepositAmount <= 0) return;
+    const identity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
+    if (!identity) {
+      setLastAction("✕ No identity found — open this in Farcaster or connect a wallet first.");
+      return;
+    }
+    setCointossDepositLoading(true);
+    try {
+      // Same "send now, walletAddress from the return value not the stale
+      // closure" pattern as sendUsdcPayment's callers elsewhere in this
+      // file — see the big comment on sendUsdcPayment for why.
+      const { txHash, walletAddress: paidWallet } = await sendDegenDeposit(cointossDepositAmount);
+      if (!fid && !walletAddress && paidWallet) setWalletAddress(paidWallet);
+      const saveWallet = normalizeWallet(paidWallet, walletAddress);
+
+      const res = await fetch("/api/minigames/cointoss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(fid ? { fid } : { wallet: saveWallet }),
+          action: "deposit",
+          txHash,
+          amountDegen: cointossDepositAmount,
+        }),
+      }).then((r) => r.json());
+
+      if (!res?.ok) {
+        setLastAction(`✕ ${res?.reason ?? "Deposit verification failed"} — tx: ${txHash}`);
+        return;
+      }
+      setCointossBalance(res.newBalance);
+      setLastAction(`✓ Deposited ${res.creditedDegen.toFixed(1)} DEGEN.`);
+      setCointossDepositAmount(0);
+      fetchCointossStatus();
+    } catch (err: any) {
+      const msg = (err?.message ?? "").toLowerCase();
+      if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel")) {
+        setLastAction("Deposit cancelled.");
+      } else {
+        setLastAction(`✕ ${err?.message ?? "Deposit failed"}`);
+      }
+    } finally {
+      setCointossDepositLoading(false);
     }
   }
 
@@ -2292,6 +2345,10 @@ function ClientPageInner() {
   // ── USDC contract payment ─────────────────────────────────────────────────
   // USDC on Base mainnet
   const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+  // DEGEN on Base mainnet — same treasury (RECIPIENT) as USDC, just a
+  // different token/decimals. Used by sendDegenDeposit() below, the Coin
+  // Toss "Deposit" flow's on-chain counterpart to sendUsdcPayment().
+  const DEGEN_CONTRACT = "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed" as const;
 
   // Sends exact USDC via eth_sendTransaction (ERC-20 transfer calldata).
   // Shows the native single-step "Confirm transaction" box in Farcaster/FC wallet.
@@ -2689,6 +2746,408 @@ function ClientPageInner() {
 
     if (!txHash) throw new Error("No transaction hash returned. Please try again.");
     console.log("[PAYMENT] confirmed ✅ txHash (Base Account):", txHash);
+    return { txHash, walletAddress: account.address.toLowerCase() };
+  }
+
+  // Sends exact DEGEN via eth_sendTransaction (ERC-20 transfer calldata),
+  // to the SAME treasury wallet (RECIPIENT) as USDC checkin/accessory
+  // payments — just DEGEN_CONTRACT + 18 decimals instead of USDC's 6.
+  // Mirrors sendUsdcPayment()'s Farcaster / injected-wallet / Base Account
+  // fallback chain exactly (including the wallet_sendCalls Smart Wallet
+  // path and its dataSuffix attribution) so the on-chain deposit flow gets
+  // the same reliability sendUsdcPayment already has in production. Kept
+  // as its own function rather than a shared parametrized helper — this is
+  // a live payments path and sendUsdcPayment (checkin/accessory/wheel/
+  // raffle) works today; duplicating ~380 lines here is a smaller risk
+  // than refactoring code that four other paid flows already depend on.
+  async function sendDegenDeposit(degenAmount: number): Promise<{ txHash: string; walletAddress: string | null }> {
+    console.log("[DEGEN DEPOSIT] start, amount:", degenAmount);
+
+    // Build ERC-20 transfer(address,uint256) calldata — same shape as
+    // sendUsdcPayment, just DEGEN's 18 decimals instead of USDC's 6.
+    // BigInt (not Math.round(amount * 1e18)) because a plain JS number
+    // loses precision well before 1e18 — 6 decimal places of input
+    // precision is preserved, then scaled up, which is more than enough
+    // for a deposit amount a human typed into an input box.
+    const selector = "a9059cbb";
+    const weiDegen = BigInt(Math.round(degenAmount * 1_000_000)) * 10n ** 12n; // DEGEN = 18 decimals
+    const paddedTo = RECIPIENT.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+    const paddedAmount = weiDegen.toString(16).padStart(64, "0");
+    const baseData = ("0x" + selector + paddedTo + paddedAmount) as `0x${string}`;
+    // Append the Builder Code attribution suffix — the contract only reads
+    // the first 68 bytes for transfer(address,uint256), so this trailing
+    // data is ignored on execution but stays readable on-chain/Basescan for
+    // attribution. Works for both payment paths below since both send this
+    // exact `data` string.
+    const data = (baseData + BUILDER_CODE_SUFFIX.slice(2)) as `0x${string}`;
+
+    // ── Path 1: Farcaster host (Warpcast etc.) — unchanged, first priority ──
+    // Only re-probe getEthereumProvider() here if we DON'T already know the
+    // answer from the mount-time check (fcWalletAvailable). When we already
+    // know it's false (Base App / browser), skip straight to Path 2 below —
+    // otherwise this await runs first and eats the click gesture Base
+    // Account's passkey popup needs, silently killing it with no error.
+    //
+    // When fcWalletAvailable is still null (mount probe hasn't settled yet),
+    // use the timeout-wrapped probe so a genuine non-Farcaster host (Base
+    // App) can't hang this await forever and eat the click gesture.
+    //
+    // When fcWalletAvailable is already TRUE, though, we know from the
+    // mount-time probe that this really is a working Farcaster host — call
+    // the real SDK method directly, with no artificial timeout. Re-racing
+    // a fresh 1200ms clock on every single click was causing real Farcaster
+    // payments to spuriously fall through to Path 2 (Base Account/wagmi,
+    // which prompts "Continue in Base App") whenever the bridge call took
+    // slightly longer than 1.2s to resolve on a given device/network —
+    // breaking FC payments even though nothing about the host had changed.
+    if (fcWalletAvailable !== false) {
+      const fcProvider = fcWalletAvailable === true
+        ? await sdk.wallet.getEthereumProvider().catch(() => null)
+        // fcWalletAvailable is still null here — the mount-time probe hasn't
+        // settled yet. Await the SAME promise that probe kicked off (already
+        // in flight, possibly already close to resolving) rather than firing
+        // a brand-new sdk.wallet.getEthereumProvider() call with its own
+        // fresh 1200ms clock starting from right now. A generous 4000ms
+        // safety-net timeout still guards against a genuinely hung bridge
+        // (e.g. real Base App, which never resolves this call at all).
+        : await Promise.race([
+            fcProviderPromiseRef.current ?? getFcProviderWithTimeout(),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+          ]);
+      if (fcProvider) {
+        // Everything below is now wrapped in its own try/catch. In a plain
+        // desktop/mobile browser tab (no real Farcaster/Base App host),
+        // sdk.wallet.getEthereumProvider() can still resolve to a truthy
+        // but non-functional bridge object — there's no host on the other
+        // end to actually answer eth_requestAccounts/eth_sendTransaction.
+        // When that happens the bridge's own internal RPC-response parsing
+        // blows up with something like "RpcResponse.InternalError: Cannot
+        // read properties of undefined (reading 'error')" — previously
+        // uncaught here, which killed the whole payment (including a real
+        // injected wallet like Rabby/MetaMask sitting right there on
+        // window.ethereum, Path 1.5 below) instead of ever reaching it.
+        // Now: a genuine user rejection/cancel still surfaces immediately
+        // (so we don't mask "you said no" as some other error), but any
+        // other failure here just falls through to the injected-wallet /
+        // Base Account paths below instead of throwing.
+        try {
+          const accounts = await fcProvider.request({ method: "eth_requestAccounts" }) as string[];
+          if (!accounts || accounts.length === 0) throw new Error("No wallet connected.");
+          console.log("[DEGEN DEPOSIT] wallet (Farcaster):", accounts[0]);
+
+          console.log("[DEGEN DEPOSIT] sending tx, weiDegen:", weiDegen.toString());
+          const txHash: string = await fcProvider.request({
+            method: "eth_sendTransaction",
+            params: [{
+              from: accounts[0] as `0x${string}`,
+              to: DEGEN_CONTRACT,
+              data,
+            }],
+          });
+
+          if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+          console.log("[DEGEN DEPOSIT] confirmed ✅ txHash:", txHash);
+          // eth_sendTransaction returns only after user explicitly confirms in wallet —
+          // that confirmation IS the gate. Receipt polling via FC provider is not supported,
+          // so we trust the hash and unlock immediately. Server-side verify-payment route
+          // provides the on-chain double-check for audit purposes.
+          // .toLowerCase() to match every other return path below — the server
+          // already normalizes case in petKey(), but there's no reason for the
+          // client to be the one inconsistent source.
+          return { txHash, walletAddress: accounts[0].toLowerCase() };
+        } catch (fcErr) {
+          const fcMsg = (fcErr as any)?.message?.toLowerCase?.() ?? "";
+          if (fcMsg.includes("reject") || fcMsg.includes("denied") || fcMsg.includes("cancel")) {
+            throw fcErr;
+          }
+          console.log("[DEGEN DEPOSIT] Farcaster bridge failed, falling back to injected/Base Account:", fcErr);
+        }
+      }
+    }
+
+    // ── Path 1.5: Injected wallet (window.ethereum) — e.g. Base App's own ──
+    // in-app browser, which very likely injects its own wallet provider
+    // directly (same pattern as MetaMask/Coinbase Wallet/Ledger Live's
+    // in-app browsers) so transactions confirm natively in the wallet's own
+    // UI — no external passkey/popup ceremony needed at all. This is tried
+    // BEFORE Base Account/wagmi because it's simpler and far more reliable
+    // inside a WebView, where WebAuthn/passkeys are known to hang silently.
+    if (typeof window !== "undefined" && (window as any).ethereum) {
+      const injected = (window as any).ethereum;
+      let accounts: string[] = [];
+      try {
+        accounts = await injected.request({ method: "eth_requestAccounts" });
+      } catch (err) {
+        // Getting accounts itself failed — no real wallet connection was
+        // ever established, so this is the one case still safe to fall
+        // through to Path 2 below.
+        const msg = (err as any)?.message?.toLowerCase?.() ?? "";
+        if (msg.includes("reject") || msg.includes("denied")) throw err;
+        console.log("[DEGEN DEPOSIT] injected eth_requestAccounts failed, falling back:", err);
+      }
+
+      if (accounts && accounts.length > 0) {
+        console.log("[DEGEN DEPOSIT] wallet (injected):", accounts[0]);
+        if (!fid && !walletAddress) {
+          injectedWalletLockRef.current = true;
+          setWalletAddress(accounts[0].toLowerCase());
+        }
+
+        // ── Ensure the wallet is actually on Base before doing anything else.
+        // Unlike Path 1 (Farcaster bridge, always Base-scoped) and Path 2
+        // (Base Account/wagmi, which calls switchChain explicitly), this
+        // path previously never told the wallet which chain to use at all —
+        // eth_sendTransaction below had no chainId, so a wallet sitting on
+        // a different active network (BNB Chain, Mantle, etc.) would try to
+        // resolve DEGEN_CONTRACT's address on the WRONG chain. That mismatch
+        // is the likely cause of transactions getting stuck mid-sign in
+        // Rabby/MetaMask/Ambire — confirmed by the wallet's own background
+        // network log showing it querying bnbchain.org / mantle.xyz RPCs
+        // rather than Base, right before the stuck sign window.
+        const baseChainHex = `0x${base.id.toString(16)}`;
+        try {
+          await injected.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: baseChainHex }],
+          });
+        } catch (switchErr: any) {
+          // 4902 = chain not added to the wallet yet — add it, then the
+          // wallet switches to it as part of the same add flow.
+          if (switchErr?.code === 4902) {
+            try {
+              await injected.request({
+                method: "wallet_addEthereumChain",
+                params: [{
+                  chainId: baseChainHex,
+                  chainName: "Base",
+                  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+                  rpcUrls: ["https://mainnet.base.org"],
+                  blockExplorerUrls: ["https://basescan.org"],
+                }],
+              });
+            } catch (addErr) {
+              console.log("[DEGEN DEPOSIT] wallet_addEthereumChain failed:", addErr);
+            }
+          } else {
+            console.log("[DEGEN DEPOSIT] wallet_switchEthereumChain failed:", switchErr);
+          }
+        }
+
+        // From here on we have a REAL connected wallet. Everything below
+        // either returns a txHash or throws — it deliberately does NOT
+        // fall through to Path 2 (Base Account/wagmi) anymore. Launching a
+        // second, unrelated wallet stack (Base Account's own passkey/popup
+        // flow) while a different extension (Rabby, MetaMask, etc.) is the
+        // page's active provider is exactly the kind of cross-provider
+        // interference that produces obscure failures like "Cannot read
+        // properties of undefined (reading 'error')" — silently retrying
+        // through a second wallet after a real attempt also risks a
+        // genuine double-charge if the first attempt actually went through.
+        // Any error here now surfaces directly to the caller instead.
+
+        // ── Try EIP-5792 wallet_sendCalls, but only if the wallet actually
+        // advertises support for it via wallet_getCapabilities first. Base
+        // App's Smart Wallet supports this; plain EOA wallets like Rabby or
+        // MetaMask do not. Calling wallet_sendCalls unconditionally relied
+        // on every wallet failing *cleanly* for an unsupported method — in
+        // practice some wallets throw a malformed error instead of a clean
+        // "not supported" one, which there's no reliable way to parse
+        // around. Checking capabilities first means we simply never call
+        // wallet_sendCalls on a wallet that can't handle it.
+        let supportsSendCalls = false;
+        try {
+          const caps: any = await injected.request({
+            method: "wallet_getCapabilities",
+            params: [accounts[0]],
+          });
+          const chainHex = `0x${base.id.toString(16)}`;
+          const chainCaps = caps?.[chainHex] ?? caps?.[base.id];
+          supportsSendCalls = !!(
+            chainCaps?.atomic?.status === "supported" ||
+            chainCaps?.atomic?.status === "ready" ||
+            chainCaps?.atomicBatch?.supported
+          );
+        } catch {
+          // Capability check itself unsupported/failed — treat as no
+          // support and go straight to the legacy path below, rather than
+          // finding out the hard way via wallet_sendCalls.
+          supportsSendCalls = false;
+        }
+
+        if (supportsSendCalls) {
+          // ── wallet_sendCalls ─────────────────────────────────────────────
+          // Base App's wallet is a Smart Wallet (ERC-4337). Plain
+          // eth_sendTransaction gets intercepted and re-encoded into a
+          // UserOperation (EntryPoint.handleOps, selector 0x1fad948c)
+          // before broadcast — that re-encode rebuilds calldata from the
+          // decoded transfer(address,uint256) params, which silently drops
+          // any suffix bytes we appended by hand to `data` below. Base's
+          // "automatic" attribution doesn't reliably cover that rebuilt
+          // path either (confirmed via base-dev's own attribution checker
+          // — a Base App purchase came back "Not 8021 Attributed" with an
+          // all-zero tail, while the identical Farcaster-path purchase,
+          // sent through a plain EOA provider that forwards data verbatim,
+          // attributed fine). wallet_sendCalls + the `dataSuffix`
+          // capability is the documented mechanism for exactly this case:
+          // it lets the wallet attach the suffix to the UserOp itself
+          // instead of us fighting its calldata rebuild.
+          // https://docs.base.org/base-chain/builder-codes/app-developers
+          // Tracks whether wallet_sendCalls actually got a callsId back from
+          // the wallet — i.e. the batch was accepted and is (or may be)
+          // broadcasting. Once true we are committed: falling through to
+          // eth_sendTransaction below would send a SECOND real USDC
+          // transfer on top of a payment that may just be slow to confirm,
+          // not failed. Only a pre-submission error (rejected, unsupported
+          // method, etc.) is allowed to fall through to the legacy path.
+          let callsSubmitted = false;
+          try {
+            const sendCallsResult: any = await injected.request({
+              method: "wallet_sendCalls",
+              params: [{
+                version: "2.0.0",
+                chainId: `0x${base.id.toString(16)}`,
+                from: accounts[0],
+                calls: [{ to: DEGEN_CONTRACT, data: baseData }],
+                capabilities: {
+                  dataSuffix: { value: BUILDER_CODE_SUFFIX, optional: true },
+                },
+              }],
+            });
+            const callsId: string | undefined =
+              typeof sendCallsResult === "string" ? sendCallsResult : sendCallsResult?.id;
+            if (!callsId) throw new Error("wallet_sendCalls returned no call id.");
+
+            // From this point on the wallet has accepted the batch — it is
+            // in flight. A slow confirmation from here is NOT the same as a
+            // failure, so we must never fall through to a second send below.
+            callsSubmitted = true;
+
+            // sendCalls confirms the batch is submitted, not mined — poll
+            // wallet_getCallsStatus for the actual on-chain tx hash (same
+            // hash our server's Base RPC verify step needs).
+            console.log("[DEGEN DEPOSIT] sendCalls submitted, id:", callsId, "— polling for receipt");
+            const deadline = Date.now() + 30_000;
+            let txHash: string | null = null;
+            let batchFailed = false;
+            while (Date.now() < deadline && !txHash && !batchFailed) {
+              await new Promise((r) => setTimeout(r, 1500));
+              const status: any = await injected.request({
+                method: "wallet_getCallsStatus",
+                params: [callsId],
+              });
+              // Per EIP-5792, status is numeric: 200 = confirmed, >=400 =
+              // failed/reverted. Anything else (e.g. 100-range) is still
+              // pending — keep polling rather than treating it as a timeout.
+              if (typeof status?.status === "number" && status.status >= 400) {
+                batchFailed = true;
+                break;
+              }
+              const receipt = status?.receipts?.[0];
+              if (receipt?.transactionHash) txHash = receipt.transactionHash;
+            }
+
+            if (batchFailed) {
+              // Genuinely failed on-chain (e.g. reverted) — safe to retry
+              // via the legacy path below, no funds moved.
+              throw new Error("wallet_sendCalls batch failed on-chain.");
+            }
+            if (!txHash) {
+              // Submitted and still pending after 30s — do NOT fall through
+              // to eth_sendTransaction, that would double-charge. Surface
+              // this as its own error so the caller can tell the user to
+              // check their wallet/Basescan instead of retrying blindly.
+              throw new Error(
+                "PAYMENT_PENDING_CONFIRM: your payment was submitted and is still confirming on Base — please check your wallet or Basescan before retrying, do not submit again."
+              );
+            }
+
+            console.log("[DEGEN DEPOSIT] confirmed ✅ txHash (sendCalls):", txHash);
+            return { txHash, walletAddress: accounts[0].toLowerCase() };
+          } catch (sendCallsErr) {
+            // Once the batch was actually submitted, this is terminal —
+            // never fall through to a second send, whether the reason was
+            // a slow confirmation or an on-chain failure. Surface as-is.
+            if (callsSubmitted) throw sendCallsErr;
+
+            const scMsg = (sendCallsErr as any)?.message?.toLowerCase?.() ?? "";
+            if (scMsg.includes("reject") || scMsg.includes("denied")) throw sendCallsErr;
+            // Failed BEFORE submission — safe to fall through to the
+            // legacy path below.
+            console.log("[DEGEN DEPOSIT] wallet_sendCalls failed pre-submission, falling back to eth_sendTransaction:", sendCallsErr);
+          }
+        }
+
+        // ── Legacy fallback: plain eth_sendTransaction ──────────────────
+        // Suffix is appended manually to `data`. Correct and sufficient
+        // for EOA wallets that forward calldata verbatim (Rabby, MetaMask,
+        // etc.) For a Smart Wallet that still ends up here (sendCalls
+        // unsupported for some other reason) attribution isn't guaranteed,
+        // but the payment itself still succeeds and remains fully
+        // verifiable server-side.
+        //
+        // Note: an earlier version of this fix stripped the suffix here,
+        // suspecting wallet-side calldata simulation was choking on the
+        // trailing attribution bytes. That was a reasonable guess at the
+        // time but turned out to be wrong — the actual root cause was the
+        // missing wallet_switchEthereumChain call above (wallet stuck
+        // resolving DEGEN_CONTRACT on the wrong chain, e.g. BSC/Mantle,
+        // confirmed via the wallet's own network log + manual repro).
+        // With the chain switch now in place, there's no evidence the
+        // suffix itself was ever a problem, so it stays — no reason to give
+        // up attribution tracking on this path for an unconfirmed theory.
+        console.log("[DEGEN DEPOSIT] sending tx (injected, legacy), weiDegen:", weiDegen.toString());
+        const txHash: string = await injected.request({
+          method: "eth_sendTransaction",
+          params: [{
+            from: accounts[0] as `0x${string}`,
+            to: DEGEN_CONTRACT,
+            data,
+            chainId: baseChainHex,
+          }],
+        });
+
+        if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+        console.log("[DEGEN DEPOSIT] confirmed ✅ txHash (injected):", txHash);
+        return { txHash, walletAddress: accounts[0].toLowerCase() };
+      }
+    }
+
+    // ── Path 2: last resort — Base Account via wagmi ──────────────────────
+    // Reached only if there's no Farcaster provider AND no injected wallet
+    // at all (e.g. a plain mobile Safari/Chrome tab with no wallet app
+    // context). Base's own docs recommend wagmi + the Base Account
+    // connector for exactly this case.
+    // connect() is the FIRST async call in this branch when fcWalletAvailable
+    // is already known false — this keeps it tied to the original click.
+    console.log("[DEGEN DEPOSIT] no Farcaster/injected wallet — falling back to Base Account (wagmi)");
+
+    let account = getAccount(wagmiConfig);
+    if (!account.address) {
+      const result = await connect(wagmiConfig, { connector: wagmiConfig.connectors[0] });
+      account = getAccount(wagmiConfig);
+      if (!account.address && result?.accounts?.[0]) {
+        account = { ...account, address: result.accounts[0] } as typeof account;
+      }
+    }
+    if (!account.address) throw new Error("No wallet connected.");
+    console.log("[DEGEN DEPOSIT] wallet (Base Account):", account.address);
+
+    if (!fid && !walletAddress) setWalletAddress(account.address.toLowerCase());
+
+    if (account.chainId !== base.id) {
+      await switchChain(wagmiConfig, { chainId: base.id });
+    }
+
+    console.log("[DEGEN DEPOSIT] sending tx (Base Account), weiDegen:", weiDegen.toString());
+    const txHash = await sendTransaction(wagmiConfig, {
+      to: DEGEN_CONTRACT,
+      data,
+      account: account.address,
+      chainId: base.id,
+    });
+
+    if (!txHash) throw new Error("No transaction hash returned. Please try again.");
+    console.log("[DEGEN DEPOSIT] confirmed ✅ txHash (Base Account):", txHash);
     return { txHash, walletAddress: account.address.toLowerCase() };
   }
 
@@ -5831,6 +6290,34 @@ function ClientPageInner() {
                   ))}
                 </div>
               )}
+
+              {/* Deposit — on-chain DEGEN top-up, the counterpart to Cash Out */}
+              <div style={{ borderTop: "1px solid #eee0d8", paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: 11, color: "#8a7060", fontWeight: 700 }}>Deposit DEGEN from your wallet</span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    type="number"
+                    placeholder="Amount"
+                    value={cointossDepositAmount || ""}
+                    onChange={(e) => setCointossDepositAmount(Number(e.target.value))}
+                    style={{ flex: 1, background: "#fff", color: "#49332d", border: "1px solid #eee0d8", borderRadius: 6, padding: "6px 8px", fontSize: 12 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={doCointossDeposit}
+                    disabled={cointossDepositLoading || cointossDepositAmount <= 0}
+                    style={{
+                      flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                      border: "1px solid #f59e0b",
+                      background: cointossDepositLoading || cointossDepositAmount <= 0 ? "#d6d3d1" : "#f59e0b",
+                      color: "#fff",
+                      cursor: cointossDepositLoading || cointossDepositAmount <= 0 ? "default" : "pointer",
+                    }}
+                  >
+                    {cointossDepositLoading ? "Confirming…" : "Deposit"}
+                  </button>
+                </div>
+              </div>
 
               {/* Cash-out */}
               <div style={{ borderTop: "1px solid #eee0d8", paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>

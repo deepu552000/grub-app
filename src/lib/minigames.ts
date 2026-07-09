@@ -182,6 +182,158 @@ export async function cancelCredit(creditId: string): Promise<
   return { ok: true, identityKey: entry.identityKey, newBalance };
 }
 
+// ── On-chain DEGEN deposits ──────────────────────────────────────────────
+// Player sends real DEGEN directly to the treasury wallet — same address
+// and same client-side send flow (sendDegenDeposit in Client.tsx) as the
+// USDC checkin/accessory payments already use, just a different
+// contract/decimals. This is the missing counterpart to creditBalance()
+// above: that one is admin-only; this is the player-initiated top-up path.
+const DEGEN_TRANSFER_ABI = [
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
+];
+
+function usedTxKey(txHash: string) {
+  return `grub:minigames:usedtx:${txHash.toLowerCase()}`;
+}
+
+/**
+ * Confirms a DEGEN Transfer(from, treasury, value) log exists in the given
+ * tx's receipt, and that the transferred amount is >= claimedAmount (">="
+ * rather than "===" so float rounding in the client's calldata build can
+ * never cause an honest deposit to fail verification — the tiniest bit of
+ * dust in the player's favor is harmless). Returns the ACTUAL on-chain
+ * amount, not the claimed one, so callers always credit exactly what
+ * really arrived.
+ */
+async function verifyDegenDeposit(
+  txHash: string,
+  claimedAmount: number,
+): Promise<{ ok: true; amount: number; from: string } | { ok: false; reason: string }> {
+  const treasury = (process.env.TREASURY_WALLET_ADDRESS ?? "").toLowerCase();
+  if (!treasury) return { ok: false, reason: "treasury wallet not configured" };
+
+  try {
+    const provider = new ethers.JsonRpcProvider(process.env.ALCHEMY_BASE_RPC_URL ?? "https://mainnet.base.org");
+    const receipt = await provider.getTransactionReceipt(txHash);
+    if (!receipt) return { ok: false, reason: "transaction not found — it may not be mined yet, try again shortly" };
+    if (receipt.status !== 1) return { ok: false, reason: "transaction failed on-chain" };
+
+    const iface = new ethers.Interface(DEGEN_TRANSFER_ABI);
+    for (const log of receipt.logs) {
+      if (log.address.toLowerCase() !== DEGEN_CONTRACT.toLowerCase()) continue;
+      let parsed;
+      try {
+        parsed = iface.parseLog(log);
+      } catch {
+        continue; // not a Transfer log (or not decodable against this ABI) — skip
+      }
+      if (!parsed || parsed.name !== "Transfer") continue;
+      if ((parsed.args.to as string).toLowerCase() !== treasury) continue;
+
+      const amount = Number(ethers.formatUnits(parsed.args.value as bigint, 18));
+      if (amount + 1e-9 < claimedAmount) {
+        return { ok: false, reason: `on-chain amount (${amount}) is less than claimed (${claimedAmount})` };
+      }
+      return { ok: true, amount, from: (parsed.args.from as string).toLowerCase() };
+    }
+    return { ok: false, reason: "no matching DEGEN transfer to the treasury found in this transaction" };
+  } catch (err: any) {
+    console.error("[minigames] verifyDegenDeposit failed:", err);
+    return { ok: false, reason: err?.message ?? "verification error" };
+  }
+}
+
+/**
+ * Writes a "minigame_deposit" entry into the same txn-log KV lists that
+ * logCashoutTxn (above) and app/api/txn-log/route.ts's POST handler write
+ * to. Deposits are the mirror image of cash-outs — real DEGEN moving
+ * on-chain — so they get the same treatment: without this they'd have the
+ * identical "missing from the Transaction Log" gap that cash-outs just got
+ * fixed for.
+ */
+async function logDepositTxn(identityKey: string, amountDegen: number, txHash: string) {
+  const entry = {
+    fid: identityKey,
+    type: "minigame_deposit" as const,
+    txHash,
+    amountUsd: 0, // internal-balance DEGEN deposit, no USD leg tracked here
+    amountDegen,
+    ts: Date.now(),
+  };
+
+  try {
+    const userKey = `txn-log:${identityKey}`;
+    const userLog = (await kv.get<any[]>(userKey)) ?? [];
+    userLog.push(entry);
+    if (userLog.length > 200) userLog.splice(0, userLog.length - 200);
+    await kv.set(userKey, userLog);
+
+    const globalKey = "txn-log:all";
+    const globalLog = (await kv.get<any[]>(globalKey)) ?? [];
+    globalLog.push(entry);
+    if (globalLog.length > 1000) globalLog.splice(0, globalLog.length - 1000);
+    await kv.set(globalKey, globalLog);
+  } catch (err) {
+    // Never let a logging failure block or roll back a deposit that already
+    // landed on-chain and was already credited — just surface it loudly.
+    console.error("[minigames] logDepositTxn failed:", err);
+  }
+}
+
+export type DepositResult =
+  | { ok: true; creditedDegen: number; newBalance: number }
+  | { ok: false; reason: string };
+
+/**
+ * Credits a player's internal Coin Toss balance from a real on-chain DEGEN
+ * deposit to the treasury wallet, after verifying it actually happened.
+ *
+ * Replay-guarded with a one-time KV claim on txHash (NX-set, 30-day TTL) —
+ * the same idea as the "grub:used-tx:<hash>" guard other payment routes use
+ * — so the identical transaction can never credit a balance twice, whether
+ * from a client retry or a repeated POST. If verification then fails (tx
+ * not yet mined, wrong recipient, etc.) the claim is released so a
+ * legitimate retry once the tx actually confirms isn't permanently blocked.
+ */
+export async function depositDegen(
+  identityKey: string,
+  txHash: string,
+  claimedAmount: number,
+): Promise<DepositResult> {
+  if (!txHash || typeof txHash !== "string" || !txHash.startsWith("0x")) {
+    return { ok: false, reason: "invalid transaction hash" };
+  }
+  if (!Number.isFinite(claimedAmount) || claimedAmount <= 0) {
+    return { ok: false, reason: "invalid deposit amount" };
+  }
+
+  const claimKey = usedTxKey(txHash);
+  const claimed = await kv.set(claimKey, identityKey, { nx: true, ex: 60 * 60 * 24 * 30 } as any);
+  if (claimed === null) {
+    return { ok: false, reason: "This transaction was already used to credit a balance." };
+  }
+
+  const verified = await verifyDegenDeposit(txHash, claimedAmount);
+  if (!verified.ok) {
+    await kv.del(claimKey);
+    return { ok: false, reason: verified.reason };
+  }
+
+  const newBalance = await adjustBalance(identityKey, verified.amount);
+  console.log(`[minigames] deposit credited ${verified.amount} DEGEN to ${identityKey} (tx ${txHash}) — new balance ${newBalance}`);
+  await logCredit({
+    id: randomBytes(8).toString("hex"),
+    identityKey,
+    amountDegen: verified.amount,
+    reason: `on-chain deposit (tx ${txHash})`,
+    newBalance,
+    ts: Date.now(),
+  });
+  await logDepositTxn(identityKey, verified.amount, txHash);
+  return { ok: true, creditedDegen: verified.amount, newBalance };
+}
+
+
 // ── Flip log + rolling P&L ───────────────────────────────────────────────
 export type CoinTossFlip = {
   id: string;
