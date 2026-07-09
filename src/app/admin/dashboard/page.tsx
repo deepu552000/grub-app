@@ -459,6 +459,10 @@ function AdminDashboardInner() {
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
   const [dark, setDark] = useState(true);
+  // Which top-level dashboard tab is showing — lets Spin Wheel Results /
+  // Raffle / Coin Toss live in their own "Games" tab instead of clogging
+  // up the main Overview tab. Purely cosmetic split, no data/logic changes.
+  const [mainTab, setMainTab] = useState<"overview" | "games">("overview");
   const [failedPayouts, setFailedPayouts] = useState<FailedPayout[]>([]);
   const [poolDegen, setPoolDegen] = useState<number | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
@@ -1521,6 +1525,39 @@ function AdminDashboardInner() {
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "1.5rem 2rem 4rem" }}>
 
+        {/* ── Main dashboard tabs ── */}
+        <div style={{ display: "flex", gap: 8, marginBottom: "1.25rem", borderBottom: `1px solid ${T.border}` }}>
+          {([
+            { key: "overview", label: "Overview" },
+            { key: "games", label: "🎮 Games" },
+          ] as const).map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setMainTab(t.key)}
+              style={{
+                background: "transparent",
+                border: "none",
+                borderBottom: `2px solid ${mainTab === t.key ? C.amberGlow : "transparent"}`,
+                color: mainTab === t.key ? T.cream : T.textMute,
+                fontWeight: mainTab === t.key ? 800 : 600,
+                fontSize: 13,
+                padding: "8px 4px",
+                marginBottom: -1,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Overview tab content, part 1 (Error banner through Missing
+            Transactions) — Spin Wheel Results / Raffle / Coin Toss now live
+            in the Games tab below, so Missing Transactions flows straight
+            into the Transaction Log again. display:"contents" keeps this
+            purely cosmetic — no layout/box changes when visible. ── */}
+        <div style={{ display: mainTab === "overview" ? "contents" : "none" }}>
         {/* Error banner */}
         {error && (
           <div style={{
@@ -1912,6 +1949,9 @@ function AdminDashboardInner() {
           )}
         </div>
 
+        </div>
+        {/* ── Games tab content: Spin Wheel Results, Raffle, Coin Toss ── */}
+        <div style={{ display: mainTab === "games" ? "contents" : "none" }}>
         {/* ── Spin Wheel results ──────────────────────────────────────────
             Dedicated view of every wheel spin (fid -> what they won), since
             these can get diluted in the general Transaction Log once volume
@@ -2733,6 +2773,9 @@ function AdminDashboardInner() {
           </>
         )}
 
+        </div>
+        {/* ── Overview tab content, part 2 (Transaction Log onward) ── */}
+        <div style={{ display: mainTab === "overview" ? "contents" : "none" }}>
         {/* ── Transaction log ── */}
         <SectionLabel dark={dark}>Transaction Log</SectionLabel>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -3552,6 +3595,7 @@ function AdminDashboardInner() {
               </div>
             </div>
           )}
+        </div>
         </div>
       </div>
     </div>
