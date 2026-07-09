@@ -27,6 +27,9 @@ import {
   getCashoutsForIdentity,
   depositDegen,
   getDepositsForIdentity,
+  getActiveSeedSummary,
+  getSeedHistory,
+  getOrCreateClientSeed,
 } from "@/lib/minigames";
 
 export async function GET(req: NextRequest) {
@@ -73,6 +76,11 @@ export async function GET(req: NextRequest) {
     // scoped to this identityKey, same as myCashouts/myDeposits above.
     // Empty for a brand-new player with no flips yet — that's correct,
     // not a bug (they just haven't played).
+    //
+    // serverSeedHash/nonce/clientSeed are included per-flip (not just on
+    // the moment-of-flip response) so the Provably Fair panel's flip list
+    // and Verify button work purely off this GET — no extra round trip,
+    // and it still works after a page refresh, not just right after a bet.
     const recent = key
       ? (await getFlipsForIdentity(key, 20)).map((f) => ({
           choice: f.choice,
@@ -81,8 +89,27 @@ export async function GET(req: NextRequest) {
           betDegen: f.betDegen,
           payoutDegen: f.payoutDegen,
           ts: f.ts,
+          serverSeedHash: f.serverSeedHash,
+          nonce: f.nonce,
+          clientSeed: f.clientSeed,
         }))
       : [];
+
+    // ── Provably-fair data for the player-facing "Provably Fair" panel ──
+    // activeSeed: the LIVE seed's public hash + how many flips it's backed
+    // so far — never the raw seed while it's still active (see
+    // lib/minigames.ts's commit-reveal scheme).
+    // seedHistory: seeds that have already rotated out, raw value included
+    // — safe once retired, since nothing will ever resolve against them
+    // again. This is what actually lets a player verify a past flip: pair
+    // a revealed seed's raw value with one of their own flips that shares
+    // its serverSeedHash.
+    // myClientSeed: this player's own persisted client seed (see
+    // getOrCreateClientSeed) — generated once on their first flip, reused
+    // since. Read-only for now; no regenerate control yet.
+    const activeSeed = await getActiveSeedSummary();
+    const seedHistory = await getSeedHistory(20);
+    const myClientSeed = key ? await getOrCreateClientSeed(key) : null;
 
     return NextResponse.json({
       ok: true,
@@ -96,6 +123,9 @@ export async function GET(req: NextRequest) {
       recentFlips: recent,
       myCashouts,
       myDeposits,
+      activeSeed,
+      seedHistory,
+      myClientSeed,
     });
   } catch (err: any) {
     console.error("[minigames/cointoss] GET error:", err);

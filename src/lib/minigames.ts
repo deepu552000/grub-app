@@ -513,7 +513,7 @@ function clientSeedKey(identityKey: string) {
   return `grub:minigames:cointoss:clientseed:${identityKey}`;
 }
 
-async function getOrCreateClientSeed(identityKey: string): Promise<string> {
+export async function getOrCreateClientSeed(identityKey: string): Promise<string> {
   const existing = await kv.get<string>(clientSeedKey(identityKey));
   if (existing) return existing;
   const fresh = randomBytes(16).toString("hex");
@@ -656,6 +656,15 @@ export type PlaceBetResult =
       payoutDegen: number;
       feeTakenDegen: number;
       newBalance: number;
+      // Provably-fair proof for THIS flip — same values logged in
+      // CoinTossFlip, returned here too so the client can show a "🔒 Fair"
+      // tag right on the result without a second fetch. serverSeedHash is
+      // just the public commitment (safe pre-reveal); nonce + clientSeed
+      // are what let a player later recompute this exact flip once the
+      // seed rotates and its raw value is revealed.
+      serverSeedHash: string;
+      nonce: number;
+      clientSeed: string;
     }
   | { ok: false; reason: string };
 
@@ -758,7 +767,7 @@ export async function placeCoinTossBet(
   }
 
   const newBalance = await getBalance(identityKey);
-  return { ok: true, result, won, payoutDegen, feeTakenDegen, newBalance };
+  return { ok: true, result, won, payoutDegen, feeTakenDegen, newBalance, serverSeedHash, nonce, clientSeed };
 }
 
 // ── Cash-out ─────────────────────────────────────────────────────────────

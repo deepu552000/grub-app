@@ -58,6 +58,27 @@ function normalizeWallet(...candidates: (string | null | undefined)[]): string |
   return null;
 }
 
+// Truncates a long hex hash/seed for display — "b9e656aa…ba342a" instead
+// of the full 64-char string. Used only in the Provably Fair panel; full
+// value is always still available via the element's title tooltip.
+function shortHash(s?: string | null): string {
+  if (!s) return "—";
+  return s.length > 16 ? `${s.slice(0, 8)}…${s.slice(-6)}` : s;
+}
+
+// Minimal relative-time label for the fairness panel (seed committed/
+// revealed timestamps) — doesn't need to match any other in-app time
+// formatting exactly, just needs to be readable at a glance.
+function timeAgoShort(ts: number): string {
+  const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 60) return "just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return `${Math.floor(diffHr / 24)}d ago`;
+}
+
 // Silent, no-popup identity check for the !fid (no Farcaster context) case,
 // run once at mount. Tries a real injected provider first (still valid for
 // e.g. a MetaMask/Coinbase extension in a plain desktop browser), then falls
@@ -1714,11 +1735,18 @@ function ClientPageInner() {
   const [cointossOpen, setCointossOpen] = useState(false);
   const [cointossConfig, setCointossConfig] = useState<{ enabled: boolean; minBetDegen: number; maxBetDegen: number; feePercentOnWin: number } | null>(null);
   const [cointossBalance, setCointossBalance] = useState(0);
-  const [cointossRecentFlips, setCointossRecentFlips] = useState<Array<{ choice: string; result: string; won: boolean; betDegen: number; payoutDegen: number; ts: number }>>([]);
+  // Each flip now also carries its HMAC provably-fair proof (serverSeedHash
+  // + nonce + clientSeed) — same fields lib/minigames.ts already logs per
+  // flip, now returned here too so the Provably Fair panel's flip list and
+  // Verify button work straight off this array, no second fetch needed.
+  const [cointossRecentFlips, setCointossRecentFlips] = useState<Array<{ choice: string; result: string; won: boolean; betDegen: number; payoutDegen: number; ts: number; serverSeedHash: string; nonce: number; clientSeed: string }>>([]);
   const [cointossBet, setCointossBet] = useState(10);
   const [cointossChoice, setCointossChoice] = useState<"heads" | "tails">("heads");
   const [cointossFlipping, setCointossFlipping] = useState(false);
-  const [cointossLastResult, setCointossLastResult] = useState<{ result: "heads" | "tails"; won: boolean; payoutDegen: number } | null>(null);
+  // serverSeedHash/nonce/clientSeed added for the Tier-1 "🔒 Fair" badge
+  // shown right on the result — the flip response now includes them (see
+  // lib/minigames.ts's PlaceBetResult), so this doesn't need a second call.
+  const [cointossLastResult, setCointossLastResult] = useState<{ result: "heads" | "tails"; won: boolean; payoutDegen: number; serverSeedHash: string; nonce: number; clientSeed: string } | null>(null);
   const [cointossCashoutWallet, setCointossCashoutWallet] = useState("");
   const [cointossCashoutAmount, setCointossCashoutAmount] = useState(0);
   const [cointossCashoutLoading, setCointossCashoutLoading] = useState(false);
@@ -1741,6 +1769,23 @@ function ClientPageInner() {
   const [cointossMyDeposits, setCointossMyDeposits] = useState<
     Array<{ id: string; amountDegen: number; txHash: string; ts: number }>
   >([]);
+
+  // ── Provably Fair panel state ───────────────────────────────────────────
+  // activeSeed: the LIVE seed's public commitment (hash only — raw seed
+  // stays secret until it rotates, see lib/minigames.ts). seedHistory:
+  // seeds already rotated out, raw value included — this is what a Verify
+  // click actually needs, paired with one of this player's own flips that
+  // shares its serverSeedHash. myClientSeed: this player's own persisted
+  // seed (read-only for now — no regenerate control yet, see chat plan).
+  const [cointossActiveSeed, setCointossActiveSeed] = useState<{ serverSeedHash: string; flipsUsed: number; createdAt: number } | null>(null);
+  const [cointossSeedHistory, setCointossSeedHistory] = useState<Array<{ serverSeed: string; serverSeedHash: string; finalNonce: number; createdAt: number; revealedAt: number }>>([]);
+  const [cointossMyClientSeed, setCointossMyClientSeed] = useState<string | null>(null);
+  const [cointossFairnessOpen, setCointossFairnessOpen] = useState(false);
+  // Verify runs entirely client-side (Web Crypto — no server round trip,
+  // the point is a player can check this without trusting our own ✓ mark
+  // any more than they'd trust running the same math themselves). Keyed
+  // by `${serverSeedHash}:${nonce}` since nonce alone repeats across seeds.
+  const [cointossVerifyStatus, setCointossVerifyStatus] = useState<Record<string, "checking" | "match" | "mismatch" | "error">>({});
 
   const fetchCointossStatus = useCallback(async () => {
     try {
@@ -1767,6 +1812,9 @@ function ClientPageInner() {
           return nextCashouts;
         });
         setCointossMyDeposits(res.myDeposits ?? []);
+        setCointossActiveSeed(res.activeSeed ?? null);
+        setCointossSeedHistory(res.seedHistory ?? []);
+        setCointossMyClientSeed(res.myClientSeed ?? null);
       }
     } catch { /* non-blocking — section just shows stale/empty state until next refresh */ }
   }, [fid, walletAddress]);
@@ -1814,7 +1862,7 @@ function ClientPageInner() {
       // the result — purely cosmetic, matches the Spin Wheel's spin-then-reveal pacing.
       setTimeout(() => {
         setCointossBalance(res.newBalance);
-        setCointossLastResult({ result: res.result, won: res.won, payoutDegen: res.payoutDegen });
+        setCointossLastResult({ result: res.result, won: res.won, payoutDegen: res.payoutDegen, serverSeedHash: res.serverSeedHash, nonce: res.nonce, clientSeed: res.clientSeed });
         setLastAction(res.won ? `🪙 Coin Toss: ${res.result}! You won ${res.payoutDegen.toFixed(1)} DEGEN!` : `🪙 Coin Toss: ${res.result}. Better luck next flip!`);
         fetchCointossStatus();
         setCointossFlipping(false);
@@ -1902,6 +1950,49 @@ function ClientPageInner() {
       }
     } finally {
       setCointossDepositLoading(false);
+    }
+  }
+
+  // ── Provably-fair verify (Tier 3) ───────────────────────────────────────
+  // Runs entirely in the browser via Web Crypto (crypto.subtle) — no
+  // server round trip. The point is a player can check a past flip without
+  // trusting our own ✓ mark any more than they'd trust running the same
+  // math themselves; the server has no involvement in this computation at
+  // all. Same algorithm as lib/minigames.ts's resolveFlipOutcome(), just
+  // the Web Crypto version since browsers don't have Node's `crypto`
+  // module: sha256(serverSeed) must equal the seed's committed hash, and
+  // HMAC-SHA256(serverSeed, `${clientSeed}:${nonce}`)'s first 4 bytes mod 2
+  // must reproduce the same heads/tails result that was logged.
+  function bufToHex(buf: ArrayBuffer): string {
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function verifyCointossFlip(
+    flip: { result: string; serverSeedHash: string; nonce: number; clientSeed: string },
+    revealedSeed: { serverSeed: string; serverSeedHash: string },
+  ) {
+    const statusKey = `${flip.serverSeedHash}:${flip.nonce}`;
+    setCointossVerifyStatus((prev) => ({ ...prev, [statusKey]: "checking" }));
+    try {
+      const enc = new TextEncoder();
+      const seedBytes = enc.encode(revealedSeed.serverSeed);
+
+      // Step 1: sha256(serverSeed) === the hash committed to before this flip.
+      const hashBuf = await crypto.subtle.digest("SHA-256", seedBytes);
+      const computedHash = bufToHex(hashBuf);
+      const hashOk = computedHash === revealedSeed.serverSeedHash;
+
+      // Step 2: recompute the flip outcome from scratch.
+      const key = await crypto.subtle.importKey("raw", seedBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+      const msgBytes = enc.encode(`${flip.clientSeed}:${flip.nonce}`);
+      const sigBuf = await crypto.subtle.sign("HMAC", key, msgBytes);
+      const hmacHex = bufToHex(sigBuf);
+      const computedResult = parseInt(hmacHex.slice(0, 8), 16) % 2 === 0 ? "heads" : "tails";
+      const resultOk = computedResult === flip.result;
+
+      setCointossVerifyStatus((prev) => ({ ...prev, [statusKey]: hashOk && resultOk ? "match" : "mismatch" }));
+    } catch {
+      setCointossVerifyStatus((prev) => ({ ...prev, [statusKey]: "error" }));
     }
   }
 
@@ -6339,6 +6430,27 @@ function ClientPageInner() {
                 </div>
               )}
 
+              {/* Tier 1 — a small always-present proof tag right on the
+                  result, so fairness proof is visibly there every flip
+                  rather than something a player has to go dig for. Tap to
+                  open the full Provably Fair panel below for the actual
+                  verify step. */}
+              {cointossLastResult && !cointossFlipping && (
+                <button
+                  type="button"
+                  onClick={() => setCointossFairnessOpen(true)}
+                  title={`Server seed hash: ${cointossLastResult.serverSeedHash}`}
+                  style={{
+                    alignSelf: "center", display: "flex", alignItems: "center", gap: 5,
+                    background: "transparent", border: "1px solid #eee0d8", borderRadius: 20,
+                    padding: "3px 10px", fontSize: 10, color: "#8a7060", cursor: "pointer",
+                    margin: "0 auto",
+                  }}
+                >
+                  🔒 Fair — nonce {cointossLastResult.nonce} · {shortHash(cointossLastResult.serverSeedHash)}
+                </button>
+              )}
+
               {/* Choice + bet controls */}
               <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
                 {(["heads", "tails"] as const).map((c) => (
@@ -6418,6 +6530,100 @@ function ClientPageInner() {
                   ))}
                 </div>
               )}
+
+              {/* ── Provably Fair panel (Tiers 2 + 3) ──────────────────────
+                  Tier 2: active seed hash + flips used, the player's own
+                  client seed, and their own flip history with nonce/hash.
+                  Tier 3: a Verify button per flip, enabled only once that
+                  flip's seed has rotated out and its raw value is in
+                  cointossSeedHistory — verification runs entirely in the
+                  browser (verifyCointossFlip, Web Crypto), no server call. */}
+              <div style={{ borderTop: "1px solid #eee0d8", paddingTop: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setCointossFairnessOpen((o) => !o)}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+                    background: "transparent", border: "none", padding: 0, cursor: "pointer",
+                    fontSize: 12, fontWeight: 700, color: "#49332d",
+                  }}
+                >
+                  <span>🔒 Provably Fair</span>
+                  <span style={{ fontSize: 11, color: "#8a7060" }}>{cointossFairnessOpen ? "▲" : "▼"}</span>
+                </button>
+
+                {cointossFairnessOpen && (
+                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                    <p style={{ fontSize: 11, color: "#8a7060", lineHeight: 1.5, margin: 0 }}>
+                      Every flip resolves as HMAC-SHA256(serverSeed, yourClientSeed:nonce). Only the
+                      seed's hash is public while it's live — the raw seed is revealed once it
+                      rotates, and any flip that used it can be verified right here in your browser.
+                    </p>
+
+                    <div style={{ background: "#fdf8f3", border: "1px solid #eee0d8", borderRadius: 8, padding: "8px 10px", fontSize: 11 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", color: "#8a7060" }}>
+                        <span>Active seed (committed)</span>
+                        <span>{cointossActiveSeed ? timeAgoShort(cointossActiveSeed.createdAt) : "—"}</span>
+                      </div>
+                      <div style={{ fontFamily: "monospace", color: "#49332d", marginTop: 2 }} title={cointossActiveSeed?.serverSeedHash ?? ""}>
+                        {shortHash(cointossActiveSeed?.serverSeedHash)}
+                      </div>
+                      <div style={{ color: "#8a7060", marginTop: 2 }}>Flips used so far: {cointossActiveSeed?.flipsUsed ?? 0}</div>
+                    </div>
+
+                    <div style={{ background: "#fdf8f3", border: "1px solid #eee0d8", borderRadius: 8, padding: "8px 10px", fontSize: 11 }}>
+                      <div style={{ color: "#8a7060" }}>Your client seed</div>
+                      <div style={{ fontFamily: "monospace", color: "#49332d", marginTop: 2 }} title={cointossMyClientSeed ?? ""}>
+                        {shortHash(cointossMyClientSeed)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 11, color: "#8a7060", fontWeight: 700, marginBottom: 6 }}>Your recent flips</div>
+                      {cointossRecentFlips.length === 0 ? (
+                        <div style={{ fontSize: 11, color: "#8a7060" }}>No flips yet.</div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {cointossRecentFlips.slice(0, 10).map((f, i) => {
+                            const revealed = cointossSeedHistory.find((s) => s.serverSeedHash === f.serverSeedHash);
+                            const statusKey = `${f.serverSeedHash}:${f.nonce}`;
+                            const status = cointossVerifyStatus[statusKey];
+                            return (
+                              <div
+                                key={i}
+                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 11, border: "1px solid #eee0d8", borderRadius: 6, padding: "6px 8px", gap: 8 }}
+                              >
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ color: "#49332d", fontWeight: 600, textTransform: "capitalize" }}>{f.choice} → {f.result} · nonce {f.nonce}</div>
+                                  <div style={{ color: "#8a7060", fontFamily: "monospace" }} title={f.serverSeedHash}>{shortHash(f.serverSeedHash)}</div>
+                                </div>
+                                {revealed ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => verifyCointossFlip(f, revealed)}
+                                    disabled={status === "checking"}
+                                    style={{
+                                      flexShrink: 0, fontSize: 10, fontWeight: 700, borderRadius: 6, padding: "5px 8px", border: "1px solid",
+                                      borderColor: status === "match" ? "#86efac" : status === "mismatch" ? "#fca5a5" : "#eee0d8",
+                                      background: status === "match" ? "#dcfce7" : status === "mismatch" ? "#fee2e2" : "#fff",
+                                      color: status === "match" ? "#15803d" : status === "mismatch" ? "#b91c1c" : "#49332d",
+                                      cursor: status === "checking" ? "default" : "pointer",
+                                    }}
+                                  >
+                                    {status === "checking" ? "Checking…" : status === "match" ? "✓ Verified" : status === "mismatch" ? "✗ Mismatch" : status === "error" ? "Error" : "Verify"}
+                                  </button>
+                                ) : (
+                                  <span style={{ flexShrink: 0, fontSize: 10, color: "#8a7060", fontStyle: "italic" }}>seed not yet revealed</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Deposit — on-chain DEGEN top-up, the counterpart to Cash Out */}
               <div style={{ borderTop: "1px solid #eee0d8", paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>

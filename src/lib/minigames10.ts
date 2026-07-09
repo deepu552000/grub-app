@@ -15,7 +15,7 @@
 // aggregate even without cryptographic proof. Can upgrade to a commit-reveal
 // scheme later without changing the balance/config model below.
 
-import { randomBytes } from "crypto";
+import { randomBytes, createHash, createHmac } from "crypto";
 import { kv } from "@vercel/kv";
 import { ethers } from "ethers";
 import { acquireLock, releaseLock, sendDegen } from "@/lib/referral";
@@ -52,6 +52,7 @@ export type CoinTossConfig = {
   lossCircuitBreakerDegen: number; // rolling 24h net house loss before auto-pause
   maxFlipsPerMinutePerUser: number;
   autoCashoutMaxDegen: number; // cash-outs at/under this send immediately; above this go to the admin queue
+  seedRotateAfterFlips: number; // provably-fair seed auto-rotates once it's backed this many flips
 };
 
 const DEFAULT_CONFIG: CoinTossConfig = {
@@ -63,6 +64,7 @@ const DEFAULT_CONFIG: CoinTossConfig = {
   lossCircuitBreakerDegen: 500,
   maxFlipsPerMinutePerUser: 10,
   autoCashoutMaxDegen: 50,
+  seedRotateAfterFlips: 100,
 };
 
 const CONFIG_KEY = "grub:minigames:cointoss:config";
@@ -388,6 +390,14 @@ export type CoinTossFlip = {
   payoutDegen: number; // 0 if lost
   feeTakenDegen: number; // 0 if lost
   ts: number;
+  // Provably-fair proof data for this specific flip — recorded even
+  // though there's no verify UI yet, so nothing needs backfilling when
+  // one gets built. serverSeedHash is the PUBLIC commitment (safe to show
+  // immediately); the raw serverSeed itself is only ever exposed once
+  // rotated out, via the seed history — see rotateServerSeed() below.
+  serverSeedHash: string;
+  nonce: number;
+  clientSeed: string;
 };
 
 const FLIPS_KEY = "grub:minigames:cointoss:flips";
@@ -463,6 +473,171 @@ export async function getAlerts(): Promise<CoinTossAlert[]> {
   return (await kv.get<CoinTossAlert[]>(ALERTS_KEY)) ?? [];
 }
 
+// ── Provably-fair RNG (commit-reveal) ───────────────────────────────────
+// Casino-standard scheme, phase 1 (server side only — no player-facing
+// verify UI yet, see clientSeed note below):
+//
+//   1. The server commits to a random 32-byte seed BEFORE any flips use
+//      it — only its SHA-256 hash (serverSeedHash) is ever exposed while
+//      it's active, never the raw seed itself.
+//   2. Every flip resolved against that seed is deterministic:
+//      HMAC-SHA256(serverSeed, `${clientSeed}:${nonce}`), with nonce
+//      incrementing once per flip so the same input never repeats.
+//   3. When the seed rotates, the raw serverSeed is finally revealed into
+//      seedHistory — at that point anyone can recompute every flip that
+//      used it and confirm (a) hash(serverSeed) matches the hash that was
+//      committed beforehand, and (b) each flip's HMAC output matches its
+//      recorded result. This is what proves the server couldn't have
+//      picked a favorable outcome after seeing the bet — the commitment
+//      existed first.
+//
+// This replaces the previous single `randomBytes(1)[0] % 2`. That was
+// already a cryptographically secure, unbiased coin (not fixable, wasn't
+// broken) — the actual gap "how casinos do it" was closing was
+// auditability: nothing about the old scheme let anyone independently
+// verify after the fact that a result wasn't chosen after the bet came
+// in. Commit-reveal closes that gap regardless of RNG quality.
+//
+// clientSeed is now a real per-player value, not a shared placeholder —
+// see getOrCreateClientSeed() below. It's generated once per identity on
+// their first-ever flip and then reused for every flip after that (same
+// "persist forever, no expiry" pattern as the balance) — there's no
+// regenerate UI yet (that's still phase 2: a "Provably Fair" panel where
+// the player can see/rotate their own seed), so for now this only closes
+// the "server knows the client seed in advance" gap, not the "player can
+// refresh it themselves" one. Recording clientSeed per-flip (see
+// CoinTossFlip type above) means adding that regenerate control later
+// doesn't require touching any already-settled flip — each one already
+// carries whatever clientSeed was actually used against it.
+function clientSeedKey(identityKey: string) {
+  return `grub:minigames:cointoss:clientseed:${identityKey}`;
+}
+
+async function getOrCreateClientSeed(identityKey: string): Promise<string> {
+  const existing = await kv.get<string>(clientSeedKey(identityKey));
+  if (existing) return existing;
+  const fresh = randomBytes(16).toString("hex");
+  await kv.set(clientSeedKey(identityKey), fresh);
+  return fresh;
+}
+
+type ActiveSeed = {
+  serverSeed: string; // raw — SECRET while active, revealed only on rotation
+  serverSeedHash: string; // sha256(serverSeed) — safe to expose anytime
+  nonce: number; // increments once per flip resolved against this seed
+  createdAt: number;
+};
+
+type RevealedSeed = {
+  serverSeed: string;
+  serverSeedHash: string;
+  finalNonce: number; // how many flips used this seed before it rotated
+  createdAt: number;
+  revealedAt: number;
+};
+
+const ACTIVE_SEED_KEY = "grub:minigames:cointoss:activeseed";
+const SEED_HISTORY_KEY = "grub:minigames:cointoss:seedhistory";
+const MAX_LOGGED_SEEDS = 200;
+
+function sha256Hex(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
+}
+
+/**
+ * Rotates the active server seed: reveals the outgoing one (if any) into
+ * seedHistory — safe the moment it's no longer being used for new flips —
+ * then mints and commits a fresh one. Exported (not called anywhere yet
+ * outside this file) so a future scheduled rotation or admin action can
+ * call it directly without any further backend changes.
+ */
+export async function rotateServerSeed(): Promise<ActiveSeed> {
+  const existing = await kv.get<ActiveSeed>(ACTIVE_SEED_KEY);
+  if (existing) {
+    const history = (await kv.get<RevealedSeed[]>(SEED_HISTORY_KEY)) ?? [];
+    history.unshift({
+      serverSeed: existing.serverSeed,
+      serverSeedHash: existing.serverSeedHash,
+      finalNonce: existing.nonce,
+      createdAt: existing.createdAt,
+      revealedAt: Date.now(),
+    });
+    if (history.length > MAX_LOGGED_SEEDS) history.length = MAX_LOGGED_SEEDS;
+    await kv.set(SEED_HISTORY_KEY, history);
+    console.log(`[minigames] rotated Coin Toss server seed — outgoing seed used for ${existing.nonce} flips, now revealed`);
+  }
+
+  const fresh: ActiveSeed = {
+    serverSeed: randomBytes(32).toString("hex"),
+    serverSeedHash: "", // set below
+    nonce: 0,
+    createdAt: Date.now(),
+  };
+  fresh.serverSeedHash = sha256Hex(fresh.serverSeed);
+  await kv.set(ACTIVE_SEED_KEY, fresh);
+  return fresh;
+}
+
+async function getOrCreateActiveSeed(): Promise<ActiveSeed> {
+  const existing = await kv.get<ActiveSeed>(ACTIVE_SEED_KEY);
+  if (existing) return existing;
+  return rotateServerSeed(); // no active seed yet (first-ever flip) — mint one
+}
+
+/**
+ * Deterministically resolves one flip against the active seed and
+ * increments its nonce. The HMAC's first 4 bytes are read as a uint32
+ * and reduced mod 2 — HMAC-SHA256 output is uniformly random per bit, so
+ * a power-of-two modulus (2) on it introduces no bias; the "reroll bias
+ * near the range edge" correction some games need only applies to
+ * non-power-of-two ranges (e.g. picking 1–37 for roulette), not a coin.
+ */
+async function resolveFlipOutcome(identityKey: string): Promise<{
+  result: "heads" | "tails";
+  serverSeedHash: string;
+  nonce: number;
+  clientSeed: string;
+}> {
+  const active = await getOrCreateActiveSeed();
+  const nonce = active.nonce;
+  const clientSeed = await getOrCreateClientSeed(identityKey);
+
+  const hmac = createHmac("sha256", active.serverSeed).update(`${clientSeed}:${nonce}`).digest("hex");
+  const int = parseInt(hmac.slice(0, 8), 16);
+  const result: "heads" | "tails" = int % 2 === 0 ? "heads" : "tails";
+
+  await kv.set(ACTIVE_SEED_KEY, { ...active, nonce: nonce + 1 });
+  return { result, serverSeedHash: active.serverSeedHash, nonce, clientSeed };
+}
+
+// ── Admin seed view ──────────────────────────────────────────────────────
+// For the admin dashboard's new "Provably Fair" panel. Two different
+// trust levels on purpose:
+//
+//   getActiveSeedSummary() — safe to show while the seed is still LIVE.
+//   Only the hash + how many flips have used it + when it was minted.
+//   Never the raw serverSeed itself: that's the thing the whole scheme
+//   depends on staying secret until rotation, so exposing it early would
+//   let anyone precompute every future flip against it.
+//
+//   getSeedHistory() — the raw serverSeed for seeds that have ALREADY
+//   rotated out. Safe in full: once revealed, a seed is done being used
+//   for new flips forever, so there's nothing left to protect. This is
+//   what actually lets you (or anyone) verify: recompute sha256(seed) and
+//   confirm it equals the hash that was committed the whole time it was
+//   active, then recompute any flip's HMAC and confirm it matches what
+//   was paid out.
+export async function getActiveSeedSummary(): Promise<{ serverSeedHash: string; flipsUsed: number; createdAt: number } | null> {
+  const active = await kv.get<ActiveSeed>(ACTIVE_SEED_KEY);
+  if (!active) return null;
+  return { serverSeedHash: active.serverSeedHash, flipsUsed: active.nonce, createdAt: active.createdAt };
+}
+
+export async function getSeedHistory(limit = 20): Promise<RevealedSeed[]> {
+  const history = (await kv.get<RevealedSeed[]>(SEED_HISTORY_KEY)) ?? [];
+  return history.slice(0, limit);
+}
+
 // ── Rate limiting ────────────────────────────────────────────────────────
 async function checkRateLimit(identityKey: string, maxPerMinute: number): Promise<boolean> {
   const minuteBucket = Math.floor(Date.now() / 60_000);
@@ -527,10 +702,12 @@ export async function placeCoinTossBet(
   // ordering used elsewhere in this codebase, just without an on-chain leg.
   await adjustBalance(identityKey, -betDegen);
 
-  // Server RNG — single secure random byte, even/odd split. Not
-  // provably-fair (see file header) but every flip is logged for aggregate
-  // auditing (win rate should track ~50% over time).
-  const result: "heads" | "tails" = randomBytes(1)[0] % 2 === 0 ? "heads" : "tails";
+  // Provably-fair commit-reveal RNG — see the section above placeCoinTossBet
+  // for the full scheme. Every flip is deterministic against the active
+  // committed seed + an incrementing nonce, not a fresh random draw each
+  // time, so results are reconstructable and verifiable once the seed
+  // rotates and its raw value is revealed.
+  const { result, serverSeedHash, nonce, clientSeed } = await resolveFlipOutcome(identityKey);
   const won = result === choice;
 
   let payoutDegen = 0;
@@ -553,6 +730,9 @@ export async function placeCoinTossBet(
     payoutDegen,
     feeTakenDegen,
     ts,
+    serverSeedHash,
+    nonce,
+    clientSeed,
   });
   await recordPnl(ts, betDegen, payoutDegen);
 
@@ -565,6 +745,16 @@ export async function placeCoinTossBet(
     await pushAlert(
       `Auto-paused: rolling 24h house net loss (${(-pnl.houseNet).toFixed(2)} DEGEN) exceeded the ${config.lossCircuitBreakerDegen} DEGEN circuit-breaker threshold.`,
     );
+  }
+
+  // Provably-fair seed rotation — nonce here is the value the flip just
+  // resolved against (pre-increment), so nonce+1 is how many flips this
+  // seed has now backed. Rotating AFTER logging this flip (not before)
+  // means the flip that crosses the threshold is still provably tied to
+  // the seed whose hash it was resolved against, and the fresh seed only
+  // starts backing the *next* flip.
+  if (nonce + 1 >= config.seedRotateAfterFlips) {
+    await rotateServerSeed();
   }
 
   const newBalance = await getBalance(identityKey);
@@ -631,6 +821,20 @@ async function logCashoutTxn(identityKey: string, amountDegen: number, txHash: s
 
 export async function getPendingCashouts(): Promise<PendingCashout[]> {
   return (await getAllCashouts()).filter((c) => c.status === "pending");
+}
+
+/**
+ * All cash-outs regardless of status (pending/fulfilled/cancelled), newest
+ * first — unlike getPendingCashouts() above, a record never drops out of
+ * this list just because it got actioned. The admin dashboard's "Cash-outs"
+ * panel reads from this instead, so a cancelled request still shows up
+ * (struck through, tagged "Cancelled") and a fulfilled one keeps its txn
+ * link, rather than the record simply vanishing the moment it's handled.
+ * getAllCashouts() already stores newest-first (requestCashout/fulfillCashout
+ * unshift), so no re-sort is needed here.
+ */
+export async function getRecentCashouts(limit = 20): Promise<PendingCashout[]> {
+  return (await getAllCashouts()).slice(0, limit);
 }
 
 /**
