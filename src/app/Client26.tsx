@@ -1741,14 +1741,6 @@ function ClientPageInner() {
   // Verify button work straight off this array, no second fetch needed.
   const [cointossRecentFlips, setCointossRecentFlips] = useState<Array<{ choice: string; result: string; won: boolean; betDegen: number; payoutDegen: number; ts: number; serverSeedHash: string; nonce: number; clientSeed: string }>>([]);
   const [cointossBet, setCointossBet] = useState(10);
-  // Client-side mirror of the min/max check placeCoinTossBet() enforces
-  // server-side. Without this, the Toss button had no bounds check at all
-  // — typing e.g. 2 DEGEN with a 5 minimum still fired a real request,
-  // which the server correctly rejected, but the flip animation played
-  // for that failed round-trip first, reading as a "dummy" toss with no
-  // visible reason why. This disables the button up front instead and
-  // shows the actual reason inline, same as the balance check below it.
-  const cointossBetOutOfRange = !!cointossConfig && (cointossBet < cointossConfig.minBetDegen || cointossBet > cointossConfig.maxBetDegen);
   const [cointossChoice, setCointossChoice] = useState<"heads" | "tails">("heads");
   const [cointossFlipping, setCointossFlipping] = useState(false);
   // serverSeedHash/nonce/clientSeed added for the Tier-1 "🔒 Fair" badge
@@ -1846,7 +1838,6 @@ function ClientPageInner() {
 
   async function doCoinToss() {
     if (cointossFlipping || !cointossConfig?.enabled) return;
-    if (cointossBetOutOfRange) return; // button is already disabled for this, but guard directly too
     const identity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
     if (!identity) {
       setLastAction("✕ No identity found — open this in Farcaster or connect a wallet first.");
@@ -6498,22 +6489,17 @@ function ClientPageInner() {
               <button
                 type="button"
                 onClick={doCoinToss}
-                disabled={cointossFlipping || !cointossConfig?.enabled || cointossBalance < cointossBet || cointossBetOutOfRange}
+                disabled={cointossFlipping || !cointossConfig?.enabled || cointossBalance < cointossBet}
                 style={{
                   padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 800, border: "none",
-                  background: cointossFlipping || !cointossConfig?.enabled || cointossBalance < cointossBet || cointossBetOutOfRange ? "#d6d3d1" : "#f59e0b",
-                  color: "#fff", cursor: cointossFlipping || !cointossConfig?.enabled || cointossBetOutOfRange ? "default" : "pointer",
+                  background: cointossFlipping || !cointossConfig?.enabled || cointossBalance < cointossBet ? "#d6d3d1" : "#f59e0b",
+                  color: "#fff", cursor: cointossFlipping || !cointossConfig?.enabled ? "default" : "pointer",
                 }}
               >
                 {cointossFlipping ? "🪙 Flipping…" : `🪙 Toss for ${cointossBet} DEGEN`}
               </button>
               {cointossBalance < cointossBet && (
                 <div style={{ textAlign: "center", fontSize: 11, color: "#dc2626" }}>Not enough balance for that bet.</div>
-              )}
-              {cointossBetOutOfRange && cointossConfig && (
-                <div style={{ textAlign: "center", fontSize: 11, color: "#dc2626" }}>
-                  Bet must be between {cointossConfig.minBetDegen} and {cointossConfig.maxBetDegen} DEGEN.
-                </div>
               )}
 
               {/* Recent flips ticker — this player's own last 12 flips
