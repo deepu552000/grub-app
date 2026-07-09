@@ -2555,6 +2555,11 @@ function AdminDashboardInner() {
                           <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: c.cancelled ? T.textMute : C.green, textDecoration: c.cancelled ? "line-through" : "none" }}>+{c.amountDegen} DEGEN</td>
                           <td style={{ padding: "7px 14px", textAlign: "right", color: T.textMute }}>bal {c.newBalance}</td>
                           <td style={{ padding: "7px 14px", textAlign: "right", color: T.textMute }}>{timeAgo(c.ts)}</td>
+                          <td style={{ padding: "7px 14px", textAlign: "right" }}>
+                            {c.cancelled && (
+                              <span style={{ fontSize: 10, fontWeight: 700, color: T.textMute }}>Cancelled</span>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
