@@ -159,8 +159,6 @@ const TYPE_META: Record<string, { color: string; bg: string; label: string }> = 
   referral_checkin: { color: C.purple,  bg: "#2e1f5e",   label: "Ref Check" },
   wheel_spin:       { color: "#e879f9", bg: "#4a1d5e",   label: "Spin Wheel" },
   minigame_cashout: { color: "#dc2626", bg: "#450a0a",   label: "Coin Toss Cash-out" },
-  minigame_deposit: { color: "#22d3ee", bg: "#083344",   label: "Minigame Deposit" },
-  raffle_ticket:    { color: "#fbbf24", bg: "#451a03",   label: "Raffle Ticket" },
 };
 
 function timeAgo(ts: number): string {
@@ -2556,8 +2554,16 @@ function AdminDashboardInner() {
                           <td style={{ padding: "7px 14px", textAlign: "right", color: T.textMute }}>bal {c.newBalance}</td>
                           <td style={{ padding: "7px 14px", textAlign: "right", color: T.textMute }}>{timeAgo(c.ts)}</td>
                           <td style={{ padding: "7px 14px", textAlign: "right" }}>
-                            {c.cancelled && (
+                            {c.cancelled ? (
                               <span style={{ fontSize: 10, fontWeight: 700, color: T.textMute }}>Cancelled</span>
+                            ) : (
+                              <button
+                                onClick={() => cancelMinigamesCredit(c.id)}
+                                disabled={raffleActionLoading === `credit_cancel_${c.id}`}
+                                style={{ background: "transparent", border: `1px solid ${C.red}`, color: C.red, borderRadius: 5, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+                              >
+                                {raffleActionLoading === `credit_cancel_${c.id}` ? "…" : "Cancel"}
+                              </button>
                             )}
                           </td>
                         </tr>
