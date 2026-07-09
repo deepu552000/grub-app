@@ -20,7 +20,7 @@ import {
   setCoinTossConfig,
   getCoinTossStats,
   getAlerts,
-  getRecentCashouts,
+  getPendingCashouts,
   fulfillCashout,
   cancelCashout,
   creditBalance,
@@ -51,14 +51,11 @@ export async function GET(req: NextRequest) {
   if (!(await checkAuth(req))) return unauthorized();
 
   try {
-    const [config, stats, alerts, recentCashouts, creditHistory, recentFlips, activeSeed, seedHistory] = await Promise.all([
+    const [config, stats, alerts, pendingCashouts, creditHistory, recentFlips, activeSeed, seedHistory] = await Promise.all([
       getCoinTossConfig(),
       getCoinTossStats(),
       getAlerts(),
-      // All statuses (pending/fulfilled/cancelled), not just pending — so a
-      // cash-out record stays visible in the dashboard after it's actioned
-      // instead of disappearing the moment it's sent or cancelled.
-      getRecentCashouts(20),
+      getPendingCashouts(),
       getCreditHistory(50),
       // Provably-fair data for the admin "Fairness" panel — recentFlips
       // carries the HMAC inputs (serverSeedHash, nonce, clientSeed) each
@@ -70,7 +67,7 @@ export async function GET(req: NextRequest) {
       getActiveSeedSummary(),
       getSeedHistory(20),
     ]);
-    return NextResponse.json({ ok: true, config, stats, alerts, recentCashouts, creditHistory, recentFlips, activeSeed, seedHistory });
+    return NextResponse.json({ ok: true, config, stats, alerts, pendingCashouts, creditHistory, recentFlips, activeSeed, seedHistory });
   } catch (err: any) {
     console.error("[admin/minigames] GET error:", err);
     return NextResponse.json({ ok: false, reason: err?.message }, { status: 500 });

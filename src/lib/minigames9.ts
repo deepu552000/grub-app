@@ -824,20 +824,6 @@ export async function getPendingCashouts(): Promise<PendingCashout[]> {
 }
 
 /**
- * All cash-outs regardless of status (pending/fulfilled/cancelled), newest
- * first — unlike getPendingCashouts() above, a record never drops out of
- * this list just because it got actioned. The admin dashboard's "Cash-outs"
- * panel reads from this instead, so a cancelled request still shows up
- * (struck through, tagged "Cancelled") and a fulfilled one keeps its txn
- * link, rather than the record simply vanishing the moment it's handled.
- * getAllCashouts() already stores newest-first (requestCashout/fulfillCashout
- * unshift), so no re-sort is needed here.
- */
-export async function getRecentCashouts(limit = 20): Promise<PendingCashout[]> {
-  return (await getAllCashouts()).slice(0, limit);
-}
-
-/**
  * A single player's own cash-out history (pending + fulfilled), newest
  * first. This is what lets the Coin Toss UI show "your withdrawal is
  * queued" / "your withdrawal was sent" instead of the request just
