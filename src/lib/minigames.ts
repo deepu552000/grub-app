@@ -405,6 +405,20 @@ export async function getRecentFlips(limit = 20): Promise<CoinTossFlip[]> {
   return list.slice(0, limit);
 }
 
+/**
+ * A single player's own flip history (most recent first) — the actual fix
+ * for the "recent flips" strip showing identical results for every user.
+ * getRecentFlips() above pulls from the shared, all-players FLIPS_KEY list
+ * with no identity filter at all, so every caller was getting the exact
+ * same global feed. This filters that same list down to one identityKey,
+ * same "safe to return in full, it's the caller's own data" reasoning as
+ * getCashoutsForIdentity/getDepositsForIdentity.
+ */
+export async function getFlipsForIdentity(identityKey: string, limit = 20): Promise<CoinTossFlip[]> {
+  const list = (await kv.get<CoinTossFlip[]>(FLIPS_KEY)) ?? [];
+  return list.filter((f) => f.identityKey === identityKey).slice(0, limit);
+}
+
 function hourBucketKey(ts: number) {
   const hour = Math.floor(ts / (60 * 60 * 1000));
   return `grub:minigames:cointoss:pnl:${hour}`;

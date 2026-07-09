@@ -6272,9 +6272,13 @@ function ClientPageInner() {
                 <div style={{ textAlign: "center", fontSize: 11, color: "#dc2626" }}>Not enough balance for that bet.</div>
               )}
 
-              {/* Recent flips ticker — casino-style chips showing the actual
-                  win/loss amount (not just a bare W/L letter), so the strip
-                  reads like a real stakes history at a glance. */}
+              {/* Recent flips ticker — this player's own last 12 flips
+                  (server now filters by identity — previously this was
+                  the same shared feed for every player, showing identical
+                  results to everyone regardless of who actually flipped).
+                  Casino-style chips showing the actual win/loss amount
+                  (not just a bare W/L letter), so the strip reads like a
+                  real stakes history at a glance. */}
               {cointossRecentFlips.length > 0 && (
                 <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "4px 0" }}>
                   {cointossRecentFlips.slice(0, 12).map((f, i) => (

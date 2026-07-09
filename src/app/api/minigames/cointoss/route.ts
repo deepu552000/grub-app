@@ -2,10 +2,12 @@
 //
 //   GET  /api/minigames/cointoss?fid=<fid>&wallet=<wallet>
 //        Returns the public game config (min/max bet, fee), the caller's
-//        internal balance, a recent-flips feed (anonymized), and the
+//        internal balance, the caller's OWN recent-flips history, and the
 //        caller's own last-5 cash-outs + last-5 deposits (myCashouts /
-//        myDeposits) so the outcome is auditable in aggregate even without
-//        a provably-fair scheme — see lib/minigames.ts's file header.
+//        myDeposits). recentFlips was previously the shared, all-players
+//        feed with no identity filter — every user saw the exact same
+//        strip of results regardless of who placed them. Fixed to filter
+//        by identity, same as myCashouts/myDeposits already did.
 //
 //   POST /api/minigames/cointoss
 //        Body: { fid?, wallet?, action, betDegen?, choice?, amountDegen?, cashoutWallet?, txHash? }
@@ -19,7 +21,7 @@ import { petKey } from "@/lib/pet-key";
 import {
   getCoinTossConfig,
   getBalance,
-  getRecentFlips,
+  getFlipsForIdentity,
   placeCoinTossBet,
   requestCashout,
   getCashoutsForIdentity,
@@ -65,16 +67,22 @@ export async function GET(req: NextRequest) {
         }))
       : [];
 
-    // Anonymized feed — identityKey never leaves the server, same care
-    // taken with raffle winners via publicWinnerLabel().
-    const recent = (await getRecentFlips(20)).map((f) => ({
-      choice: f.choice,
-      result: f.result,
-      won: f.won,
-      betDegen: f.betDegen,
-      payoutDegen: f.payoutDegen,
-      ts: f.ts,
-    }));
+    // THE FIX — this used to be getRecentFlips(20), the shared list of
+    // every player's flips with no identity filter, so every single caller
+    // got back the exact same array regardless of who they were. Now
+    // scoped to this identityKey, same as myCashouts/myDeposits above.
+    // Empty for a brand-new player with no flips yet — that's correct,
+    // not a bug (they just haven't played).
+    const recent = key
+      ? (await getFlipsForIdentity(key, 20)).map((f) => ({
+          choice: f.choice,
+          result: f.result,
+          won: f.won,
+          betDegen: f.betDegen,
+          payoutDegen: f.payoutDegen,
+          ts: f.ts,
+        }))
+      : [];
 
     return NextResponse.json({
       ok: true,
