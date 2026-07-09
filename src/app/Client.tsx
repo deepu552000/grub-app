@@ -2770,7 +2770,7 @@ function ClientPageInner() {
     // precision is preserved, then scaled up, which is more than enough
     // for a deposit amount a human typed into an input box.
     const selector = "a9059cbb";
-    const weiDegen = BigInt(Math.round(degenAmount * 1_000_000)) * 10n ** 12n; // DEGEN = 18 decimals
+    const weiDegen = BigInt(Math.round(degenAmount * 1_000_000)) * (BigInt(10) ** BigInt(12)); // DEGEN = 18 decimals
     const paddedTo = RECIPIENT.replace(/^0x/, "").toLowerCase().padStart(64, "0");
     const paddedAmount = weiDegen.toString(16).padStart(64, "0");
     const baseData = ("0x" + selector + paddedTo + paddedAmount) as `0x${string}`;
