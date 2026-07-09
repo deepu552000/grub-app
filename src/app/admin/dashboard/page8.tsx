@@ -2640,40 +2640,28 @@ function AdminDashboardInner() {
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                       <thead>
                         <tr>
-                          {["Raw Seed (revealed)", "Hash", "Flips", "Revealed"].map((h) => (
+                          {["Raw Seed (revealed)", "Hash", "Flips", "Revealed", ""].map((h) => (
                             <th key={h} style={{ textAlign: "left", padding: "6px 10px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt }}>{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {(minigamesAdmin?.seedHistory ?? []).length === 0 ? (
-                          <tr><td colSpan={4} style={{ padding: "14px", textAlign: "center", color: T.textMute }}>No seeds have rotated out yet.</td></tr>
+                          <tr><td colSpan={5} style={{ padding: "14px", textAlign: "center", color: T.textMute }}>No seeds have rotated out yet.</td></tr>
                         ) : (minigamesAdmin.seedHistory as RevealedSeedEntry[]).map((s) => (
                           <tr key={s.serverSeedHash} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
-                            <td style={{ padding: "7px 10px" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                <span style={{ fontFamily: "monospace" }} title={s.serverSeed}>{shortHash(s.serverSeed)}</span>
-                                <button
-                                  onClick={() => copyToClipboard(s.serverSeed)}
-                                  style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "2px 6px", fontSize: 10, cursor: "pointer" }}
-                                >
-                                  {copiedHash === s.serverSeed ? "✓" : "Copy"}
-                                </button>
-                              </div>
-                            </td>
-                            <td style={{ padding: "7px 10px" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                <span style={{ fontFamily: "monospace", color: T.textMute }} title={s.serverSeedHash}>{shortHash(s.serverSeedHash)}</span>
-                                <button
-                                  onClick={() => copyToClipboard(s.serverSeedHash)}
-                                  style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "2px 6px", fontSize: 10, cursor: "pointer" }}
-                                >
-                                  {copiedHash === s.serverSeedHash ? "✓" : "Copy"}
-                                </button>
-                              </div>
-                            </td>
+                            <td style={{ padding: "7px 10px", fontFamily: "monospace" }} title={s.serverSeed}>{shortHash(s.serverSeed)}</td>
+                            <td style={{ padding: "7px 10px", fontFamily: "monospace", color: T.textMute }} title={s.serverSeedHash}>{shortHash(s.serverSeedHash)}</td>
                             <td style={{ padding: "7px 10px", color: T.textSub }}>{s.finalNonce}</td>
                             <td style={{ padding: "7px 10px", color: T.textMute }}>{timeAgo(s.revealedAt)}</td>
+                            <td style={{ padding: "7px 10px" }}>
+                              <button
+                                onClick={() => copyToClipboard(s.serverSeed)}
+                                style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "2px 6px", fontSize: 10, cursor: "pointer" }}
+                              >
+                                {copiedHash === s.serverSeed ? "✓" : "Copy"}
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
