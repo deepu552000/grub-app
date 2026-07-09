@@ -27,6 +27,9 @@ import {
   cancelCredit,
   getBalance,
   getCreditHistory,
+  getRecentFlips,
+  getActiveSeedSummary,
+  getSeedHistory,
   type CoinTossConfig,
 } from "@/lib/minigames";
 
@@ -47,14 +50,23 @@ export async function GET(req: NextRequest) {
   if (!(await checkAuth(req))) return unauthorized();
 
   try {
-    const [config, stats, alerts, pendingCashouts, creditHistory] = await Promise.all([
+    const [config, stats, alerts, pendingCashouts, creditHistory, recentFlips, activeSeed, seedHistory] = await Promise.all([
       getCoinTossConfig(),
       getCoinTossStats(),
       getAlerts(),
       getPendingCashouts(),
       getCreditHistory(50),
+      // Provably-fair data for the admin "Fairness" panel — recentFlips
+      // carries the HMAC inputs (serverSeedHash, nonce, clientSeed) each
+      // flip resolved against; activeSeed is the currently-committed seed's
+      // public hash (never the raw seed — that stays secret until it
+      // rotates); seedHistory is raw seeds already revealed, which is what
+      // actually lets someone recompute and verify past flips.
+      getRecentFlips(30),
+      getActiveSeedSummary(),
+      getSeedHistory(20),
     ]);
-    return NextResponse.json({ ok: true, config, stats, alerts, pendingCashouts, creditHistory });
+    return NextResponse.json({ ok: true, config, stats, alerts, pendingCashouts, creditHistory, recentFlips, activeSeed, seedHistory });
   } catch (err: any) {
     console.error("[admin/minigames] GET error:", err);
     return NextResponse.json({ ok: false, reason: err?.message }, { status: 500 });

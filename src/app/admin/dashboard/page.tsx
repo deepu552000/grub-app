@@ -80,6 +80,38 @@ type CoinTossCreditEntry = {
   cancelledAt?: number;
 };
 
+// Mirrors CoinTossFlip in lib/minigames.ts — one resolved flip, including
+// the HMAC provably-fair inputs it was resolved against.
+type CoinTossFlipEntry = {
+  id: string;
+  identityKey: string;
+  betDegen: number;
+  choice: "heads" | "tails";
+  result: "heads" | "tails";
+  won: boolean;
+  payoutDegen: number;
+  feeTakenDegen: number;
+  ts: number;
+  serverSeedHash: string;
+  nonce: number;
+  clientSeed: string;
+};
+
+// Mirrors getActiveSeedSummary()'s return shape — the LIVE seed's public
+// commitment only (never the raw seed while it's still active).
+type ActiveSeedSummary = { serverSeedHash: string; flipsUsed: number; createdAt: number };
+
+// Mirrors RevealedSeed in lib/minigames.ts — a seed that has rotated out,
+// safe to show in full (raw serverSeed included) since it's done being
+// used for new flips and anyone can now verify past ones against it.
+type RevealedSeedEntry = {
+  serverSeed: string;
+  serverSeedHash: string;
+  finalNonce: number;
+  createdAt: number;
+  revealedAt: number;
+};
+
 type TxnEntry = {
   fid: number | string; // string for Base App wallet-only users, e.g. "wallet:0xabc..."
   type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin" | "wheel_spin" | "minigame_cashout";
@@ -155,6 +187,11 @@ function timeUntil(ts: number): string {
 function shortAddr(s?: string): string {
   if (!s) return "";
   return s.length > 10 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
+}
+
+function shortHash(s?: string): string {
+  if (!s) return "—";
+  return s.length > 16 ? `${s.slice(0, 8)}…${s.slice(-6)}` : s;
 }
 
 // ── Sub-components ───────────────────────────────────────────────────────────
@@ -484,6 +521,8 @@ function AdminDashboardInner() {
   const [minigamesAdminLoading, setMinigamesAdminLoading] = useState(true);
   const [minigamesAdminError, setMinigamesAdminError] = useState<string | null>(null);
   const [minigamesConfigDraft, setMinigamesConfigDraft] = useState<Record<string, string>>({});
+  const [showSeedHistory, setShowSeedHistory] = useState(false);
+  const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [creditFid, setCreditFid] = useState("");
   const [creditWallet, setCreditWallet] = useState("");
   const [creditAmount, setCreditAmount] = useState("");
@@ -492,6 +531,13 @@ function AdminDashboardInner() {
   const [raffleActionLoading, setRaffleActionLoading] = useState<string | null>(null);
   const [expandedVoidRoundId, setExpandedVoidRoundId] = useState<string | null>(null);
   const [raffleAccessoryInputs, setRaffleAccessoryInputs] = useState<Record<string, string>>({});
+
+  const copyToClipboard = useCallback((text: string) => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopiedHash(text);
+      setTimeout(() => setCopiedHash((cur) => (cur === text ? null : cur)), 1500);
+    });
+  }, []);
 
   const authedGet = useCallback(async (path: string) => {
     const token = await getToken();
@@ -2512,6 +2558,134 @@ function AdminDashboardInner() {
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: "1rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>🔒 Provably Fair — Active Seed</div>
+                <div style={{ fontSize: 10, color: T.textMute, maxWidth: 480, lineHeight: 1.5 }}>
+                  Every flip resolves as HMAC-SHA256(serverSeed, clientSeed:nonce). Only the seed's
+                  hash is shown while it's live — the raw seed is revealed once it rotates, at which
+                  point anyone can recompute it and confirm every flip below.
+                </div>
+              </div>
+              {minigamesAdmin?.activeSeed ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: T.textMute, marginBottom: 3 }}>Server Seed Hash (committed)</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontFamily: "monospace", fontSize: 12, color: T.cream }} title={minigamesAdmin.activeSeed.serverSeedHash}>
+                        {shortHash(minigamesAdmin.activeSeed.serverSeedHash)}
+                      </span>
+                      <button
+                        onClick={() => copyToClipboard(minigamesAdmin.activeSeed.serverSeedHash)}
+                        style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "2px 6px", fontSize: 10, cursor: "pointer" }}
+                      >
+                        {copiedHash === minigamesAdmin.activeSeed.serverSeedHash ? "✓" : "Copy"}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: T.textMute, marginBottom: 3 }}>Flips Used (nonce)</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: T.cream }}>{minigamesAdmin.activeSeed.flipsUsed}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: T.textMute, marginBottom: 3 }}>Committed</div>
+                    <div style={{ fontSize: 13, color: T.textSub }}>{timeAgo(minigamesAdmin.activeSeed.createdAt)}</div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: T.textMute }}>No active seed yet — mints on the first flip.</div>
+              )}
+
+              <div style={{ marginTop: 12 }}>
+                <button
+                  onClick={() => setShowSeedHistory((v) => !v)}
+                  style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                >
+                  {showSeedHistory ? "▾" : "▸"} Revealed Seed History {(minigamesAdmin?.seedHistory ?? []).length > 0 && `(${minigamesAdmin.seedHistory.length})`}
+                </button>
+                {showSeedHistory && (
+                  <div style={{ marginTop: 10, maxHeight: 220, overflowY: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                      <thead>
+                        <tr>
+                          {["Raw Seed (revealed)", "Hash", "Flips", "Revealed", ""].map((h) => (
+                            <th key={h} style={{ textAlign: "left", padding: "6px 10px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(minigamesAdmin?.seedHistory ?? []).length === 0 ? (
+                          <tr><td colSpan={5} style={{ padding: "14px", textAlign: "center", color: T.textMute }}>No seeds have rotated out yet.</td></tr>
+                        ) : (minigamesAdmin.seedHistory as RevealedSeedEntry[]).map((s) => (
+                          <tr key={s.serverSeedHash} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
+                            <td style={{ padding: "7px 10px", fontFamily: "monospace" }} title={s.serverSeed}>{shortHash(s.serverSeed)}</td>
+                            <td style={{ padding: "7px 10px", fontFamily: "monospace", color: T.textMute }} title={s.serverSeedHash}>{shortHash(s.serverSeedHash)}</td>
+                            <td style={{ padding: "7px 10px", color: T.textSub }}>{s.finalNonce}</td>
+                            <td style={{ padding: "7px 10px", color: T.textMute }}>{timeAgo(s.revealedAt)}</td>
+                            <td style={{ padding: "7px 10px" }}>
+                              <button
+                                onClick={() => copyToClipboard(s.serverSeed)}
+                                style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "2px 6px", fontSize: 10, cursor: "pointer" }}
+                              >
+                                {copiedHash === s.serverSeed ? "✓" : "Copy"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1rem" }}>
+              <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: T.creamMute, borderBottom: `1px solid ${T.border}` }}>
+                Recent Flips — HMAC Proof
+              </div>
+              <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {["Identity", "Bet", "Choice → Result", "Outcome", "Nonce", "Client Seed", "Server Seed Hash", "Time"].map((h) => (
+                        <th key={h} style={{ textAlign: "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(minigamesAdmin?.recentFlips ?? []).length === 0 ? (
+                      <tr><td colSpan={8} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No flips yet.</td></tr>
+                    ) : (minigamesAdmin.recentFlips as CoinTossFlipEntry[]).map((f) => (
+                      <tr key={f.id} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
+                        <td style={{ padding: "8px 14px", fontFamily: "monospace" }}>{f.identityKey}</td>
+                        <td style={{ padding: "8px 14px" }}>{f.betDegen} DEGEN</td>
+                        <td style={{ padding: "8px 14px", textTransform: "capitalize" }}>{f.choice} → {f.result}</td>
+                        <td style={{ padding: "8px 14px", fontWeight: 700, color: f.won ? C.green : C.red }}>
+                          {f.won ? `+${f.payoutDegen.toFixed(2)}` : "Lost"}
+                          {f.won && f.feeTakenDegen > 0 && (
+                            <span style={{ fontWeight: 400, color: T.textMute }}> ({f.feeTakenDegen.toFixed(2)} fee)</span>
+                          )}
+                        </td>
+                        <td style={{ padding: "8px 14px", color: T.textSub }}>{f.nonce}</td>
+                        <td style={{ padding: "8px 14px", fontFamily: "monospace", color: T.textSub }}>{f.clientSeed}</td>
+                        <td style={{ padding: "8px 14px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontFamily: "monospace", color: T.textMute }} title={f.serverSeedHash}>{shortHash(f.serverSeedHash)}</span>
+                            <button
+                              onClick={() => copyToClipboard(f.serverSeedHash)}
+                              style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "1px 5px", fontSize: 9, cursor: "pointer" }}
+                            >
+                              {copiedHash === f.serverSeedHash ? "✓" : "Copy"}
+                            </button>
+                          </div>
+                        </td>
+                        <td style={{ padding: "8px 14px", color: T.textMute, whiteSpace: "nowrap" }}>{timeAgo(f.ts)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </>
         )}
