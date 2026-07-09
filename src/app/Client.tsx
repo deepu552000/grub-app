@@ -1723,13 +1723,18 @@ function ClientPageInner() {
   // credit the same internal balance Cash Out spends from.
   const [cointossDepositAmount, setCointossDepositAmount] = useState(0);
   const [cointossDepositLoading, setCointossDepositLoading] = useState(false);
-  // The caller's own withdrawal history (pending + recently fulfilled), as
-  // returned by GET /api/minigames/cointoss. This is what lets a queued
-  // cash-out stay visible in the UI after the initial toast fades, and
-  // flip to "sent" on its own once an admin fulfills it from the
-  // dashboard — polled below, not just refreshed on user action.
+  // The caller's own withdrawal history (pending + recently fulfilled +
+  // cancelled), as returned by GET /api/minigames/cointoss. This is what
+  // lets a queued cash-out stay visible in the UI after the initial toast
+  // fades, and flip to "sent" on its own once an admin fulfills it from
+  // the dashboard — polled below, not just refreshed on user action.
   const [cointossMyCashouts, setCointossMyCashouts] = useState<
-    Array<{ id: string; amountDegen: number; status: "pending" | "fulfilled"; txHash?: string; requestedAt: number; fulfilledAt?: number }>
+    Array<{ id: string; amountDegen: number; status: "pending" | "fulfilled" | "cancelled"; txHash?: string; requestedAt: number; fulfilledAt?: number }>
+  >([]);
+  // The caller's own on-chain deposit history — counterpart to
+  // cointossMyCashouts above, same "last 5" idea.
+  const [cointossMyDeposits, setCointossMyDeposits] = useState<
+    Array<{ id: string; amountDegen: number; txHash: string; ts: number }>
   >([]);
 
   const fetchCointossStatus = useCallback(async () => {
@@ -1756,6 +1761,7 @@ function ClientPageInner() {
           }
           return nextCashouts;
         });
+        setCointossMyDeposits(res.myDeposits ?? []);
       }
     } catch { /* non-blocking — section just shows stale/empty state until next refresh */ }
   }, [fid, walletAddress]);
@@ -6349,27 +6355,74 @@ function ClientPageInner() {
 
                 {/* Withdrawal status — larger cash-outs queue for an admin
                     to fulfill from the dashboard, so this stays visible
-                    (not just a toast) until it's actually sent. */}
+                    (not just a toast) until it's actually sent. Three
+                    distinct states now (pending/fulfilled/cancelled) — a
+                    cancelled cash-out was previously falling into the
+                    "else" branch here and displaying as "sent", which is
+                    wrong: the admin cancelled it, no DEGEN ever left the
+                    treasury for that entry. */}
                 {cointossMyCashouts.length > 0 && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
-                    {cointossMyCashouts.slice(0, 3).map((c) => (
+                    {cointossMyCashouts.slice(0, 5).map((c) => {
+                      const style =
+                        c.status === "pending"
+                          ? { bg: "#fff7ed", border: "#fed7aa", color: "#b45309", label: "queued, awaiting admin", icon: "⏳" }
+                          : c.status === "cancelled"
+                          ? { bg: "#f3f4f6", border: "#d1d5db", color: "#6b7280", label: "cancelled", icon: "✕" }
+                          : { bg: "#f0fdf4", border: "#bbf7d0", color: "#15803d", label: "sent", icon: "✓" };
+                      return (
+                        <div
+                          key={c.id}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                            fontSize: 11, borderRadius: 6, padding: "6px 8px",
+                            background: style.bg,
+                            border: `1px solid ${style.border}`,
+                            color: style.color,
+                          }}
+                        >
+                          <span>{c.amountDegen} DEGEN — {style.label}</span>
+                          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {c.status === "fulfilled" && c.txHash && (
+                              <a
+                                href={`https://basescan.org/tx/${c.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ color: "#1d4ed8", fontSize: 11, fontWeight: 700, textDecoration: "none" }}
+                              >
+                                ↗ view
+                              </a>
+                            )}
+                            <span style={{ fontWeight: 700 }}>{style.icon}</span>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Recent deposits — counterpart to the cash-out history
+                    above, same last-5 + txn-link treatment. Every deposit
+                    here already succeeded (depositDegen only ever records
+                    one after on-chain verification), so there's no
+                    pending/cancelled state to show — just amount + link. */}
+                {cointossMyDeposits.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
+                    <span style={{ fontSize: 11, color: "#8a7060", fontWeight: 700 }}>Recent deposits</span>
+                    {cointossMyDeposits.slice(0, 5).map((d) => (
                       <div
-                        key={c.id}
+                        key={d.id}
                         style={{
                           display: "flex", alignItems: "center", justifyContent: "space-between",
                           fontSize: 11, borderRadius: 6, padding: "6px 8px",
-                          background: c.status === "pending" ? "#fff7ed" : "#f0fdf4",
-                          border: `1px solid ${c.status === "pending" ? "#fed7aa" : "#bbf7d0"}`,
-                          color: c.status === "pending" ? "#b45309" : "#15803d",
+                          background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d",
                         }}
                       >
-                        <span>
-                          {c.amountDegen} DEGEN — {c.status === "pending" ? "queued, awaiting admin" : "sent"}
-                        </span>
+                        <span>{d.amountDegen} DEGEN — deposited</span>
                         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          {c.status === "fulfilled" && c.txHash && (
+                          {d.txHash && (
                             <a
-                              href={`https://basescan.org/tx/${c.txHash}`}
+                              href={`https://basescan.org/tx/${d.txHash}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               style={{ color: "#1d4ed8", fontSize: 11, fontWeight: 700, textDecoration: "none" }}
@@ -6377,7 +6430,7 @@ function ClientPageInner() {
                               ↗ view
                             </a>
                           )}
-                          <span style={{ fontWeight: 700 }}>{c.status === "pending" ? "⏳" : "✓"}</span>
+                          <span style={{ fontWeight: 700 }}>✓</span>
                         </span>
                       </div>
                     ))}

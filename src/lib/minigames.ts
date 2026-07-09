@@ -284,6 +284,34 @@ export type DepositResult =
   | { ok: true; creditedDegen: number; newBalance: number }
   | { ok: false; reason: string };
 
+// Per-identity deposit history — mirrors PendingCashout/CASHOUTS_KEY's shape
+// and access pattern (unshift newest-first, slice for "last N") so the UI's
+// "recent deposits" block can work exactly like "recent cash-outs" does.
+export type DegenDeposit = {
+  id: string;
+  identityKey: string;
+  amountDegen: number;
+  txHash: string;
+  ts: number;
+};
+
+const DEPOSITS_KEY = "grub:minigames:cointoss:deposits";
+const MAX_LOGGED_DEPOSITS = 1000; // trim so this key doesn't grow unbounded
+
+async function getAllDeposits(): Promise<DegenDeposit[]> {
+  return (await kv.get<DegenDeposit[]>(DEPOSITS_KEY)) ?? [];
+}
+
+/**
+ * A player's own deposit history (most recent first) — same "safe to
+ * return in full, it's the caller's own data" reasoning as
+ * getCashoutsForIdentity, and used the same way: to render a "last 5
+ * deposits" block next to the existing "last 5 cash-outs" one.
+ */
+export async function getDepositsForIdentity(identityKey: string, limit = 5): Promise<DegenDeposit[]> {
+  return (await getAllDeposits()).filter((d) => d.identityKey === identityKey).slice(0, limit);
+}
+
 /**
  * Credits a player's internal Coin Toss balance from a real on-chain DEGEN
  * deposit to the treasury wallet, after verifying it actually happened.
@@ -330,6 +358,21 @@ export async function depositDegen(
     ts: Date.now(),
   });
   await logDepositTxn(identityKey, verified.amount, txHash);
+
+  // Record into the per-identity deposit list — this is what was missing
+  // for the "recent deposits" UI block; logDepositTxn above only wrote to
+  // the global Transaction Log, which the player-facing panel doesn't read.
+  const depositList = await getAllDeposits();
+  depositList.unshift({
+    id: randomBytes(8).toString("hex"),
+    identityKey,
+    amountDegen: verified.amount,
+    txHash,
+    ts: Date.now(),
+  });
+  if (depositList.length > MAX_LOGGED_DEPOSITS) depositList.length = MAX_LOGGED_DEPOSITS;
+  await kv.set(DEPOSITS_KEY, depositList);
+
   return { ok: true, creditedDegen: verified.amount, newBalance };
 }
 

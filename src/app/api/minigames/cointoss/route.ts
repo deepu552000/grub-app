@@ -2,9 +2,10 @@
 //
 //   GET  /api/minigames/cointoss?fid=<fid>&wallet=<wallet>
 //        Returns the public game config (min/max bet, fee), the caller's
-//        internal balance, and a recent-flips feed (anonymized) so the
-//        outcome is auditable in aggregate even without a provably-fair
-//        scheme — see lib/minigames.ts's file header.
+//        internal balance, a recent-flips feed (anonymized), and the
+//        caller's own last-5 cash-outs + last-5 deposits (myCashouts /
+//        myDeposits) so the outcome is auditable in aggregate even without
+//        a provably-fair scheme — see lib/minigames.ts's file header.
 //
 //   POST /api/minigames/cointoss
 //        Body: { fid?, wallet?, action, betDegen?, choice?, amountDegen?, cashoutWallet?, txHash? }
@@ -23,6 +24,7 @@ import {
   requestCashout,
   getCashoutsForIdentity,
   depositDegen,
+  getDepositsForIdentity,
 } from "@/lib/minigames";
 
 export async function GET(req: NextRequest) {
@@ -51,6 +53,18 @@ export async function GET(req: NextRequest) {
         }))
       : [];
 
+    // Same idea, for on-chain deposits — the counterpart list to
+    // myCashouts above, so the UI can show "last 5 deposits" the same way
+    // it shows "last 5 cash-outs".
+    const myDeposits = key
+      ? (await getDepositsForIdentity(key, 5)).map((d) => ({
+          id: d.id,
+          amountDegen: d.amountDegen,
+          txHash: d.txHash,
+          ts: d.ts,
+        }))
+      : [];
+
     // Anonymized feed — identityKey never leaves the server, same care
     // taken with raffle winners via publicWinnerLabel().
     const recent = (await getRecentFlips(20)).map((f) => ({
@@ -73,6 +87,7 @@ export async function GET(req: NextRequest) {
       balance,
       recentFlips: recent,
       myCashouts,
+      myDeposits,
     });
   } catch (err: any) {
     console.error("[minigames/cointoss] GET error:", err);
