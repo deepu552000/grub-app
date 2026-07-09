@@ -838,6 +838,24 @@ function AdminDashboardInner() {
     }
   }, [authedPost, addToast, minigamesConfigDraft, loadMinigamesAdmin]);
 
+  const rotateMinigamesSeed = useCallback(async () => {
+    if (!window.confirm("Rotate the active provably-fair seed now? The current seed's raw value will be revealed into seed history, and a fresh seed will back all flips from here on.")) return;
+    setRaffleActionLoading("minigames_rotate_seed");
+    try {
+      const res = await authedPost("/api/admin/minigames", { action: "rotate_seed" });
+      if (res?.ok) {
+        addToast("✓ Seed rotated — previous seed revealed to history.", "success");
+        loadMinigamesAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Rotate failed"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Rotate failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadMinigamesAdmin]);
+
   const toggleMinigamesEnabled = useCallback(async () => {
     setRaffleActionLoading("minigames_toggle");
     try {
@@ -2402,6 +2420,7 @@ function AdminDashboardInner() {
                   { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)" },
                   { key: "maxFlipsPerMinutePerUser", label: "Max flips/min/user" },
                   { key: "autoCashoutMaxDegen", label: "Auto cash-out max (DEGEN)" },
+                  { key: "seedRotateAfterFlips", label: "Auto-rotate seed after N flips" },
                 ].map((f) => (
                   <label key={f.key} style={{ fontSize: 11, color: T.creamMute }}>
                     {f.label}
@@ -2598,12 +2617,24 @@ function AdminDashboardInner() {
               )}
 
               <div style={{ marginTop: 12 }}>
-                <button
-                  onClick={() => setShowSeedHistory((v) => !v)}
-                  style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                >
-                  {showSeedHistory ? "▾" : "▸"} Revealed Seed History {(minigamesAdmin?.seedHistory ?? []).length > 0 && `(${minigamesAdmin.seedHistory.length})`}
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => setShowSeedHistory((v) => !v)}
+                    style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    {showSeedHistory ? "▾" : "▸"} Revealed Seed History {(minigamesAdmin?.seedHistory ?? []).length > 0 && `(${minigamesAdmin.seedHistory.length})`}
+                  </button>
+                  <button
+                    onClick={rotateMinigamesSeed}
+                    disabled={raffleActionLoading === "minigames_rotate_seed"}
+                    style={{ background: "transparent", border: `1px solid #dc2626`, color: "#dc2626", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    {raffleActionLoading === "minigames_rotate_seed" ? "Rotating…" : "🔄 Rotate Seed Now"}
+                  </button>
+                  <span style={{ fontSize: 10, color: T.textMute }}>
+                    Auto-rotates every {minigamesAdmin?.config?.seedRotateAfterFlips ?? "—"} flips
+                  </span>
+                </div>
                 {showSeedHistory && (
                   <div style={{ marginTop: 10, maxHeight: 220, overflowY: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>

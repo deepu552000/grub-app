@@ -52,6 +52,7 @@ export type CoinTossConfig = {
   lossCircuitBreakerDegen: number; // rolling 24h net house loss before auto-pause
   maxFlipsPerMinutePerUser: number;
   autoCashoutMaxDegen: number; // cash-outs at/under this send immediately; above this go to the admin queue
+  seedRotateAfterFlips: number; // provably-fair seed auto-rotates once it's backed this many flips
 };
 
 const DEFAULT_CONFIG: CoinTossConfig = {
@@ -63,6 +64,7 @@ const DEFAULT_CONFIG: CoinTossConfig = {
   lossCircuitBreakerDegen: 500,
   maxFlipsPerMinutePerUser: 10,
   autoCashoutMaxDegen: 50,
+  seedRotateAfterFlips: 100,
 };
 
 const CONFIG_KEY = "grub:minigames:cointoss:config";
@@ -731,6 +733,16 @@ export async function placeCoinTossBet(
     await pushAlert(
       `Auto-paused: rolling 24h house net loss (${(-pnl.houseNet).toFixed(2)} DEGEN) exceeded the ${config.lossCircuitBreakerDegen} DEGEN circuit-breaker threshold.`,
     );
+  }
+
+  // Provably-fair seed rotation — nonce here is the value the flip just
+  // resolved against (pre-increment), so nonce+1 is how many flips this
+  // seed has now backed. Rotating AFTER logging this flip (not before)
+  // means the flip that crosses the threshold is still provably tied to
+  // the seed whose hash it was resolved against, and the fresh seed only
+  // starts backing the *next* flip.
+  if (nonce + 1 >= config.seedRotateAfterFlips) {
+    await rotateServerSeed();
   }
 
   const newBalance = await getBalance(identityKey);

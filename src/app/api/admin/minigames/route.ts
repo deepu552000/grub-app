@@ -30,6 +30,7 @@ import {
   getRecentFlips,
   getActiveSeedSummary,
   getSeedHistory,
+  rotateServerSeed,
   type CoinTossConfig,
 } from "@/lib/minigames";
 
@@ -82,6 +83,7 @@ const CONFIG_KEYS: (keyof CoinTossConfig)[] = [
   "lossCircuitBreakerDegen",
   "maxFlipsPerMinutePerUser",
   "autoCashoutMaxDegen",
+  "seedRotateAfterFlips",
 ];
 
 export async function POST(req: NextRequest) {
@@ -174,6 +176,16 @@ export async function POST(req: NextRequest) {
       }
       const balance = await getBalance(key);
       return NextResponse.json({ ok: true, action, identityKey: key, balance });
+    }
+
+    // ── Manually rotate the provably-fair server seed — reveals the
+    // outgoing seed into seed history (safe the instant it stops backing
+    // new flips) and mints a fresh committed one. Same function auto-rotate
+    // calls once seedRotateAfterFlips is hit; this is just the on-demand
+    // admin trigger for it (e.g. to close out and verify a batch early). ──
+    if (action === "rotate_seed") {
+      const rotated = await rotateServerSeed();
+      return NextResponse.json({ ok: true, action, activeSeed: { serverSeedHash: rotated.serverSeedHash, flipsUsed: rotated.nonce, createdAt: rotated.createdAt } });
     }
 
     return NextResponse.json({ ok: false, reason: `unknown action "${action}"` }, { status: 400 });
