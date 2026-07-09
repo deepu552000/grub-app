@@ -1540,11 +1540,6 @@ function ClientPageInner() {
     0,
     BOND_TAP_DAILY_CAP - ((state.lastTapDay ?? "") !== todayKey() ? 0 : state.tapsToday),
   );
-  // Whether the daily "pat Grub to build Bond" tap has happened yet today —
-  // used to show a gentle nudge bubble above the cat pointing at the tap
-  // spot, rather than the tap ritual going unnoticed and Bond quietly
-  // decaying from neglect.
-  const hasTappedToday = (state.lastTapDay ?? "") === todayKey() && state.tapsToday > 0;
   const [showFaq, setShowFaq] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [closetOpen, setClosetOpen] = useState(false);
@@ -1993,9 +1988,7 @@ function ClientPageInner() {
   // as the accessory XP banner below — reappears every time the app is
   // reopened until the person closes it with the ✕ for that session.
   const [wheelBannerDismissed, setWheelBannerDismissed] = useState(false);
-  // Temporarily hidden (2026-07-09) — flip back to true to re-enable, nothing else removed.
-  const WHEEL_BANNER_ENABLED = false;
-  const showWheelBanner = WHEEL_BANNER_ENABLED && !wheelBannerDismissed;
+  const showWheelBanner = !wheelBannerDismissed;
 
   function dismissWheelBanner() {
     setWheelBannerDismissed(true);
@@ -2024,25 +2017,11 @@ function ClientPageInner() {
   const [accessoryFestivalDismissed, setAccessoryFestivalDismissed] = useState(false);
   const isAccFestivalLive   = isAccessoryFestivalLive();
   const isAccFestivalTeaser = isAccessoryFestivalTeaser();
-  // Temporarily hidden (2026-07-09) — flip back to true to re-enable, nothing else removed.
-  const ACCESSORY_FESTIVAL_BANNER_ENABLED = false;
   const showAccessoryFestivalBanner =
-    ACCESSORY_FESTIVAL_BANNER_ENABLED &&
     (isAccFestivalTeaser || isAccFestivalLive) && !accessoryFestivalDismissed && (!!fid || !!walletAddress);
 
   function dismissAccessoryFestival() {
     setAccessoryFestivalDismissed(true); // session-only — reappears next app open while festival is live
-  }
-
-  // ── $GRUBKITTY Token Launch Banner ────────────────────────────────────────
-  // Announces the on-chain token launch. Session-only dismiss, same pattern
-  // as the Raffle/Spin Wheel/Accessory promo banners — reappears every time
-  // the app is reopened (fresh session) until closed with the ✕ for that
-  // session. No longer persisted to localStorage.
-  const [tokenBannerDismissed, setTokenBannerDismissed] = useState(false);
-  const showTokenBanner = !tokenBannerDismissed;
-  function dismissTokenBanner() {
-    setTokenBannerDismissed(true);
   }
 
   // ── Notification Nudge Banner ─────────────────────────────────────────────
@@ -4842,67 +4821,6 @@ function ClientPageInner() {
           </div>
         </header>
 
-        {/* ── $GRUBKITTY TOKEN LAUNCH BANNER ── */}
-        {showTokenBanner && (
-          <div
-            style={{
-              margin: "8px 8px 0",
-              padding: "9px 12px",
-              background: "linear-gradient(135deg, rgba(120,170,255,0.28), rgba(160,120,255,0.20))",
-              border: "1.5px solid rgba(60,100,240,0.40)",
-              borderRadius: 12,
-              position: "relative",
-              overflow: "hidden",
-              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: "1.3rem", lineHeight: 1, flexShrink: 0 }}>🐾</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#49332d", marginBottom: 1 }}>
-                  $GRUBKITTY has launched on Base! 🚀
-                </div>
-                <div style={{ fontSize: "0.70rem", color: "#7a5c4f", marginBottom: 3 }}>
-                  Grub's official token is live on Base's new B20 standard. Grab some early!
-                </div>
-                <div style={{ fontSize: "0.64rem", color: "#8a6c5f", marginBottom: 5, fontStyle: "italic" }}>
-                  Fully community-owned, fixed supply.
-                </div>
-                <a
-                  href="https://rwagmi.com/swap?chainId=8453&tokenOut=0xB2000000000000000000001b09d9f0e89580d622&mode=buy"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  style={{
-                    display: "inline-block",
-                    background: "#3355ee",
-                    color: "#fff",
-                    fontWeight: 800,
-                    fontSize: "0.72rem",
-                    padding: "5px 12px",
-                    borderRadius: 8,
-                    textDecoration: "none",
-                  }}
-                >
-                  Buy $GRUBKITTY →
-                </a>
-              </div>
-              <button
-                type="button"
-                onClick={dismissTokenBanner}
-                style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
-                  flexShrink: 0,
-                  alignSelf: "flex-start",
-                }}
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* ── REFERRAL FESTIVAL BANNER ── */}
         <style>{`
           @keyframes festBubbleRise {
@@ -5373,42 +5291,6 @@ function ClientPageInner() {
             </div>
             <p className="stage-note-text">{stage.note}</p>
           </div>
-
-          {!hasTappedToday && (
-            <button
-              type="button"
-              onClick={() => {
-                kittyRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-                // Purely a visual "look here" nudge — briefly reuses the same
-                // poke-bounce class the cat gets from a real tap, but doesn't
-                // touch Bond, play a sound, or count toward the daily cap.
-                setPoked(true);
-                window.setTimeout(() => setPoked(false), 420);
-              }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 7,
-                margin: "2px auto 8px",
-                padding: "8px 16px",
-                background: "rgba(255,255,255,0.85)",
-                border: "1.5px solid rgba(43,33,29,0.13)",
-                borderRadius: 999,
-                boxShadow: "0 4px 14px rgba(43,33,29,0.08)",
-                color: "#49332d",
-                fontSize: "0.78rem",
-                fontWeight: 700,
-                cursor: "pointer",
-                fontFamily: "inherit",
-                animation: "bubblePop 0.3s cubic-bezier(.4,1.4,.6,1) both",
-              }}
-            >
-              <span style={{ fontSize: "1rem", lineHeight: 1 }}>💗</span>
-              <span>No pats yet today — tap Grub to build Bond</span>
-              <span aria-hidden="true" style={{ opacity: 0.55 }}>↓</span>
-            </button>
-          )}
 
           <div className="kitty-stage-wrap" ref={kittyRef}>
             <Kitty
