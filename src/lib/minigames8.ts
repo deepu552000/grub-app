@@ -498,28 +498,16 @@ export async function getAlerts(): Promise<CoinTossAlert[]> {
 // verify after the fact that a result wasn't chosen after the bet came
 // in. Commit-reveal closes that gap regardless of RNG quality.
 //
-// clientSeed is now a real per-player value, not a shared placeholder —
-// see getOrCreateClientSeed() below. It's generated once per identity on
-// their first-ever flip and then reused for every flip after that (same
-// "persist forever, no expiry" pattern as the balance) — there's no
-// regenerate UI yet (that's still phase 2: a "Provably Fair" panel where
-// the player can see/rotate their own seed), so for now this only closes
-// the "server knows the client seed in advance" gap, not the "player can
-// refresh it themselves" one. Recording clientSeed per-flip (see
-// CoinTossFlip type above) means adding that regenerate control later
-// doesn't require touching any already-settled flip — each one already
-// carries whatever clientSeed was actually used against it.
-function clientSeedKey(identityKey: string) {
-  return `grub:minigames:cointoss:clientseed:${identityKey}`;
-}
-
-async function getOrCreateClientSeed(identityKey: string): Promise<string> {
-  const existing = await kv.get<string>(clientSeedKey(identityKey));
-  if (existing) return existing;
-  const fresh = randomBytes(16).toString("hex");
-  await kv.set(clientSeedKey(identityKey), fresh);
-  return fresh;
-}
+// clientSeed is a fixed placeholder for now, not player-supplied. A real
+// provably-fair system lets the player set their own client seed so the
+// server can't precompute favorable outcomes across a whole seed's
+// lifetime in advance — that's phase 2 (a "Provably Fair" panel: player
+// sets/sees their client seed, triggers rotation, verifies past flips).
+// Recording clientSeed per-flip now (see CoinTossFlip type above) means
+// swapping the placeholder for real player input later doesn't require
+// touching any already-settled flip — each one already carried whatever
+// clientSeed was actually used against it.
+const DEFAULT_CLIENT_SEED = "grub-cointoss-v1";
 
 type ActiveSeed = {
   serverSeed: string; // raw — SECRET while active, revealed only on rotation
@@ -592,7 +580,7 @@ async function getOrCreateActiveSeed(): Promise<ActiveSeed> {
  * near the range edge" correction some games need only applies to
  * non-power-of-two ranges (e.g. picking 1–37 for roulette), not a coin.
  */
-async function resolveFlipOutcome(identityKey: string): Promise<{
+async function resolveFlipOutcome(): Promise<{
   result: "heads" | "tails";
   serverSeedHash: string;
   nonce: number;
@@ -600,7 +588,7 @@ async function resolveFlipOutcome(identityKey: string): Promise<{
 }> {
   const active = await getOrCreateActiveSeed();
   const nonce = active.nonce;
-  const clientSeed = await getOrCreateClientSeed(identityKey);
+  const clientSeed = DEFAULT_CLIENT_SEED;
 
   const hmac = createHmac("sha256", active.serverSeed).update(`${clientSeed}:${nonce}`).digest("hex");
   const int = parseInt(hmac.slice(0, 8), 16);
@@ -707,7 +695,7 @@ export async function placeCoinTossBet(
   // committed seed + an incrementing nonce, not a fresh random draw each
   // time, so results are reconstructable and verifiable once the seed
   // rotates and its raw value is revealed.
-  const { result, serverSeedHash, nonce, clientSeed } = await resolveFlipOutcome(identityKey);
+  const { result, serverSeedHash, nonce, clientSeed } = await resolveFlipOutcome();
   const won = result === choice;
 
   let payoutDegen = 0;
