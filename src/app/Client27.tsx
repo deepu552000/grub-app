@@ -1732,7 +1732,6 @@ function ClientPageInner() {
   const minigamesSectionRef = useRef<HTMLElement>(null);
   const [minigamesOpen, setMinigamesOpen] = useState(false);
   const cointossSectionRef = useRef<HTMLDivElement>(null);
-  const cointossFairnessRef = useRef<HTMLDivElement>(null);
   const [cointossOpen, setCointossOpen] = useState(false);
   const [cointossConfig, setCointossConfig] = useState<{ enabled: boolean; minBetDegen: number; maxBetDegen: number; feePercentOnWin: number } | null>(null);
   const [cointossBalance, setCointossBalance] = useState(0);
@@ -6448,14 +6447,7 @@ function ClientPageInner() {
               {cointossLastResult && !cointossFlipping && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setCointossFairnessOpen(true);
-                    // Panel toggling open is a state update, not yet painted
-                    // — without the timeout, scrollIntoView runs against the
-                    // pre-open layout (still collapsed), landing short of
-                    // where the expanded panel actually ends up.
-                    setTimeout(() => cointossFairnessRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-                  }}
+                  onClick={() => setCointossFairnessOpen(true)}
                   title={`Server seed hash: ${cointossLastResult.serverSeedHash}`}
                   style={{
                     alignSelf: "center", display: "flex", alignItems: "center", gap: 5,
@@ -6560,7 +6552,7 @@ function ClientPageInner() {
                   flip's seed has rotated out and its raw value is in
                   cointossSeedHistory — verification runs entirely in the
                   browser (verifyCointossFlip, Web Crypto), no server call. */}
-              <div ref={cointossFairnessRef} style={{ borderTop: "1px solid #eee0d8", paddingTop: 10 }}>
+              <div style={{ borderTop: "1px solid #eee0d8", paddingTop: 10 }}>
                 <button
                   type="button"
                   onClick={() => setCointossFairnessOpen((o) => !o)}
