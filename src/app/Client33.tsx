@@ -1220,26 +1220,15 @@ function ClientPageInner() {
   }, [isBaseAppIdentity, walletAddress]);
 
   useEffect(() => {
-    // Call ready() as soon as a real paint has happened, NOT synchronously
-    // at effect start. React's effect firing doesn't guarantee the browser
-    // has actually painted the loading screen yet — on a cold Base App
-    // launch (fresh JS parse, no cache), there's a real gap between "effect
-    // ran" and "pixels on screen." Calling ready() synchronously here tells
-    // the host to dismiss its splash immediately, which can land inside
-    // that gap and show the bare webview background (black) for a frame or
-    // two before our loading UI actually paints. A refresh hits warm
-    // cache/parse, closes that gap, and hides the issue — which is exactly
-    // the "fine after refresh, black on cold load" symptom this fixes.
-    // Double rAF (paint, then the frame after) is the standard way to wait
-    // for an actual paint before firing ready() — still well within the
-    // host's splash-screen watchdog window, so the "Ready not called"
-    // warning this replaced doesn't come back.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        sdk.actions.ready().catch(() => {});
-        console.log("[MOUNT] ready() called (post-paint)");
-      });
-    });
+    // Call ready() immediately, before anything else. The host's splash-screen
+    // watchdog flags the app ("Ready not called") if this doesn't fire within
+    // a short window of the UI becoming visible — it does NOT wait for our
+    // data/identity/context to load. Our UI is already rendering at this point
+    // (loading state included), so it's safe to dismiss the splash right away.
+    // Calling this here — synchronously at effect start — instead of after
+    // sdk.context resolves is what was causing the intermittent warning.
+    sdk.actions.ready().catch(() => {});
+    console.log("[MOUNT] ready() called");
 
     // Fallback timer moved to the TOP of the effect, before anything else
     // that could throw. Previously this was set up AFTER the

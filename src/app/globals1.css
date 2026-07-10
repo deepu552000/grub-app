@@ -548,23 +548,15 @@ h1 {
 
 /* A flat, fully opaque, exact-match backing plate sits directly behind the
    cat image - generously oversized so the gradient glow only ever blends
-   against itself, never directly against the image's flat rectangle edge.
-   Uses a radial-gradient soft edge instead of filter: blur() — blur()
-   forces a full-screen GPU compositing layer that embedded WebViews (Base
-   App, Coinbase Wallet, Farcaster clients) handle poorly, and this element
-   renders unconditionally on every app load (not gated behind a user
-   action like the FAQ backdrop was), so a shaky GPU init on a cold launch
-   can crash the renderer to a black screen before React ever mounts
-   visible content — same failure mode documented on .faq-backdrop above,
-   just untriggered by a click this time. The gradient gives the same soft
-   circular glow with zero blur-layer cost. */
+   against itself, never directly against the image's flat rectangle edge. */
 .kitty-stage-wrap::before {
   content: "";
   position: absolute;
-  width: 280px;
-  height: 280px;
+  width: 220px;
+  height: 220px;
   border-radius: 50%;
-  background: radial-gradient(circle, var(--cream) 0%, var(--cream) 45%, rgba(252, 235, 213, 0) 72%);
+  background: var(--cream);
+  filter: blur(32px);
   z-index: 0;
 }
 
