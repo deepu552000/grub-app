@@ -3251,11 +3251,10 @@ function AdminDashboardInner() {
                     </tr>
                   ) : filtered.map((u, i) => {
                   const profile = profiles[String(u.fid)];
-                  const flagged = u.hasAddedApp && !u.hasNotifToken;
                   return (
                     <tr key={u.fid} style={{
                       borderBottom: `1px solid ${T.borderSub}`,
-                      background: flagged ? (dark ? C.redDim + "55" : "#fee2e215") : (i % 2 === 0 ? "transparent" : T.surfaceAlt + "55"),
+                      background: i % 2 === 0 ? "transparent" : T.surfaceAlt + "55",
                     }}>
                       <td style={{ padding: "9px 14px" }}>
                         <button

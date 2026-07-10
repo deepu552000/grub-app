@@ -159,6 +159,8 @@ const TYPE_META: Record<string, { color: string; bg: string; label: string }> = 
   referral_checkin: { color: C.purple,  bg: "#2e1f5e",   label: "Ref Check" },
   wheel_spin:       { color: "#e879f9", bg: "#4a1d5e",   label: "Spin Wheel" },
   minigame_cashout: { color: "#dc2626", bg: "#450a0a",   label: "Coin Toss Cash-out" },
+  minigame_deposit: { color: "#22d3ee", bg: "#083344",   label: "Minigame Deposit" },
+  raffle_ticket:    { color: "#fbbf24", bg: "#451a03",   label: "Raffle Ticket" },
 };
 
 function timeAgo(ts: number): string {
@@ -2553,19 +2555,6 @@ function AdminDashboardInner() {
                           <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: c.cancelled ? T.textMute : C.green, textDecoration: c.cancelled ? "line-through" : "none" }}>+{c.amountDegen} DEGEN</td>
                           <td style={{ padding: "7px 14px", textAlign: "right", color: T.textMute }}>bal {c.newBalance}</td>
                           <td style={{ padding: "7px 14px", textAlign: "right", color: T.textMute }}>{timeAgo(c.ts)}</td>
-                          <td style={{ padding: "7px 14px", textAlign: "right" }}>
-                            {c.cancelled ? (
-                              <span style={{ fontSize: 10, fontWeight: 700, color: T.textMute }}>Cancelled</span>
-                            ) : (
-                              <button
-                                onClick={() => cancelMinigamesCredit(c.id)}
-                                disabled={raffleActionLoading === `credit_cancel_${c.id}`}
-                                style={{ background: "transparent", border: `1px solid ${C.red}`, color: C.red, borderRadius: 5, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
-                              >
-                                {raffleActionLoading === `credit_cancel_${c.id}` ? "…" : "Cancel"}
-                              </button>
-                            )}
-                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -2576,47 +2565,73 @@ function AdminDashboardInner() {
 
             <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
               <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: T.creamMute, borderBottom: `1px solid ${T.border}` }}>
-                Pending Cash-outs {(minigamesAdmin?.pendingCashouts ?? []).length > 0 && `(${minigamesAdmin.pendingCashouts.length})`}
+                Cash-outs
+                {(() => {
+                  const pendingCount = (minigamesAdmin?.recentCashouts ?? []).filter((c: any) => c.status === "pending").length;
+                  return pendingCount > 0 ? ` (${pendingCount} pending)` : "";
+                })()}
               </div>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr>
-                    {["Identity", "Wallet", "Amount", "Requested", ""].map((h, i) => (
-                      <th key={h} style={{ textAlign: i >= 2 ? "right" : "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(minigamesAdmin?.pendingCashouts ?? []).length === 0 ? (
-                    <tr><td colSpan={5} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No pending cash-outs.</td></tr>
-                  ) : minigamesAdmin.pendingCashouts.map((c: any) => (
-                    <tr key={c.id} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
-                      <td style={{ padding: "9px 14px", fontFamily: "monospace" }}>{c.identityKey}</td>
-                      <td style={{ padding: "9px 14px", fontFamily: "monospace", fontSize: 11 }}>{c.wallet}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 700, color: "#dc2626" }}>{c.amountDegen} DEGEN</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{timeAgo(c.requestedAt)}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right" }}>
-                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                          <button
-                            onClick={() => cancelMinigamesCashout(c.id)}
-                            disabled={raffleActionLoading === `cashout_${c.id}` || raffleActionLoading === `cashout_cancel_${c.id}`}
-                            style={{ background: "transparent", color: "#dc2626", border: "1px solid #dc2626", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                          >
-                            {raffleActionLoading === `cashout_cancel_${c.id}` ? "…" : "Cancel"}
-                          </button>
-                          <button
-                            onClick={() => fulfillMinigamesCashout(c.id)}
-                            disabled={raffleActionLoading === `cashout_${c.id}` || raffleActionLoading === `cashout_cancel_${c.id}`}
-                            style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                          >
-                            {raffleActionLoading === `cashout_${c.id}` ? "Sending…" : "Send"}
-                          </button>
-                        </div>
-                      </td>
+              <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {["Identity", "Wallet", "Amount", "Requested", "Status"].map((h, i) => (
+                        <th key={h} style={{ textAlign: i >= 2 ? "right" : "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, position: "sticky", top: 0 }}>{h}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {(minigamesAdmin?.recentCashouts ?? []).length === 0 ? (
+                      <tr><td colSpan={5} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No cash-outs yet.</td></tr>
+                    ) : minigamesAdmin.recentCashouts.map((c: any) => (
+                      <tr key={c.id} style={{ borderBottom: `1px solid ${T.borderSub}`, opacity: c.status === "cancelled" ? 0.5 : 1 }}>
+                        <td style={{ padding: "9px 14px", fontFamily: "monospace" }}>{c.identityKey}</td>
+                        <td style={{ padding: "9px 14px", fontFamily: "monospace", fontSize: 11 }}>{c.wallet}</td>
+                        <td style={{
+                          padding: "9px 14px", textAlign: "right", fontWeight: 700,
+                          color: c.status === "cancelled" ? T.textMute : "#dc2626",
+                          textDecoration: c.status === "cancelled" ? "line-through" : "none",
+                        }}>{c.amountDegen} DEGEN</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{timeAgo(c.requestedAt)}</td>
+                        <td style={{ padding: "9px 14px" }}>
+                          {c.status === "pending" ? (
+                            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                              <button
+                                onClick={() => cancelMinigamesCashout(c.id)}
+                                disabled={raffleActionLoading === `cashout_${c.id}` || raffleActionLoading === `cashout_cancel_${c.id}`}
+                                style={{ background: "transparent", color: "#dc2626", border: "1px solid #dc2626", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                              >
+                                {raffleActionLoading === `cashout_cancel_${c.id}` ? "…" : "Cancel"}
+                              </button>
+                              <button
+                                onClick={() => fulfillMinigamesCashout(c.id)}
+                                disabled={raffleActionLoading === `cashout_${c.id}` || raffleActionLoading === `cashout_cancel_${c.id}`}
+                                style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                              >
+                                {raffleActionLoading === `cashout_${c.id}` ? "Sending…" : "Send"}
+                              </button>
+                            </div>
+                          ) : c.status === "fulfilled" ? (
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: C.green }}>✓ Sent</span>
+                              {c.txHash && (
+                                <a href={`https://basescan.org/tx/${c.txHash}`} target="_blank" rel="noopener noreferrer"
+                                  style={{ color: dark ? C.blue : "#1d4ed8", fontSize: 11, fontWeight: 600, textDecoration: "none" }}>
+                                  ↗ view
+                                </a>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ textAlign: "right" }}>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: T.textMute }}>Cancelled</span>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
             <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: "1rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
