@@ -4205,25 +4205,13 @@ function ClientPageInner() {
   // anywhere.
   async function shareOrCopy(text: string, embedUrl: string, fallbackMsg: string) {
     try {
-      // Hard timeout — sdk.getCapabilities() goes through the same
-      // Farcaster bridge as sdk.wallet.getEthereumProvider(), which is
-      // already documented above (see mount effect) as hanging forever
-      // with no error or rejection inside Base App. Without a race here,
-      // that hang stalls this whole function mid-await, so it never falls
-      // through to navigator.share/clipboard below — the share button
-      // looks like it does nothing at all. Same fix, same reasoning, as
-      // every other bridge call in this file.
-      const capabilities = await Promise.race([
-        sdk.getCapabilities(),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("getCapabilities timed out")), 1200)),
-      ]);
+      const capabilities = await sdk.getCapabilities();
       if (capabilities.includes("actions.composeCast")) {
         const result = await sdk.actions.composeCast({ text, embeds: [embedUrl] });
         if (result?.cast) return; // posted successfully
       }
     } catch {
-      // fall through below — not a Farcaster host (e.g. Base App), or the
-      // bridge call timed out
+      // fall through below — not a Farcaster host (e.g. Base App)
     }
 
     // Base App / plain browser — try the native OS share sheet first, so the
@@ -4274,18 +4262,22 @@ function ClientPageInner() {
     // stat card as the preview AND the whole card is tappable straight into
     // the app — one rich, clickable embed instead of a dead image plus a
     // separate plain-link preview.
-    //
-    // simple:"1" — the card IMAGE is now just the cat (same style as the
-    // referral "Share Your Link" card), no stats/header/win-banner overlay.
-    // The cast TEXT below still calls out stage/streak/XP/bond exactly as
-    // before — only the picture changed, not the caption.
     const shareParams = new URLSearchParams({
       stage:  String(stageIndex),
       mood:   mood,
-      simple: "1",
+      xp:     String(xpForCard),
+      streak: String(state.streak),
+      bond:   String(clamp(state.bond)),
     });
     if (fid) {
       shareParams.set("ref", String(fid));
+    }
+    // Only show the "+1 XP" banner on the card when this share actually
+    // paid it out — otherwise a second share the same day would falsely
+    // advertise a bonus the user won't get.
+    if (!alreadyPaidToday) {
+      shareParams.set("win", "+1 XP");
+      shareParams.set("winId", "share");
     }
 
     const appUrl = `https://grub-app-eight.vercel.app/?${shareParams.toString()}`;
@@ -4308,14 +4300,12 @@ function ClientPageInner() {
   // with the smaller pill treatment. Fires automatically right when a win
   // is confirmed (no separate "Share" tap), per how this was scoped.
   function shareWheelWin(rewardLabel: string, isRareWin: boolean, winId?: string) {
-    // simple:"1" — same cat-only card style as the referral share, with a
-    // short win headline rendered above the cat (see isSimple in route.tsx).
-    // Cast TEXT below is unchanged — still calls out stage/XP/streak in the
-    // caption exactly as before; only the card IMAGE dropped the stats/header.
     const shareParams = new URLSearchParams({
       stage:  String(stageIndex),
       mood:   mood,
-      simple: "1",
+      xp:     String(Math.round(state.xp)),
+      streak: String(state.streak),
+      bond:   String(clamp(state.bond)),
       win:    rewardLabel,
     });
     if (winId) shareParams.set("winId", winId);

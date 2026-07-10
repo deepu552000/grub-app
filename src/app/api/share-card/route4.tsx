@@ -66,27 +66,6 @@ const WIN_COPY: Record<string, string> = {
   share:       "Thanks for sharing Grub!",
 };
 
-// Rare Accessory gets its own dedicated headline on the simple/referral-style
-// card (see isSimple below) instead of reusing the flat "Won: X" line — it's
-// the best reward tier, so it gets the best copy.
-const RARE_COPY = "Grub struck gold! ✨🏆";
-
-// WIN_STYLES.text values (pastel) are tuned for the full card's dark
-// gradient background and are unreadable on the simple card's light cream
-// background. This gives each win type a readable dark accent color instead,
-// used only by the isSimple headline below.
-const WIN_TEXT_LIGHT: Record<string, string> = {
-  xp1:         "#b45309",
-  xp2:         "#c2410c",
-  xp3:         "#b91c1c",
-  xp5:         "#7c3aed",
-  xp10:        "#be123c",
-  freecheckin: "#0369a1",
-  streaksave:  "#15803d",
-  share:       "#b45309",
-};
-const DEFAULT_TEXT_LIGHT = "#5a4636";
-
 // Bare RGB triples (no alpha) for the ring-glow and confetti effects below,
 // which each need to build their own alpha/blur values rather than reuse the
 // fixed alphas baked into WIN_STYLES.bg/border. Mirrors the same
@@ -206,13 +185,11 @@ export async function GET(req: NextRequest) {
   const stageData  = stages[stageParam - 1];
   const catSrc     = await catImageDataUri(stageParam, mood, origin);
 
-  // Cat-only card — used for BOTH the referral share link (no win params —
-  // plain "here's my current cat") and Spin Wheel win shares (win/winId/rare
-  // present — same cat layout, plus a short cute headline above it). Same
-  // 1200x800 canvas and background gradient as the full card (keeps the 3:2
-  // ratio Farcaster Mini App embeds require).
+  // Cat-only card — used for the referral share link, which intentionally
+  // shows just "here's my current cat" with no stats/header/win banner.
   // Usage: /api/share-card?stage=2&mood=sleepy&simple=1
-  //        /api/share-card?stage=2&mood=sleepy&simple=1&win=%2B10+XP&winId=xp10
+  // Same 1200x800 canvas and background gradient as the full card (keeps the
+  // 3:2 ratio Farcaster Mini App embeds require), just the cat centered.
   const isSimple = searchParams.get("simple") === "1";
   if (isSimple) {
     return new ImageResponse(
@@ -220,12 +197,10 @@ export async function GET(req: NextRequest) {
         <div
           style={{
             display:        "flex",
-            flexDirection:  "column",
             alignItems:     "center",
             justifyContent: "center",
             width:          "100%",
             height:         "100%",
-            gap:            30,
             // Matches the in-app background (same cream used for splashBackgroundColor
             // in page.tsx and the referral/link boxes), not the dark stat-card gradient —
             // this card is meant to look like "here's what the app looks like", not a
@@ -236,62 +211,13 @@ export async function GET(req: NextRequest) {
             overflow:       "hidden",
           }}
         >
-          {win && (
-            isRareWin ? (
-              <div
-                style={{
-                  display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
-                  background: "linear-gradient(90deg, rgba(255,60,172,0.16) 0%, rgba(255,200,80,0.22) 50%, rgba(255,60,172,0.16) 100%)",
-                  border: "2px solid rgba(255,200,110,0.7)",
-                  borderRadius: 20,
-                  padding: "18px 40px",
-                  boxShadow: "0 0 30px rgba(255,180,90,0.32)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <span style={{ fontSize: 28, display: "flex" }}>🎉</span>
-                  <span style={{ fontSize: 28, fontWeight: 800, color: "#9a5a12", letterSpacing: 0.3 }}>
-                    {RARE_COPY}
-                  </span>
-                  <span style={{ fontSize: 28, display: "flex" }}>🎉</span>
-                </div>
-                <span style={{ fontSize: 17, fontWeight: 600, color: "#a8712f" }}>
-                  {win.replace(/^Rare Accessory:\s*/i, "")}
-                </span>
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  background: winStyle.bg,
-                  border: `${winStyle.tier === "highlight" ? 2 : 1}px solid ${winStyle.border}`,
-                  borderRadius: 18,
-                  padding: winStyle.tier === "highlight" ? "14px 26px" : "10px 22px",
-                }}
-              >
-                <span style={{ fontSize: winStyle.tier === "highlight" ? 22 : 19, display: "flex" }}>
-                  {winStyle.emoji}
-                </span>
-                <span
-                  style={{
-                    fontSize: winStyle.tier === "highlight" ? 20 : 17,
-                    fontWeight: winStyle.tier === "highlight" ? 800 : 700,
-                    color: WIN_TEXT_LIGHT[winId ?? ""] ?? DEFAULT_TEXT_LIGHT,
-                  }}
-                >
-                  {winText}
-                </span>
-              </div>
-            )
-          )}
-
           {catSrc ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={catSrc}
               alt="Grub"
-              width={win ? 460 : 520}
-              height={win ? 460 : 520}
+              width={520}
+              height={520}
               style={{ objectFit: "contain" }}
             />
           ) : (
@@ -302,11 +228,11 @@ export async function GET(req: NextRequest) {
       {
         width: 1200,
         height: 800,
-        // Same stage+mood+simple(+win) combo is generated identically every
-        // time — no reason to re-run the self-fetch + base64 encode on every
-        // single open/share. Cached at the edge, so repeat opens of the same
-        // referral or win-share link serve instantly instead of repeating
-        // the full generation path.
+        // Same stage+mood+simple combo is generated identically every time —
+        // no reason to re-run the self-fetch + base64 encode on every single
+        // open/share. Cached at the edge, so repeat opens of the same
+        // referral link serve instantly instead of repeating the full
+        // generation path.
         headers: { "Cache-Control": "public, immutable, max-age=86400" },
       },
     );
