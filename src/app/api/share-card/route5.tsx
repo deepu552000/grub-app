@@ -199,32 +199,6 @@ async function catImageDataUri(stage: number, mood: string, origin: string): Pro
 }
 
 export async function GET(req: NextRequest) {
-  try {
-    return await buildShareCard(req);
-  } catch (err) {
-    // Last-resort fallback — if ANYTHING above throws (a Satori quirk with
-    // the win-banner JSX, an unexpected param combo, etc.), we still return
-    // a valid, fast, minimal image instead of a 500. A host unfurling this
-    // URL gets a plain placeholder rather than an error/hang.
-    console.error("[share-card] render failed, serving fallback:", err);
-    return new ImageResponse(
-      (
-        <div
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            width: "100%", height: "100%",
-            background: "#f5f0e8", fontSize: 160,
-          }}
-        >
-          🐾
-        </div>
-      ),
-      { width: 1200, height: 800 },
-    );
-  }
-}
-
-async function buildShareCard(req: NextRequest) {
   const { searchParams, origin } = new URL(req.url);
 
   const stageParam = Math.min(Math.max(parseInt(searchParams.get("stage") ?? "1", 10), 1), 4);
