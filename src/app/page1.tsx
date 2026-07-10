@@ -30,9 +30,6 @@ type Props = {
     win?: string;
     winId?: string;
     rare?: string;
-    // Cat-only referral card — see Client.tsx's referral "Share Your Link"
-    // button and the share-card route's simple=1 mode.
-    simple?: string;
   }>;
 };
 
@@ -45,7 +42,7 @@ type Props = {
 //   the app when tapped, instead of a separate non-clickable image embed.
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const params = await searchParams;
-  const { ref, stage, mood, xp, streak, bond, win, winId, rare, simple } = params ?? {};
+  const { ref, stage, mood, xp, streak, bond, win, winId, rare } = params ?? {};
 
   const hasShareStats = Boolean(stage && mood);
 
@@ -70,10 +67,6 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
     if (win)    cardParams.set("win", win);
     if (winId)  cardParams.set("winId", winId);
     if (rare)   cardParams.set("rare", rare);
-    // Cat-only card for referral shares — skips the stat pills/header/win
-    // banner entirely in the share-card route, regardless of what other
-    // params happen to be present.
-    if (simple) cardParams.set("simple", simple);
     imageUrl = `${BASE_URL}/api/share-card?${cardParams.toString()}`;
   }
 

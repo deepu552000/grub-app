@@ -7156,9 +7156,21 @@ function ClientPageInner() {
                   fontWeight: 700, cursor: "pointer", width: "100%"
                 }}
                 onClick={() => {
-                  const refLink = fid
-                    ? `https://grub-app-eight.vercel.app/?ref=${fid}`
-                    : `https://grub-app-eight.vercel.app/?ref=${walletAddress}`;
+                  // Referral card intentionally shows ONLY the sharer's current
+                  // cat (stage + mood), no stats — see /api/share-card's
+                  // simple=1 mode. Distinct from shareKitty()/shareWheelWin(),
+                  // which DO want the full stat card.
+                  const refParams = new URLSearchParams({
+                    stage:  String(stageIndex),
+                    mood:   mood,
+                    simple: "1",
+                  });
+                  if (fid) {
+                    refParams.set("ref", String(fid));
+                  } else if (walletAddress) {
+                    refParams.set("ref", walletAddress);
+                  }
+                  const refLink = `https://grub-app-eight.vercel.app/?${refParams.toString()}`;
                   const text = `I'm raising Grub 🐱✨ — a tiny white kitty!\nJoin me and help me earn DEGEN 🎁`;
                   shareOrCopy(text, refLink, "Referral link copied! Paste it anywhere to share. 📋");
                 }}

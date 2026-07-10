@@ -1917,7 +1917,7 @@ function ClientPageInner() {
   }
 
   async function doCointossDeposit() {
-    if (cointossDepositLoading || cointossDepositAmount <= 0) return;
+    if (paymentInFlight || cointossDepositAmount <= 0) return;
     const identity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
     if (!identity) {
       setLastAction("✕ No identity found — open this in Farcaster or connect a wallet first.");
@@ -2468,6 +2468,20 @@ function ClientPageInner() {
   const isFreeCheckin = freeCheckInsLeft > 0;
 
   const [checkinPending, setCheckinPending] = useState(false);
+
+  // True while ANY wallet-payment action is in flight (checkin, wheel spin,
+  // accessory unlock, raffle ticket, Coin Toss DEGEN deposit). Root-cause fix for a real bug: tapping
+  // Share (or any other button that opens a native overlay — Farcaster's
+  // composeCast sheet or the OS navigator.share sheet) while a wallet
+  // confirmation popup is still pending can cause the host to spuriously
+  // reject/cancel the pending wallet request — even though the on-chain
+  // transfer may already be broadcasting. Result: USDC is charged, but the
+  // app never gets a clean success callback, so the corresponding action
+  // (checkin/spin/unlock/ticket) is never recorded server-side and the user
+  // sees a misleading "Cancelled, try again" message despite paying.
+  // Locking out the other overlay-opening buttons while a payment is in
+  // flight closes off that interference window.
+  const paymentInFlight = checkinPending || wheelSpinning || !!unlockPending || raffleBuying || cointossDepositLoading;
   const [checkinError, setCheckinError] = useState<string | null>(null);
 
   // ── USDC contract payment ─────────────────────────────────────────────────
@@ -3536,7 +3550,7 @@ function ClientPageInner() {
   }
 
   async function doCheckIn() {
-    if (checkedInToday || checkinPending) return;
+    if (checkedInToday || paymentInFlight) return;
     setCheckinError(null);
 
     // Free check-in (first 5 days) — no payment needed
@@ -3632,7 +3646,7 @@ function ClientPageInner() {
   // it. Payment happens FIRST (same order as check-in/accessory unlock) so
   // nothing is ever paid for without a confirmed reward.
   async function doWheelSpin() {
-    if (wheelSpinning) return;
+    if (paymentInFlight) return;
     setWheelError(null);
     setWheelResultLabel(null);
     setWheelChoiceError(null);
@@ -4222,6 +4236,14 @@ function ClientPageInner() {
   }
 
   function shareKitty() {
+    // Block sharing (which opens a native composeCast/share overlay) while a
+    // wallet payment popup is still pending elsewhere — see paymentInFlight
+    // doc comment above for why this matters.
+    if (paymentInFlight) {
+      setLastAction("Hang on — finish your current transaction first.");
+      return;
+    }
+
     // +1 XP for sharing, capped at once per day (via lastShareXpDay) so the
     // button can't be tapped on repeat for free infinite XP. Applied to
     // local state the same way other small awards are (e.g. the referral
@@ -4421,7 +4443,7 @@ function ClientPageInner() {
   }
 
   async function buyRaffleTicket() {
-    if (raffleBuying) return;
+    if (paymentInFlight) return;
     setRaffleError(null);
     setRaffleMessage(null);
 
@@ -4532,7 +4554,7 @@ function ClientPageInner() {
 
   async function handleUnlockAccessory(accessoryId: string) {
     console.log("[UNLOCK] start", accessoryId, "fid:", fid, "pending:", unlockPending);
-    if (unlockPending) return; // prevent double-tap
+    if (paymentInFlight) return; // prevent double-tap / overlapping wallet actions
 
     // Guard: already unlocked
     if (isUnlocked(state.accessories, accessoryId)) {
@@ -5697,7 +5719,7 @@ function ClientPageInner() {
                 ? "Check in today to start your 7-day XP run"
                 : `Day ${gateCyclePos} of 7 → keep it going for ${7 - gateCyclePos} more day${7 - gateCyclePos === 1 ? "" : "s"} to get +5 XP`}
               </small>
-              <button type="button" className="checkin-btn" onClick={doCheckIn} disabled={checkinPending}>
+              <button type="button" className="checkin-btn" onClick={doCheckIn} disabled={paymentInFlight}>
                 {checkinPending
                   ? "⏳ Confirming..."
                   : gateStreakRewardEarned
@@ -5776,13 +5798,15 @@ function ClientPageInner() {
               padding: "11px",
               fontSize: 13,
               fontWeight: 700,
-              cursor: "pointer",
+              cursor: paymentInFlight ? "wait" : "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               gap: 6,
+              opacity: paymentInFlight ? 0.6 : 1,
             }}
             onClick={shareKitty}
+            disabled={paymentInFlight}
           >
             🐱 Share My Grub {sharedToday ? "(shared today)" : "(+1 XP)"}
           </button>
@@ -6007,11 +6031,11 @@ function ClientPageInner() {
               <button
                 type="button"
                 onClick={doWheelSpin}
-                disabled={wheelSpinning || !!wheelAccessoryChoices}
+                disabled={paymentInFlight || !!wheelAccessoryChoices}
                 title={wheelAccessoryChoices ? "Pick your Rare Accessory below before spinning again" : undefined}
                 style={{
                   width: "100%",
-                  background: wheelSpinning || wheelAccessoryChoices ? "#a78bfa" : "#7c3aed",
+                  background: paymentInFlight || wheelAccessoryChoices ? "#a78bfa" : "#7c3aed",
                   color: "#fff",
                   border: "none",
                   borderRadius: 10,
@@ -6233,17 +6257,17 @@ function ClientPageInner() {
               <button
                 type="button"
                 onClick={buyRaffleTicket}
-                disabled={raffleBuying || raffleRound?.status !== "open" || raffleMyTickets >= raffleMaxTickets}
+                disabled={paymentInFlight || raffleRound?.status !== "open" || raffleMyTickets >= raffleMaxTickets}
                 style={{
                   width: "100%",
-                  background: raffleBuying || raffleRound?.status !== "open" || raffleMyTickets >= raffleMaxTickets ? "#d6d3d1" : "#f59e0b",
+                  background: paymentInFlight || raffleRound?.status !== "open" || raffleMyTickets >= raffleMaxTickets ? "#d6d3d1" : "#f59e0b",
                   color: "#fff",
                   border: "none",
                   borderRadius: 10,
                   padding: "11px",
                   fontSize: 13,
                   fontWeight: 700,
-                  cursor: raffleBuying ? "wait" : "pointer",
+                  cursor: paymentInFlight ? "wait" : "pointer",
                 }}
               >
                 {raffleBuying
@@ -6661,13 +6685,13 @@ function ClientPageInner() {
                   <button
                     type="button"
                     onClick={doCointossDeposit}
-                    disabled={cointossDepositLoading || cointossDepositAmount <= 0}
+                    disabled={paymentInFlight || cointossDepositAmount <= 0}
                     style={{
                       flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700,
                       border: "1px solid #f59e0b",
-                      background: cointossDepositLoading || cointossDepositAmount <= 0 ? "#d6d3d1" : "#f59e0b",
+                      background: paymentInFlight || cointossDepositAmount <= 0 ? "#d6d3d1" : "#f59e0b",
                       color: "#fff",
-                      cursor: cointossDepositLoading || cointossDepositAmount <= 0 ? "default" : "pointer",
+                      cursor: paymentInFlight || cointossDepositAmount <= 0 ? "default" : "pointer",
                     }}
                   >
                     {cointossDepositLoading ? "Confirming…" : "Deposit"}
@@ -6956,7 +6980,7 @@ function ClientPageInner() {
                         <button
                           type="button"
                           onClick={() => handleUnlockAccessory(accessory.id)}
-                          disabled={!!unlockPending}
+                          disabled={paymentInFlight}
                           style={{
                             fontSize: 10,
                             padding: "3px 8px",
@@ -6964,8 +6988,8 @@ function ClientPageInner() {
                             border: "none",
                             background: unlockPending === accessory.id ? "#8a7a70" : "#2b211d",
                             color: "white",
-                            cursor: unlockPending ? "not-allowed" : "pointer",
-                            opacity: unlockPending && unlockPending !== accessory.id ? 0.5 : 1,
+                            cursor: paymentInFlight ? "not-allowed" : "pointer",
+                            opacity: paymentInFlight && unlockPending !== accessory.id ? 0.5 : 1,
                           }}
                         >
                           {unlockPending === accessory.id ? (
