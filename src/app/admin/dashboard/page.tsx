@@ -1311,10 +1311,6 @@ function AdminDashboardInner() {
     .filter((s) => globalMatchesFid(s.fid ?? s.wallet ?? s.identity));
   const filteredReferrers = referrers.filter((u) => globalMatchesFid(u.fid));
   const notifStatusUsers = [...users].sort((a, b) => {
-    // Flag cases first (added but no token), then by most recent last-seen
-    const aFlag = a.hasAddedApp && !a.hasNotifToken ? 1 : 0;
-    const bFlag = b.hasAddedApp && !b.hasNotifToken ? 1 : 0;
-    if (aFlag !== bFlag) return bFlag - aFlag;
     const aTime = a.lastVisit && a.lastVisit !== "unknown" ? new Date(a.lastVisit).getTime() : 0;
     const bTime = b.lastVisit && b.lastVisit !== "unknown" ? new Date(b.lastVisit).getTime() : 0;
     return bTime - aTime;
