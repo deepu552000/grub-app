@@ -61,7 +61,7 @@ const WIN_COPY: Record<string, string> = {
   xp3:         "Grub pounced!",
   xp5:         "Grub's feeling lucky!",
   xp10:        "Grub hit the jackpot bowl!",
-  freecheckin: "Grub says thanks for stopping by!",
+  freecheckin: "Grub scored a free check-in!",
   streaksave:  "Grub's got your back — streak saved!",
   share:       "Thanks for sharing Grub!",
 };
@@ -87,6 +87,15 @@ const WIN_TEXT_LIGHT: Record<string, string> = {
 };
 const DEFAULT_TEXT_LIGHT = "#5a4636";
 
+// Darker variants of the freecheckin/streaksave colors above, used only for
+// the highlight-tier pill text. The regular WIN_TEXT_LIGHT shades read fine
+// at full 1200px size but wash out once the pill is scaled down to a feed
+// thumbnail — these trade a little brand-color nuance for contrast.
+const WIN_TEXT_HIGHLIGHT_LIGHT: Record<string, string> = {
+  freecheckin: "#0c4a6e",
+  streaksave:  "#14532d",
+};
+
 // Bare RGB triples (no alpha) for the ring-glow and confetti effects below,
 // which each need to build their own alpha/blur values rather than reuse the
 // fixed alphas baked into WIN_STYLES.bg/border. Mirrors the same
@@ -103,6 +112,15 @@ const WIN_RGB: Record<string, string> = {
 };
 const RARE_RGB = "255,120,170";
 const DEFAULT_RGB = "170,130,255";
+
+// Bumps the alpha channel of an "rgba(r,g,b,a)" string to a new fixed value,
+// regardless of what the original alpha was. Used below to punch up the
+// simple-card win pills (xp/highlight/rare) for feed-thumbnail legibility —
+// a plain string.replace("0.16", ...) is fragile since WIN_STYLES entries
+// don't all share the same base alpha (0.16 vs 0.18 vs 0.20 etc).
+function boostAlpha(rgba: string, alpha: number): string {
+  return rgba.replace(/[\d.]+\)$/, `${alpha})`);
+}
 
 // xp tier: 5 size steps (scale 0→4) so a +10 XP win visibly outsizes a +1 XP win
 // without touching the highlight/rare tiers.
@@ -240,43 +258,55 @@ export async function GET(req: NextRequest) {
             isRareWin ? (
               <div
                 style={{
-                  display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
-                  background: "linear-gradient(90deg, rgba(255,60,172,0.16) 0%, rgba(255,200,80,0.22) 50%, rgba(255,60,172,0.16) 100%)",
-                  border: "2px solid rgba(255,200,110,0.7)",
-                  borderRadius: 20,
-                  padding: "18px 40px",
-                  boxShadow: "0 0 30px rgba(255,180,90,0.32)",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
+                  background: "linear-gradient(90deg, rgba(255,60,172,0.28) 0%, rgba(255,200,80,0.38) 50%, rgba(255,60,172,0.28) 100%)",
+                  border: "3px solid rgba(255,200,110,0.9)",
+                  borderRadius: 22,
+                  padding: "22px 46px",
+                  boxShadow: "0 0 34px rgba(255,180,90,0.4)",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <span style={{ fontSize: 28, display: "flex" }}>🎉</span>
-                  <span style={{ fontSize: 28, fontWeight: 800, color: "#9a5a12", letterSpacing: 0.3 }}>
+                  <span style={{ fontSize: 32, display: "flex" }}>🎉</span>
+                  <span style={{ fontSize: 32, fontWeight: 900, color: "#7a3e0a", letterSpacing: 0.3 }}>
                     {RARE_COPY}
                   </span>
-                  <span style={{ fontSize: 28, display: "flex" }}>🎉</span>
+                  <span style={{ fontSize: 32, display: "flex" }}>🎉</span>
                 </div>
-                <span style={{ fontSize: 17, fontWeight: 600, color: "#a8712f" }}>
+                <span style={{ fontSize: 20, fontWeight: 700, color: "#8a5420" }}>
                   {win.replace(/^Rare Accessory:\s*/i, "")}
                 </span>
               </div>
             ) : (
               <div
                 style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  background: winStyle.bg,
-                  border: `${winStyle.tier === "highlight" ? 2 : 1}px solid ${winStyle.border}`,
-                  borderRadius: 18,
-                  padding: winStyle.tier === "highlight" ? "14px 26px" : "10px 22px",
+                  display: "flex", alignItems: "center", gap: winStyle.tier === "highlight" ? 14 : 12,
+                  // Both tiers get a punched-up fill/border/glow vs. the raw
+                  // WIN_STYLES values — those alphas were tuned for the full
+                  // 1200px card and were near-invisible once Farcaster/Base
+                  // scale this down to a feed thumbnail (see screenshot).
+                  background: boostAlpha(winStyle.bg, winStyle.tier === "highlight" ? 0.34 : 0.3),
+                  border: `${winStyle.tier === "highlight" ? 3 : 2}px solid ${
+                    boostAlpha(winStyle.border, winStyle.tier === "highlight" ? 0.85 : 0.75)
+                  }`,
+                  borderRadius: winStyle.tier === "highlight" ? 22 : 18,
+                  padding: winStyle.tier === "highlight" ? "20px 38px" : "14px 28px",
+                  boxShadow: `0 0 ${winStyle.tier === "highlight" ? 26 : 18}px rgba(${winRgb},${
+                    winStyle.tier === "highlight" ? 0.35 : 0.25
+                  })`,
                 }}
               >
-                <span style={{ fontSize: winStyle.tier === "highlight" ? 22 : 19, display: "flex" }}>
+                <span style={{ fontSize: winStyle.tier === "highlight" ? 30 : 24, display: "flex" }}>
                   {winStyle.emoji}
                 </span>
                 <span
                   style={{
-                    fontSize: winStyle.tier === "highlight" ? 20 : 17,
-                    fontWeight: winStyle.tier === "highlight" ? 800 : 700,
-                    color: WIN_TEXT_LIGHT[winId ?? ""] ?? DEFAULT_TEXT_LIGHT,
+                    fontSize: winStyle.tier === "highlight" ? 27 : 21,
+                    fontWeight: winStyle.tier === "highlight" ? 900 : 800,
+                    letterSpacing: 0.2,
+                    color: winStyle.tier === "highlight"
+                      ? WIN_TEXT_HIGHLIGHT_LIGHT[winId ?? ""] ?? DEFAULT_TEXT_LIGHT
+                      : WIN_TEXT_LIGHT[winId ?? ""] ?? DEFAULT_TEXT_LIGHT,
                   }}
                 >
                   {winText}
