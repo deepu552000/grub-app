@@ -80,17 +80,6 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   return {
     title: "Grub",
     description: "A fragile white kitty Farcaster mini app.",
-    // Standard Open Graph image — Base App stopped treating mini apps as
-    // Farcaster frames on April 9, 2026 (see Client.tsx's mount-effect
-    // comments), so it doesn't read fc:frame at all when unfurling a raw
-    // link. Without this, Base App had nothing to show for the preview —
-    // this is purely additive and doesn't change how fc:frame renders in
-    // actual Farcaster clients below.
-    openGraph: {
-      title: "Grub",
-      description: "A fragile white kitty Farcaster mini app.",
-      images: [imageUrl],
-    },
     other: {
       "fc:frame": JSON.stringify({
         version: "next",

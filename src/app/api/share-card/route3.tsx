@@ -175,6 +175,50 @@ export async function GET(req: NextRequest) {
   const stageData  = stages[stageParam - 1];
   const catSrc     = await catImageDataUri(stageParam, mood, origin);
 
+  // Cat-only card — used for the referral share link, which intentionally
+  // shows just "here's my current cat" with no stats/header/win banner.
+  // Usage: /api/share-card?stage=2&mood=sleepy&simple=1
+  // Same 1200x800 canvas and background gradient as the full card (keeps the
+  // 3:2 ratio Farcaster Mini App embeds require), just the cat centered.
+  const isSimple = searchParams.get("simple") === "1";
+  if (isSimple) {
+    return new ImageResponse(
+      (
+        <div
+          style={{
+            display:        "flex",
+            alignItems:     "center",
+            justifyContent: "center",
+            width:          "100%",
+            height:         "100%",
+            // Matches the in-app background (same cream used for splashBackgroundColor
+            // in page.tsx and the referral/link boxes), not the dark stat-card gradient —
+            // this card is meant to look like "here's what the app looks like", not a
+            // separate stats-graphic style.
+            background:     "radial-gradient(circle at 50% 42%, #fbf7f0 0%, #f5f0e8 55%, #efe7d8 100%)",
+            fontFamily:     "sans-serif",
+            position:       "relative",
+            overflow:       "hidden",
+          }}
+        >
+          {catSrc ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={catSrc}
+              alt="Grub"
+              width={520}
+              height={520}
+              style={{ objectFit: "contain" }}
+            />
+          ) : (
+            <span style={{ fontSize: 220, display: "flex" }}>🐾</span>
+          )}
+        </div>
+      ),
+      { width: 1200, height: 800 },
+    );
+  }
+
   const thisMinXp  = stageMinXp[stageParam - 1];
   const nextMinXp  = stageMinXp[stageParam] ?? null;
   const xpProgress = nextMinXp !== null

@@ -139,8 +139,18 @@ function moodAccent(mood: string): [string, string] {
 async function catImageDataUri(stage: number, mood: string, origin: string): Promise<string | null> {
   const url = catImageSrc(stage, mood, origin);
   try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
+    // Hard timeout on this self-fetch (edge function calling back to its own
+    // origin for the PNG asset). Without this, a slow or hung origin request
+    // has no ceiling — the whole share-card response (and, by extension,
+    // anything waiting on it, like a host unfurling this URL before
+    // launching the mini app) blocks for as long as the fetch takes. Same
+    // "never trust an async call to settle on its own" pattern used
+    // throughout Client.tsx (see silentlyDetectWallet, getFcProviderWithTimeout).
+    const res = await Promise.race([
+      fetch(url),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
+    if (!res || !res.ok) return null;
     const buf = await res.arrayBuffer();
     const base64 = Buffer.from(buf).toString("base64");
     return `data:image/png;base64,${base64}`;
@@ -215,7 +225,16 @@ export async function GET(req: NextRequest) {
           )}
         </div>
       ),
-      { width: 1200, height: 800 },
+      {
+        width: 1200,
+        height: 800,
+        // Same stage+mood+simple combo is generated identically every time —
+        // no reason to re-run the self-fetch + base64 encode on every single
+        // open/share. Cached at the edge, so repeat opens of the same
+        // referral link serve instantly instead of repeating the full
+        // generation path.
+        headers: { "Cache-Control": "public, immutable, max-age=86400" },
+      },
     );
   }
 
@@ -444,6 +463,14 @@ export async function GET(req: NextRequest) {
         </div>
       </div>
     ),
-    { width: 1200, height: 800 },
+    {
+      width: 1200,
+      height: 800,
+      // Same caching rationale as the simple/referral card above — a given
+      // stage+mood+xp+streak+bond(+win) combo always renders identically,
+      // so cache it rather than re-running the fetch+encode chain on every
+      // view/open of the same share.
+      headers: { "Cache-Control": "public, immutable, max-age=86400" },
+    },
   );
 }
