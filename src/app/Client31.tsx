@@ -3647,14 +3647,6 @@ function ClientPageInner() {
   // nothing is ever paid for without a confirmed reward.
   async function doWheelSpin() {
     if (paymentInFlight) return;
-    // Set BEFORE awaiting payment, not after — same pattern as
-    // handleUnlockAccessory/doCheckIn/buyRaffleTicket. sendUsdcPayment below
-    // can sit open for as long as it takes the user to confirm/reject in
-    // the wallet popup; paymentInFlight only reflects wheelSpinning, so if
-    // we waited until AFTER payment resolved to set this, the button stays
-    // tappable that whole time and a second tap fires a second concurrent
-    // sendUsdcPayment call — a second wallet prompt stacked on the first.
-    setWheelSpinning(true);
     setWheelError(null);
     setWheelResultLabel(null);
     setWheelChoiceError(null);
@@ -3676,9 +3668,6 @@ function ClientPageInner() {
       } else {
         setWheelError(`Payment failed: ${msg.slice(0, 80)}`);
       }
-      // Payment never confirmed (cancelled/rejected/failed) — release the
-      // lock so the user can tap Spin again immediately.
-      setWheelSpinning(false);
       return;
     }
 
@@ -3813,9 +3802,8 @@ function ClientPageInner() {
       }
 
       // Animate, then reveal — reward (or the picker) is already decided
-      // and, for the no-items-left case, already saved above. wheelSpinning
-      // is already true (set at the top of doWheelSpin, before the payment
-      // await) — no need to set it again here.
+      // and, for the no-items-left case, already saved above.
+      setWheelSpinning(true);
       playSfx("spin");
       animateWheelTo(index);
       const SPIN_DURATION_MS = 4200;
@@ -3863,8 +3851,7 @@ function ClientPageInner() {
 
     // Animation is now purely cosmetic — it reveals a reward that's
     // already been saved above, it doesn't gate the save anymore.
-    // wheelSpinning is already true (set at the top of doWheelSpin, before
-    // the payment await) — no need to set it again here.
+    setWheelSpinning(true);
     playSfx("spin");
     animateWheelTo(index);
     const SPIN_DURATION_MS = 4200;
