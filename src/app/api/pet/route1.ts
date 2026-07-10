@@ -149,28 +149,7 @@ const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick
 function sanitizeState(existingRaw: any, incomingState: any) {
   const existingUnlocked: string[] = existingRaw?.accessories?.unlocked ?? [];
   const incomingUnlocked: string[] = incomingState?.accessories?.unlocked ?? [];
-  // Union anchored on existingUnlocked, NOT a filter of incomingUnlocked.
-  // existingUnlocked is server-confirmed truth — nothing lands in it without
-  // going through unlock_accessory's verified payment or wheel_spin's
-  // rare-accessory grant, and both of those callers fold the newly-verified
-  // id into the `existingRaw` they pass in here before calling this. That
-  // means it is always safe to just keep everything already in
-  // existingUnlocked, regardless of what this particular request's
-  // (possibly stale) local `incomingState` happens to know about.
-  //
-  // The old version filtered incomingUnlocked down to whatever existed —
-  // which meant ANY save whose local snapshot didn't yet include a
-  // recently-unlocked accessory (e.g. the plain 800ms debounced autosave
-  // firing while a DIFFERENT accessory's unlock_accessory call was still
-  // mid-flight waiting on its Etherscan verification poll) would silently
-  // drop that accessory from KV when its write landed — even though it was
-  // already paid for and persisted. That's what caused a 3rd purchased
-  // accessory to flip back to locked after two others stuck: whichever save
-  // landed last won, and the stale one's filter erased the newest unlock.
-  const safeUnlocked = Array.from(new Set([
-    ...existingUnlocked,
-    ...incomingUnlocked.filter((id: string) => existingUnlocked.includes(id)),
-  ]));
+  const safeUnlocked = incomingUnlocked.filter((id: string) => existingUnlocked.includes(id));
 
   const incomingEquipped: Record<string, string> = incomingState?.accessories?.equipped ?? {};
   const safeEquipped = Object.fromEntries(
