@@ -245,19 +245,6 @@ export async function GET(req: NextRequest) {
 }
 
 // ── POST — save pet state ────────────────────────────────────────────────────
-// Logs every rejection with a consistent [pet] ❌ prefix + the identity/action
-// context, then returns the NextResponse. Added after a run of 3 back-to-back
-// accessory unlocks silently failed with 400s and NOTHING showed up in the
-// Vercel log Messages column — every early-return branch below was bare
-// `NextResponse.json(...)` with no console output at all, so there was no way
-// to tell WHICH check rejected the request without reproducing it with local
-// devtools open. Every rejection path in this file should route through this
-// instead of returning NextResponse.json directly.
-function logReject(status: number, reason: string, details: Record<string, any> = {}) {
-  console.warn(`[pet] ❌ ${status} ${reason}`, details);
-  return NextResponse.json({ error: reason }, { status });
-}
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -266,13 +253,16 @@ export async function POST(req: NextRequest) {
     const who = identityLabel(fid, wallet);
 
     if (!key || !state) {
-      return logReject(400, "missing fid/wallet or state", { fid, wallet, action, hasState: !!state });
+      return NextResponse.json({ error: "missing fid/wallet or state" }, { status: 400 });
     }
 
     // ── Ban check — blocks ALL writes for this identity, regardless of action ─
     const currentState = await kv.get<any>(key);
     if (currentState?.banned) {
-      return logReject(403, "This account has been suspended.", { who, action });
+      return NextResponse.json(
+        { error: "This account has been suspended." },
+        { status: 403 }
+      );
     }
 
     // ── Accessory unlock — requires verified on-chain payment ────────────────
@@ -280,45 +270,40 @@ export async function POST(req: NextRequest) {
       const { accessoryId } = body;
 
       if (!accessoryId || !txHash) {
-        return logReject(400, "unlock_accessory requires accessoryId and txHash", {
-          who, accessoryId, hasTxHash: !!txHash,
-        });
+        return NextResponse.json(
+          { error: "unlock_accessory requires accessoryId and txHash" },
+          { status: 400 }
+        );
       }
 
       const expectedPrice = accessoryPriceMicroUsdc(accessoryId);
       if (expectedPrice === null) {
-        return logReject(400, "Unknown accessory", { who, accessoryId });
+        return NextResponse.json({ error: "Unknown accessory" }, { status: 400 });
       }
 
       // Replay attack prevention — each txHash can only unlock once
       const usedKey = `grub:used-tx:${txHash}`;
       const alreadyUsed = await kv.get(usedKey);
       if (alreadyUsed) {
-        // Logged in full (not just a flag) — this is the single most useful
-        // signal for diagnosing a back-to-back-purchase failure: it tells
-        // you exactly which accessory/identity/timestamp actually burned
-        // this txHash, so you can see whether THIS request really is a
-        // dupe/retry of an earlier success, or something reused a hash it
-        // shouldn't have (e.g. a stale txHash carried over from a prior
-        // unlock's closure).
-        return logReject(400, "This transaction has already been used to unlock an accessory.", {
-          who, accessoryId, txHash, previouslyUsedFor: alreadyUsed,
-        });
+        return NextResponse.json(
+          { error: "This transaction has already been used to unlock an accessory." },
+          { status: 400 }
+        );
       }
 
       // Verify USDC transfer on-chain
       const verify = await verifyUsdcTransfer(txHash, expectedPrice);
       if (!verify.ok) {
-        console.warn(`[pet] ❌ 402 verifyUsdcTransfer failed`, { who, accessoryId, txHash, expectedPrice, reason: verify.error });
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
       // Ensure the accessory is actually in state before saving
       const unlocked: string[] = state?.accessories?.unlocked ?? [];
       if (!unlocked.includes(accessoryId)) {
-        return logReject(400, "State mismatch — accessoryId not in unlocked list.", {
-          who, accessoryId, txHash, incomingUnlocked: unlocked,
-        });
+        return NextResponse.json(
+          { error: "State mismatch — accessoryId not in unlocked list." },
+          { status: 400 }
+        );
       }
 
       // Save state — sanitize equipped/xp too, same as every other save path.
@@ -354,22 +339,22 @@ export async function POST(req: NextRequest) {
     // ── Paid checkin — requires verified on-chain payment ───────────────────
     if (action === "checkin") {
       if (!txHash) {
-        return logReject(400, "checkin requires txHash", { who });
+        return NextResponse.json({ error: "checkin requires txHash" }, { status: 400 });
       }
 
       // Replay attack prevention
       const usedKey = `grub:used-tx:${txHash}`;
       const alreadyUsed = await kv.get(usedKey);
       if (alreadyUsed) {
-        return logReject(400, "This transaction has already been used.", {
-          who, txHash, previouslyUsedFor: alreadyUsed,
-        });
+        return NextResponse.json(
+          { error: "This transaction has already been used." },
+          { status: 400 }
+        );
       }
 
       // Verify USDC transfer on-chain
       const verify = await verifyUsdcTransfer(txHash, CHECKIN_MICRO_USDC);
       if (!verify.ok) {
-        console.warn(`[pet] ❌ 402 verifyUsdcTransfer failed`, { who, txHash, reason: verify.error });
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
@@ -413,22 +398,22 @@ export async function POST(req: NextRequest) {
       const { wheelReward, accessoryId } = body;
 
       if (!txHash) {
-        return logReject(400, "wheel_spin requires txHash", { who, wheelReward });
+        return NextResponse.json({ error: "wheel_spin requires txHash" }, { status: 400 });
       }
 
       // Replay attack prevention — same pattern as checkin/unlock_accessory
       const usedKey = `grub:used-tx:${txHash}`;
       const alreadyUsed = await kv.get(usedKey);
       if (alreadyUsed) {
-        return logReject(400, "This transaction has already been used.", {
-          who, txHash, wheelReward, previouslyUsedFor: alreadyUsed,
-        });
+        return NextResponse.json(
+          { error: "This transaction has already been used." },
+          { status: 400 }
+        );
       }
 
       // Verify the $0.01 spin payment on-chain
       const verify = await verifyUsdcTransfer(txHash, SPIN_MICRO_USDC);
       if (!verify.ok) {
-        console.warn(`[pet] ❌ 402 verifyUsdcTransfer failed`, { who, txHash, wheelReward, reason: verify.error });
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
@@ -445,7 +430,7 @@ export async function POST(req: NextRequest) {
         serverComputed.streakSaveCredits = await grantCredit(key, "streakSave");
       } else if (wheelReward === "rareaccessory") {
         if (!accessoryId) {
-          return logReject(400, "rareaccessory reward requires accessoryId", { who, txHash });
+          return NextResponse.json({ error: "rareaccessory reward requires accessoryId" }, { status: 400 });
         }
         const existingUnlocked: string[] = existingForSpin?.accessories?.unlocked ?? [];
         if (!existingUnlocked.includes(accessoryId)) {
