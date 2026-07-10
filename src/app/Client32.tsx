@@ -4242,18 +4242,7 @@ function ClientPageInner() {
     // Base App / plain browser — try the native OS share sheet first, so the
     // user gets an actual tappable share flow (Messages, Twitter, etc.)
     // instead of a silent clipboard copy they have to paste manually.
-    //
-    // EXCEPT inside Base App specifically: presenting the native iOS share
-    // sheet from a mini-app nested inside Base App's own webview has been
-    // observed crashing the host — the share sheet fails to appear and the
-    // webview goes black, sometimes persisting until Base App is force-
-    // quit. This is an iOS/WKWebView nested-presentation issue with
-    // Base App's host, not something navigator.share() itself can recover
-    // from once triggered. Skipping the call entirely for Base App users
-    // and going straight to clipboard trades a nicer share flow for not
-    // risking that crash. Farcaster hosts (composeCast, above) and plain
-    // external browsers are unaffected and still get the native flow.
-    if (typeof navigator !== "undefined" && navigator.share && !isBaseAppIdentity) {
+    if (typeof navigator !== "undefined" && navigator.share) {
       try {
         await navigator.share({ text, url: embedUrl });
         return; // user completed or dismissed the native share sheet
