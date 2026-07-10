@@ -191,16 +191,24 @@ export async function GET(req: NextRequest) {
             justifyContent: "center",
             width:          "100%",
             height:         "100%",
-            // Matches the in-app background (same cream used for splashBackgroundColor
-            // in page.tsx and the referral/link boxes), not the dark stat-card gradient —
-            // this card is meant to look like "here's what the app looks like", not a
-            // separate stats-graphic style.
-            background:     "radial-gradient(circle at 50% 42%, #fbf7f0 0%, #f5f0e8 55%, #efe7d8 100%)",
+            background:     "linear-gradient(145deg, #0e0c1a 0%, #16112a 55%, #0b0b1c 100%)",
             fontFamily:     "sans-serif",
             position:       "relative",
             overflow:       "hidden",
           }}
         >
+          {/* Soft radial glow behind cat — same treatment as the full card */}
+          <div
+            style={{
+              position:   "absolute",
+              top: "50%", left: "50%",
+              transform:  "translate(-50%, -50%)",
+              width: 560,  height: 560,
+              borderRadius: "50%",
+              background: "radial-gradient(circle, rgba(190,160,255,0.16) 0%, transparent 70%)",
+              display:    "flex",
+            }}
+          />
           {catSrc ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
