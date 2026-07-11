@@ -413,12 +413,12 @@ const STAGE1_POSITIONS: Record<string, AccessoryPosition> = {
 // it — only the side flaps peek out. top/width below are tuned so the flaps
 // show clearly near the cheeks without the clasp area looking awkward.
 const STAGE2_POSITIONS: Record<string, AccessoryPosition> = {
-  "crown-gold":   { top: 21, left: 50, width: 28 },
-  "crown-silver": { top: 21, left: 50, width: 28 },
+  "crown-gold":   { top: 13, left: 50, width: 32 },
+  "crown-silver": { top: 13, left: 50, width: 32 },
   "cape-purple":  { top: 50, left: 50, width: 100 },
   "cape-blue":    { top: 50, left: 50, width: 100 },
-  "wand-star":    { top: 88, left: 82, width: 32, rotate: 35 },
-  "wand-moon":    { top: 88, left: 82, width: 32, rotate: 35 },
+  "wand-star":    { top: 88, left: 88, width: 32, rotate: 35 },
+  "wand-moon":    { top: 88, left: 88, width: 32, rotate: 35 },
 };
 
 // Stage 3 positions (stage3.webp content/smug, 208×208px kitty-wrap).
