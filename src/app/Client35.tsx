@@ -5646,7 +5646,7 @@ function ClientPageInner() {
 
           <div className="world-label">
             <span>{stage.world}</span>
-            <strong>{Math.round(progress)}% grown</strong>
+            <strong>{growth}% grown</strong>
           </div>
         </section>
 
