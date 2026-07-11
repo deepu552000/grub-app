@@ -1220,15 +1220,26 @@ function ClientPageInner() {
   }, [isBaseAppIdentity, walletAddress]);
 
   useEffect(() => {
-    // Call ready() immediately, before anything else. The host's splash-screen
-    // watchdog flags the app ("Ready not called") if this doesn't fire within
-    // a short window of the UI becoming visible — it does NOT wait for our
-    // data/identity/context to load. Our UI is already rendering at this point
-    // (loading state included), so it's safe to dismiss the splash right away.
-    // Calling this here — synchronously at effect start — instead of after
-    // sdk.context resolves is what was causing the intermittent warning.
-    sdk.actions.ready().catch(() => {});
-    console.log("[MOUNT] ready() called");
+    // Call ready() as soon as a real paint has happened, NOT synchronously
+    // at effect start. React's effect firing doesn't guarantee the browser
+    // has actually painted the loading screen yet — on a cold Base App
+    // launch (fresh JS parse, no cache), there's a real gap between "effect
+    // ran" and "pixels on screen." Calling ready() synchronously here tells
+    // the host to dismiss its splash immediately, which can land inside
+    // that gap and show the bare webview background (black) for a frame or
+    // two before our loading UI actually paints. A refresh hits warm
+    // cache/parse, closes that gap, and hides the issue — which is exactly
+    // the "fine after refresh, black on cold load" symptom this fixes.
+    // Double rAF (paint, then the frame after) is the standard way to wait
+    // for an actual paint before firing ready() — still well within the
+    // host's splash-screen watchdog window, so the "Ready not called"
+    // warning this replaced doesn't come back.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        sdk.actions.ready().catch(() => {});
+        console.log("[MOUNT] ready() called (post-paint)");
+      });
+    });
 
     // Fallback timer moved to the TOP of the effect, before anything else
     // that could throw. Previously this was set up AFTER the
@@ -3647,6 +3658,14 @@ function ClientPageInner() {
   // nothing is ever paid for without a confirmed reward.
   async function doWheelSpin() {
     if (paymentInFlight) return;
+    // Set BEFORE awaiting payment, not after — same pattern as
+    // handleUnlockAccessory/doCheckIn/buyRaffleTicket. sendUsdcPayment below
+    // can sit open for as long as it takes the user to confirm/reject in
+    // the wallet popup; paymentInFlight only reflects wheelSpinning, so if
+    // we waited until AFTER payment resolved to set this, the button stays
+    // tappable that whole time and a second tap fires a second concurrent
+    // sendUsdcPayment call — a second wallet prompt stacked on the first.
+    setWheelSpinning(true);
     setWheelError(null);
     setWheelResultLabel(null);
     setWheelChoiceError(null);
@@ -3668,6 +3687,9 @@ function ClientPageInner() {
       } else {
         setWheelError(`Payment failed: ${msg.slice(0, 80)}`);
       }
+      // Payment never confirmed (cancelled/rejected/failed) — release the
+      // lock so the user can tap Spin again immediately.
+      setWheelSpinning(false);
       return;
     }
 
@@ -3802,8 +3824,9 @@ function ClientPageInner() {
       }
 
       // Animate, then reveal — reward (or the picker) is already decided
-      // and, for the no-items-left case, already saved above.
-      setWheelSpinning(true);
+      // and, for the no-items-left case, already saved above. wheelSpinning
+      // is already true (set at the top of doWheelSpin, before the payment
+      // await) — no need to set it again here.
       playSfx("spin");
       animateWheelTo(index);
       const SPIN_DURATION_MS = 4200;
@@ -3851,7 +3874,8 @@ function ClientPageInner() {
 
     // Animation is now purely cosmetic — it reveals a reward that's
     // already been saved above, it doesn't gate the save anymore.
-    setWheelSpinning(true);
+    // wheelSpinning is already true (set at the top of doWheelSpin, before
+    // the payment await) — no need to set it again here.
     playSfx("spin");
     animateWheelTo(index);
     const SPIN_DURATION_MS = 4200;
@@ -4226,24 +4250,14 @@ function ClientPageInner() {
       // bridge call timed out
     }
 
-    // Base App / plain browser — try the native OS share sheet first, so the
-    // user gets an actual tappable share flow (Messages, Twitter, etc.)
-    // instead of a silent clipboard copy they have to paste manually.
-    if (typeof navigator !== "undefined" && navigator.share) {
-      try {
-        await navigator.share({ text, url: embedUrl });
-        return; // user completed or dismissed the native share sheet
-      } catch {
-        // user cancelled, or share() unsupported for this payload — fall
-        // through to clipboard as a last resort
-      }
-    }
-
+    // Base App — no native OS share sheet (that's what was popping the iOS
+    // Messages/Mail/Copy sheet). Copy to clipboard silently in the
+    // background — no toast, no visible reaction in the app itself.
     try {
       await navigator.clipboard.writeText(`${text}\n${embedUrl}`);
-      setLastAction(fallbackMsg);
     } catch {
-      setLastAction("Copy this link to share: " + embedUrl);
+      // clipboard write failed (e.g. no permission) — nothing to show,
+      // stay silent per the "no visible reaction" requirement
     }
   }
 

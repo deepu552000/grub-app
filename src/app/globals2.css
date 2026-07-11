@@ -1,0 +1,1251 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fff9f3;
+  --foreground: #2b211d;
+  --cream: #fcebd5;
+  --ink: #2b211d;
+  --muted: #8a756b;
+  --clay: #d8945c;
+  --pearl: #fffdf8;
+  --gold: #d8a94e;
+  --taupe: #a8907a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--background);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 50% -10%, rgba(255, 255, 255, 0.95), transparent 28rem),
+    linear-gradient(145deg, #fffaf2 0%, #fcefe0 42%, #fdf6ec 100%);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: var(--ink);
+}
+
+.phone-frame {
+  width: min(100%, 430px);
+  min-height: min(860px, calc(100vh - 36px));
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  border-radius: 30px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 247, 240, 0.96)),
+    var(--cream);
+  box-shadow: 0 28px 80px rgba(97, 57, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  padding: 18px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: #9a786a;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.9rem;
+  line-height: 1;
+}
+
+.ghost-button {
+  min-width: 74px;
+  min-height: 42px;
+  border: 1px solid rgba(99, 67, 54, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #573c33;
+  cursor: pointer;
+  font-weight: 800;
+  box-shadow: 0 10px 24px rgba(120, 75, 55, 0.1);
+}
+
+.hero {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  margin-top: 18px;
+  padding: 18px 14px 12px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(252, 235, 213, 0.98) 0 28%, rgba(252, 235, 213, 0.62) 48%, transparent 70%),
+    linear-gradient(180deg, rgba(255, 250, 245, 0.72), rgba(255, 239, 229, 0.56));
+}
+
+.stage-copy {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+}
+
+.stage-copy span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #9b6d62;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.stage-copy h2 {
+  margin-top: 9px;
+  font-size: clamp(2rem, 9vw, 3rem);
+  line-height: 0.96;
+}
+
+.stage-copy p {
+  max-width: 280px;
+  margin: 9px auto 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+
+.speech {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(108, 73, 56, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: 0 12px 30px rgba(120, 75, 55, 0.08);
+}
+
+.speech p {
+  color: #3f2c27;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.speech span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.resource-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.resource-row div,
+.stat,
+.evolution {
+  border: 1px solid rgba(108, 73, 56, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.life-track {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.life-track span {
+  display: grid;
+  place-items: center;
+  min-height: 26px;
+  border-radius: 999px;
+  background: rgba(93, 69, 60, 0.08);
+  color: rgba(96, 73, 66, 0.58);
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.life-track .is-unlocked {
+  background: linear-gradient(90deg, rgba(240, 168, 189, 0.3), rgba(168, 201, 217, 0.3));
+  color: #513a34;
+}
+
+.world-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: -4px auto 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(108, 73, 56, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.world-label strong {
+  color: #49332d;
+}
+
+.resource-row div {
+  display: grid;
+  gap: 4px;
+  min-height: 66px;
+  padding: 11px 10px;
+}
+
+.resource-row span,
+.stat span,
+.evolution span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.resource-row strong,
+.stat strong,
+.evolution strong {
+  overflow: hidden;
+  color: #33231f;
+  font-size: 1rem;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.stat {
+  display: grid;
+  gap: 10px;
+  min-height: 78px;
+  padding: 12px;
+}
+
+.stat div:first-child,
+.evolution div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mini-track,
+.progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(93, 69, 60, 0.1);
+}
+
+.mini-track span,
+.progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d8945c, #e7c06a, #a8907a);
+}
+
+.evolution {
+  display: grid;
+  gap: 11px;
+  margin-top: 12px;
+  padding: 13px;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.actions button {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 70px;
+  border: 0;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #3a2924, #241915);
+  color: white;
+  cursor: pointer;
+  box-shadow: 0 14px 26px rgba(48, 31, 24, 0.18);
+}
+
+.actions button:active,
+.ghost-button:active {
+  transform: translateY(1px);
+}
+
+.actions span {
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.actions small {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mood-hungry .phone-frame {
+  box-shadow: 0 28px 80px rgba(122, 82, 61, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+}
+
+.mood-feral .speech {
+  border-color: rgba(189, 88, 88, 0.24);
+  background: rgba(255, 245, 245, 0.84);
+}
+
+.mood-smug .mini-track span,
+.mood-smug .progress-track span {
+  background: linear-gradient(90deg, #e9b650, #f6d98a, #d8945c);
+}
+
+@keyframes floaty {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+
+  50% {
+    transform: translateY(-7px) scale(1.01);
+  }
+}
+
+@keyframes auraBreath {
+  0%,
+  100% {
+    transform: scale(0.98);
+    opacity: 0.82;
+  }
+
+  50% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+}
+
+@keyframes kittyBreath {
+  0%,
+  100% {
+    transform: translateY(0) scaleX(1);
+  }
+
+  50% {
+    transform: translateY(3px) scaleX(1.025);
+  }
+}
+
+@keyframes headBob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  50% {
+    transform: translateY(-5px) rotate(-1deg);
+  }
+}
+
+@keyframes tailSway {
+  0%,
+  100% {
+    transform: rotate(13deg);
+  }
+
+  50% {
+    transform: rotate(24deg);
+  }
+}
+
+/* Tail wag — mood-based speeds */
+.kitty-tail {
+  transform-box: fill-box;
+}
+/* content: gentle relaxed wag */
+.kitty-tail-content {
+  animation: tailWag 2.4s ease-in-out infinite;
+}
+/* smug: slow confident swish */
+.kitty-tail-smug {
+  animation: tailWag 3.2s ease-in-out infinite;
+}
+/* hungry: faster impatient flick */
+.kitty-tail-hungry {
+  animation: tailWagFast 0.9s ease-in-out infinite;
+}
+/* feral: rapid aggressive thrash */
+.kitty-tail-feral {
+  animation: tailWagFast 0.5s ease-in-out infinite;
+}
+/* sleepy: barely moving, very slow drift */
+.kitty-tail-sleepy {
+  animation: tailWagSlow 5s ease-in-out infinite;
+}
+
+@keyframes tailWag {
+  0%, 100% { transform: rotate(-8deg); }
+  50%       { transform: rotate(8deg);  }
+}
+@keyframes tailWagFast {
+  0%, 100% { transform: rotate(-12deg); }
+  50%       { transform: rotate(12deg);  }
+}
+@keyframes tailWagSlow {
+  0%, 100% { transform: rotate(-3deg); }
+  50%       { transform: rotate(3deg);  }
+}
+
+@keyframes charmSwing {
+  0%,
+  100% {
+    transform: rotate(-5deg);
+  }
+
+  50% {
+    transform: rotate(7deg);
+  }
+}
+
+@keyframes blink {
+  0%,
+  46%,
+  52%,
+  100% {
+    box-shadow: inset 0 0 0 0 rgba(255, 250, 245, 0);
+  }
+
+  49% {
+    box-shadow: inset 0 46px 0 0 rgba(255, 250, 245, 0.94);
+  }
+}
+
+@keyframes sparkle {
+  0%,
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4) rotate(45deg);
+  }
+
+  78% {
+    opacity: 0.9;
+    transform: scale(1) rotate(45deg);
+  }
+}
+
+@keyframes tinyShake {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+
+  50% {
+    translate: 2px -1px;
+  }
+}
+
+@keyframes happyBounce {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  45% {
+    transform: translateY(-14px) rotate(-3deg);
+  }
+}
+
+@keyframes groomGlow {
+  0%,
+  100% {
+    filter: blur(1px);
+  }
+
+  50% {
+    filter: blur(0) brightness(1.12);
+  }
+}
+
+@media (max-width: 380px) {
+  .app-shell {
+    padding: 0;
+  }
+
+  .phone-frame {
+    min-height: 100vh;
+    border-radius: 0;
+  }
+
+  .actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ============================================
+   INTERACTIVITY: poke feedback, floating numbers, idle invite
+   ============================================ */
+
+.kitty-stage-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+}
+
+/* A flat, fully opaque, exact-match backing plate sits directly behind the
+   cat image - generously oversized so the gradient glow only ever blends
+   against itself, never directly against the image's flat rectangle edge.
+   Uses a radial-gradient soft edge instead of filter: blur() — blur()
+   forces a full-screen GPU compositing layer that embedded WebViews (Base
+   App, Coinbase Wallet, Farcaster clients) handle poorly, and this element
+   renders unconditionally on every app load (not gated behind a user
+   action like the FAQ backdrop was), so a shaky GPU init on a cold launch
+   can crash the renderer to a black screen before React ever mounts
+   visible content — same failure mode documented on .faq-backdrop above,
+   just untriggered by a click this time. The gradient gives the same soft
+   circular glow with zero blur-layer cost. */
+.kitty-stage-wrap::before {
+  content: "";
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--cream) 0%, var(--cream) 45%, rgba(252, 235, 213, 0) 72%);
+  z-index: 0;
+}
+
+.kitty-wrap {
+  --growth-scale: 0.88;
+  --kitty-size: 168px;
+  position: relative;
+  z-index: 1;
+  width: var(--kitty-size);
+  height: var(--kitty-size);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transform: scale(var(--growth-scale));
+  transform-origin: center bottom;
+  transition: transform 420ms cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.kitty-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  -webkit-user-drag: none;
+  user-select: none;
+  pointer-events: none;
+  position: relative;
+  z-index: 2;
+}
+
+.kitty-stage-1 { --kitty-size: 168px; }
+.kitty-stage-2 { --kitty-size: 188px; }
+.kitty-stage-3 { --kitty-size: 208px; }
+.kitty-stage-4 { --kitty-size: 232px; }
+
+@keyframes kittyFadeIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.kitty-wrap:active {
+  transform: scale(calc(var(--growth-scale) * 0.97));
+}
+
+/* ── Overlay SVG: sits pixel-perfect on top of the webp image ── */
+.kitty-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 2;
+}
+
+/* ── Accessories: bows, hats, glasses, capes, wings etc. layered relative to
+   the cat image. Position/size come from inline styles (lib/accessories.ts).
+   z-index here is EXPLICIT and load-bearing — .kitty-image runs a continuous
+   transform animation (kittyBreathe) which gives it its own stacking
+   context, so plain DOM order is not reliable for layering against it.
+   Each accessory layer gets a fixed z-index instead:
+     behindCat (1)  <  kitty-image (2)  <  front (3)
+   background accessories (magic circles, stage 4+) sit below everything. ── */
+.kitty-accessory {
+  position: absolute;
+  animation: accessoryFadeIn 180ms ease-out;
+  filter: drop-shadow(0 2px 3px rgba(43, 33, 29, 0.18));
+}
+
+.kitty-accessory-background {
+  z-index: 0;
+}
+
+.kitty-accessory-behindCat {
+  z-index: 1;
+}
+
+.kitty-accessory-front {
+  z-index: 3;
+}
+
+@keyframes accessoryFadeIn {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* ── Eyelids: fully open by default (scaleY 0 + opacity 0 = invisible rect) ── */
+.kitty-eyelid {
+  transform-box: fill-box;
+  transform-origin: center top;
+  transform: scaleY(0);
+  opacity: 0;
+}
+
+/* Idle blink + poke blink — same animation, left eye leads, right follows */
+.eyelid-blink-l {
+  animation: eyelidClose 0.22s ease-in-out forwards;
+}
+.eyelid-blink-r {
+  animation: eyelidClose 0.22s ease-in-out 0.04s forwards;
+}
+
+@keyframes eyelidClose {
+  0%   { transform: scaleY(0); opacity: 0; }
+  20%  { opacity: 1; }
+  40%  { transform: scaleY(1); opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: scaleY(0); opacity: 0; }
+}
+
+/* ── EAR overlays ──────────────────────────────────────────────────────────
+   opacity:0 at rest, webp shows cleanly.
+   Idle twitch: tip flicks INWARD (toward head center) — left ear rotates
+   positive (clockwise), right ear rotates negative (anticlockwise).
+   Small degrees so it reads as a natural ear twitch not a flap.
+   Alternating: L first, R follows 1.4s later, long rest before repeat.
+──────────────────────────────────────────────────────────────────────────── */
+.kitty-ear-l {
+  transform-box: fill-box;
+  transform-origin: bottom right;
+  opacity: 0;
+  animation: earIdleL 5s ease-in-out infinite;
+}
+.kitty-ear-r {
+  transform-box: fill-box;
+  transform-origin: bottom left;
+  opacity: 0;
+  animation: earIdleR 5s ease-in-out infinite 1.4s;
+}
+
+/* Left ear tip flicks inward = positive/clockwise */
+@keyframes earIdleL {
+  0%        { opacity: 0;   transform: rotate(0deg); }
+  4%        { opacity: 1;   transform: rotate(8deg) translateY(-1px); }
+  10%       { opacity: 0.8; transform: rotate(3deg); }
+  16%       { opacity: 0;   transform: rotate(0deg); }
+  16%, 100% { opacity: 0;   transform: rotate(0deg); }
+}
+/* Right ear tip flicks inward = negative/anticlockwise */
+@keyframes earIdleR {
+  0%        { opacity: 0;   transform: rotate(0deg); }
+  4%        { opacity: 1;   transform: rotate(-12deg) translateY(-1px); }
+  10%       { opacity: 0.8; transform: rotate(-4deg); }
+  16%       { opacity: 0;   transform: rotate(0deg); }
+  16%, 100% { opacity: 0;   transform: rotate(0deg); }
+}
+
+/* Poke wiggle: inward flick, bigger bounce */
+.ear-wig-l {
+  animation: earWigL 0.6s ease-out forwards !important;
+}
+.ear-wig-r {
+  animation: earWigR 0.6s ease-out forwards !important;
+}
+@keyframes earWigL {
+  0%   { opacity: 0;   transform: rotate(0deg); }
+  15%  { opacity: 1;   transform: rotate(22deg) translateY(-2px); }
+  40%  { opacity: 0.9; transform: rotate(8deg); }
+  65%  { opacity: 0.7; transform: rotate(14deg); }
+  85%  { opacity: 0.3; transform: rotate(3deg); }
+  100% { opacity: 0;   transform: rotate(0deg); }
+}
+@keyframes earWigR {
+  0%   { opacity: 0;   transform: rotate(0deg); }
+  15%  { opacity: 1;   transform: rotate(-22deg) translateY(-2px); }
+  40%  { opacity: 0.9; transform: rotate(-8deg); }
+  65%  { opacity: 0.7; transform: rotate(-14deg); }
+  85%  { opacity: 0.3; transform: rotate(-3deg); }
+  100% { opacity: 0;   transform: rotate(0deg); }
+}
+
+/* ── Enhanced poke bounce: NO rotation — rotation fights the SVG ear overlay ── */
+@keyframes pokeBounce {
+  0%   { transform: translateY(0)   scale(1);    }
+  20%  { transform: translateY(-8px) scale(1.05); }
+  45%  { transform: translateY(2px)  scale(0.96); }
+  65%  { transform: translateY(-4px) scale(1.02); }
+  100% { transform: translateY(0)   scale(1);    }
+}
+
+/* Quick squash-and-stretch pop on the whole image when poked directly */
+.kitty-wrap.kitty-poked .kitty-image {
+  animation: pokeBounce 0.42s ease;
+}
+
+/* Floating +xp / +care / heart feedback that pops up and fades on every action */
+.floating-number {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  color: #6b4030;
+  font-size: 0.95rem;
+  font-weight: 900;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+  animation: floatUp 1.1s ease-out forwards;
+}
+
+@keyframes floatUp {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0) scale(0.8);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -8px) scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -70px) scale(1);
+  }
+}
+
+/* Subtle continuous breathing motion so a static illustration still feels alive */
+.kitty-wrap:not(.kitty-mood-sleepy) .kitty-image {
+  animation: kittyFadeIn 380ms ease-out, kittyBreathe 3.6s ease-in-out infinite;
+}
+
+.kitty-wrap.kitty-mood-sleepy .kitty-image {
+  animation: kittyFadeIn 380ms ease-out;
+}
+
+/* Stage 3 & 4 tail sway — only on poke/care, not idle */
+.kitty-wrap.kitty-stage-3 .kitty-image,
+.kitty-wrap.kitty-stage-4 .kitty-image {
+  transform-origin: bottom center !important;
+}
+.kitty-wrap.kitty-stage-3.kitty-poked .kitty-image,
+.kitty-wrap.kitty-stage-4.kitty-poked .kitty-image,
+.kitty-wrap.kitty-stage-3:not(.kitty-care-idle) .kitty-image,
+.kitty-wrap.kitty-stage-4:not(.kitty-care-idle) .kitty-image {
+  animation: kittyFadeIn 380ms ease-out, tailSwayCont 0.5s ease-in-out 3 !important;
+}
+
+@keyframes tailSwayCont {
+  0%, 100% { transform: rotate(-0.8deg); }
+  50%       { transform: rotate(0.8deg);  }
+}
+@keyframes tailSwaySmug {
+  0%, 100% { transform: rotate(-0.6deg); }
+  50%       { transform: rotate(0.6deg);  }
+}
+@keyframes tailSwayHungry {
+  0%, 100% { transform: rotate(-1.2deg); }
+  50%       { transform: rotate(1.2deg);  }
+}
+@keyframes tailSwayFeral {
+  0%, 100% { transform: rotate(-1.8deg); }
+  50%       { transform: rotate(1.8deg);  }
+}
+@keyframes tailSwaySleep {
+  0%, 100% { transform: rotate(-0.3deg); }
+  50%       { transform: rotate(0.3deg);  }
+}
+
+@keyframes kittyBreathe {
+  0%,  100% { transform: scale(1)     translateY(0)    rotate(0deg);    }
+  25%        { transform: scale(1.01)  translateY(-1px)  rotate(-0.5deg); }
+  50%        { transform: scale(1.015) translateY(-2px)  rotate(0deg);   }
+  75%        { transform: scale(1.01)  translateY(-1px)  rotate(0.5deg); }
+}
+
+/* Slight idle invitation so it doesn't feel static - very subtle, not distracting */
+.kitty-wrap:not(.kitty-mood-feral):not(.kitty-mood-sleepy) {
+  animation: idleInvite 4.5s ease-in-out infinite;
+}
+
+@keyframes idleInvite {
+  0%, 88%, 100% {
+    transform: translateY(0);
+  }
+  92% {
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kitty-wrap,
+  .kitty-wrap .kitty-image,
+  .kitty-wrap .kitty-shadow {
+    animation: none !important;
+    transition: none !important;
+  }
+  /* eyelid blink is intentionally left running — it's a tiny motion, not vestibular */
+}
+
+/* Immediate tap-contact ripple - appears exactly under the finger on poke */
+.tap-ripple {
+  position: absolute;
+  z-index: 6;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid rgba(214, 142, 158, 0.7);
+  pointer-events: none;
+  animation: tapRipple 0.5s ease-out forwards;
+}
+
+@keyframes tapRipple {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.4);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(3.2);
+  }
+}
+
+/* Daily-cap disabled state for care action buttons */
+.actions button:disabled {
+  background: linear-gradient(180deg, #6b5b52, #4a3e38);
+  color: rgba(255, 255, 255, 0.55);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.actions button:disabled:active {
+  transform: none;
+}
+
+.actions-hint {
+  margin: 8px 4px 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+.resource-subtext {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: none;
+}
+
+.resource-subtext.is-warning {
+  color: #b5544f;
+  font-weight: 800;
+}
+
+/* Highlight the speech panel's action text when it includes a bond xp bonus note */
+.speech span.has-bonus {
+  color: #b9842f;
+  font-weight: 800;
+}
+
+/* ── Check-in gate ─────────────────────────────────────────────────────────── */
+.checkin-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px 14px;
+  background: linear-gradient(135deg, rgba(255,247,237,0.9), rgba(252,235,213,0.7));
+  border-radius: 16px;
+  border: 1px solid rgba(216,148,92,0.25);
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.checkin-gate p {
+  margin: 0;
+  font-size: 0.83rem;
+  font-weight: 700;
+  color: #573c33;
+}
+
+.checkin-gate small {
+  font-size: 0.72rem;
+  color: #9a786a;
+}
+
+.checkin-btn {
+  background: linear-gradient(135deg, #d8945c, #c47a3e);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 11px 28px;
+  font-size: 0.88rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(196,122,62,0.35);
+  letter-spacing: 0.01em;
+  transition: transform 80ms, box-shadow 80ms;
+}
+
+.checkin-btn:active {
+  transform: scale(0.96);
+  box-shadow: 0 2px 8px rgba(196,122,62,0.25);
+}
+
+.actions-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 12px;
+}
+
+.actions-grid {
+  display: contents;
+}
+
+.actions-locked button {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+/* ── FAQ Modal ─────────────────────────────────────────────────────────────── */
+.faq-backdrop {
+  position: fixed;
+  inset: 0;
+  /* No backdrop-filter here on purpose — blur() forces a full-screen GPU
+     compositing layer that embedded WebViews (Base App, Coinbase Wallet,
+     Farcaster clients) handle poorly. Opening/closing this backdrop a few
+     times was leaking/exhausting GPU memory until the renderer crashed to
+     a black screen, below React — ClientErrorBoundary never even saw it.
+     Slightly darker solid overlay approximates the old blurred look
+     without the GPU cost. */
+  background: rgba(43, 33, 29, 0.6);
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 0 0 0;
+  animation: faqFadeIn 200ms ease-out;
+}
+
+@keyframes faqFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.faq-sheet {
+  width: min(100%, 430px);
+  max-height: 82vh;
+  background: #fffdf8;
+  border-radius: 24px 24px 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 -8px 40px rgba(97, 57, 42, 0.18);
+  animation: faqSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes faqSlideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0);    }
+}
+
+.faq-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 20px 14px;
+  border-bottom: 1px solid rgba(99, 67, 54, 0.1);
+  flex-shrink: 0;
+}
+
+.faq-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #2b211d;
+}
+
+.faq-close {
+  background: rgba(99, 67, 54, 0.08);
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  font-size: 0.75rem;
+  color: #573c33;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.faq-body {
+  overflow-y: auto;
+  padding: 10px 16px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+}
+
+.faq-item {
+  border-radius: 12px;
+  border: 1px solid rgba(99, 67, 54, 0.09);
+  background: rgba(255,255,255,0.6);
+  flex-shrink: 0;
+}
+
+.faq-item-open {
+  border-color: rgba(99, 67, 54, 0.2);
+  background: rgba(255, 247, 237, 0.9);
+}
+
+.faq-q {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #2b211d;
+  text-align: left;
+  gap: 8px;
+  line-height: 1.3;
+}
+
+.faq-chevron {
+  font-size: 0.6rem;
+  color: #9a786a;
+  flex-shrink: 0;
+}
+
+.faq-a {
+  margin: 0;
+  padding: 0 14px 14px;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: #573c33;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+@keyframes bubblePop {
+  from { opacity: 0; transform: scale(0.85) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ── Stats collapsible ── */
+.stats-collapsible {
+  margin: 0 0 12px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.55);
+  border: 1.5px solid rgba(43,33,29,0.09);
+}
+
+.stats-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 18px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #49332d;
+  font-family: inherit;
+}
+
+.stats-chevron {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.stats-body {
+  padding: 0 0 8px;
+  animation: bubblePop 0.18s cubic-bezier(.4,1.4,.6,1) both;
+}
+
+/* ── Bubble pop animation ── */
+@keyframes bubblePop {
+  from { opacity: 0; transform: scale(0.85) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ── Compact stage header ── */
+.stage-oneline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.stage-title-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #a8907a;
+  background: rgba(168,144,122,0.13);
+  border-radius: 20px;
+  padding: 2px 10px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.stage-name-inline {
+  font-size: 1.18rem;
+  font-weight: 800;
+  color: #2b211d;
+  letter-spacing: -0.01em;
+}
+
+.stage-note-text {
+  font-size: 0.78rem;
+  color: #8a756b;
+  text-align: center;
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* ── Stats collapsible ── */
+.stats-collapsible {
+  margin: 0 0 12px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.55);
+  border: 1.5px solid rgba(43,33,29,0.09);
+}
+
+.stats-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 18px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #49332d;
+  font-family: inherit;
+}
+
+.stats-chevron {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.stats-body {
+  padding: 0 0 8px;
+  animation: bubblePop 0.18s cubic-bezier(.4,1.4,.6,1) both;
+}
+
+@keyframes bubblePop {
+  from { opacity: 0; transform: scale(0.85) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes eventBubbleIn {
+  0%   { opacity: 0; transform: scale(0.88) translateY(-8px); }
+  70%  { opacity: 1; transform: scale(1.03) translateY(2px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes eventBubblePop {
+  /* filter: blur() removed — same GPU compositing cost as backdrop-filter,
+     just on a smaller element. This fires automatically on a timer (see
+     dismissEvent in Client.tsx), so it can run several times per session
+     with no user action at all. Scale/opacity alone gives the same
+     "popping away" feel without creating a new GPU layer each time. */
+  0%   { opacity: 1; transform: scale(1); }
+  40%  { opacity: 0.6; transform: scale(1.08); }
+  100% { opacity: 0; transform: scale(1.4); }
+}

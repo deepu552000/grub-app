@@ -45,7 +45,48 @@ export default async function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <head />
+      <head>
+        {/*
+          Runs before React hydrates. Catches failures that happen so early
+          they'd never reach the handlers set up inside Client.tsx's mount
+          effect (JS parse errors, a chunk failing to load, etc.) — these
+          are exactly the kind of failure that could leave a cold Base App
+          launch stuck on a black screen with nothing else ever firing.
+          Fire-and-forget, must never throw itself.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function () {
+                try {
+                  var sid = "pre-" + Math.random().toString(36).slice(2) + "-" + Date.now();
+                  function beacon(stage, extra) {
+                    try {
+                      fetch("/api/mount-log", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        keepalive: true,
+                        body: JSON.stringify({ session: sid, stage: stage, extra: extra || null })
+                      }).catch(function () {});
+                    } catch (e) {}
+                  }
+                  beacon("pre-hydrate-script-start");
+                  window.addEventListener("error", function (e) {
+                    beacon("pre-hydrate-window-error", {
+                      message: e.message,
+                      filename: e.filename,
+                      lineno: e.lineno
+                    });
+                  });
+                  window.addEventListener("unhandledrejection", function (e) {
+                    beacon("pre-hydrate-unhandled-rejection", { reason: String(e.reason) });
+                  });
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col">
         <Providers initialState={initialState}>{children}</Providers>
       </body>
