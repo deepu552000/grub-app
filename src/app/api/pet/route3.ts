@@ -134,33 +134,7 @@ async function verifyUsdcTransfer(
 //      the real game logic could produce in one call (core actions + one
 //      equip-XP tick + a buffer). This is a mitigation, not a full fix — xp
 //      itself is still client-reported, not server-recomputed from scratch.
-//
-//      This cap now SCALES with real time elapsed since the last save,
-//      instead of being one flat number. Reason: equip-XP ticks (~24h each,
-//      see lib/pet-accessories-state.ts) don't fire silently while a player
-//      is away — they get calculated and granted all at once the next time
-//      the app opens. A player back after 3 days away can legitimately have
-//      3 ticks' worth of xp land in a single save. A flat 25 was sized for
-//      "one unlock + one tick" and was clamping (and silently discarding)
-//      that kind of ordinary, honest catch-up — this was reported as
-//      "evolution deteriorating" by a real player who checked in daily.
-//
-//      Normal daily play only ever needs ~16-19 xp/save (see dailyLimits/
-//      xpPerAction comments in Client.tsx: "~16 max XP/day, ~19/day with
-//      max bond bonus") — so the 40 base alone already comfortably covers
-//      same-day/same-session play with room to spare. The per-hour term is
-//      there specifically for the multi-day-absence catch-up case, not for
-//      day-to-day players.
-//
-//      Uses a SERVER-written checkpoint (_xpCapCheckpoint), not the
-//      client-reported `lastVisit` — trusting a client-supplied timestamp
-//      for this calculation would let the same kind of manual POST we used
-//      to test this route also fake a huge elapsed-time window and blow the
-//      cap open. _xpCapCheckpoint only ever gets set by this server code,
-//      every successful save, so a caller can't influence it.
-const XP_GAIN_BASE_CAP = 40; // baseline for same-session/same-day saves
-const XP_GAIN_PER_HOUR_AWAY = 3; // extra allowance per hour since last save, for legit catch-up
-const XP_GAIN_HARD_CEILING = 400; // absolute ceiling per save regardless of time away — safety net
+const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick (up to 9) + a small buffer
 
 // NOTE: freeCheckinCredits / streakSaveCredits are NO LONGER sanitized or
 // accepted from the client here at all — see lib/grub-credits.ts. They now
@@ -205,26 +179,12 @@ function sanitizeState(existingRaw: any, incomingState: any) {
 
   const existingXp: number = typeof existingRaw?.xp === "number" ? existingRaw.xp : 0;
   const incomingXp: number = typeof incomingState?.xp === "number" ? incomingState.xp : existingXp;
-
-  // Server-trusted elapsed time since the last save. Missing on records
-  // saved before this change (or on a brand-new record) — default to 0
-  // hours so nobody gets a surprise free jump on migration; they just start
-  // accumulating real allowance from their next save onward.
-  const lastCheckpoint: number =
-    typeof existingRaw?._xpCapCheckpoint === "number" ? existingRaw._xpCapCheckpoint : Date.now();
-  const hoursSinceLastSave = Math.max(0, (Date.now() - lastCheckpoint) / 36e5);
-  const allowedGain = Math.min(
-    XP_GAIN_BASE_CAP + hoursSinceLastSave * XP_GAIN_PER_HOUR_AWAY,
-    XP_GAIN_HARD_CEILING,
-  );
-
   let safeXp = incomingXp;
-  if (incomingXp - existingXp > allowedGain) {
+  if (incomingXp - existingXp > MAX_XP_GAIN_PER_SAVE) {
     console.warn(
-      `[pet] xp gain clamped — requested +${incomingXp - existingXp}, allowed +${Math.round(allowedGain)} ` +
-        `(${hoursSinceLastSave.toFixed(1)}h since last save)`,
+      `[pet] xp gain clamped — requested +${incomingXp - existingXp}, allowed +${MAX_XP_GAIN_PER_SAVE}`,
     );
-    safeXp = existingXp + allowedGain;
+    safeXp = existingXp + MAX_XP_GAIN_PER_SAVE;
   }
   // Floor: this save path (checkin/unlock/wheel_spin/generic) should never
   // be the thing that DECREASES xp — the only legitimate way xp goes down is
@@ -248,12 +208,6 @@ function sanitizeState(existingRaw: any, incomingState: any) {
   return {
     ...incomingState,
     xp: safeXp,
-    // Server-trusted timestamp for the next save's time-scaled xp cap —
-    // always refreshed here (not just when xp changes), since what we're
-    // measuring is "how long since this record was last touched by our own
-    // server code," and that's exactly what stays stale while a player is
-    // genuinely away (no saves happen at all while the app isn't running).
-    _xpCapCheckpoint: Date.now(),
     accessories: {
       ...incomingState?.accessories,
       unlocked: safeUnlocked,
