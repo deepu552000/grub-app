@@ -6112,7 +6112,7 @@ function ClientPageInner() {
                           ) : seg.type === "freeCheckin" ? (
                             <>
                               <text y={-1} textAnchor="middle" fontSize={10} fontWeight={800} fill="#5c3d0d">+{seg.creditAmount ?? 1}</text>
-                              <text y={9} textAnchor="middle" fontSize={5.5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.5}>FREE</text>
+                              <text y={9} textAnchor="middle" fontSize={4.3} fontWeight={800} fill="#8f6a1f" letterSpacing={0.1}>CHECK-IN</text>
                             </>
                           ) : seg.type === "accessoryChoice" ? (
                             <>
@@ -6126,7 +6126,7 @@ function ClientPageInner() {
                           ) : seg.type === "streakSave" ? (
                             <>
                               <text y={-1} textAnchor="middle" fontSize={10} fontWeight={800} fill="#5c3d0d">+{seg.creditAmount ?? 1}</text>
-                              <text y={9} textAnchor="middle" fontSize={5.5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.5}>SAVE</text>
+                              <text y={9} textAnchor="middle" fontSize={5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.3}>STREAK</text>
                             </>
                           ) : seg.type === "degen" ? (
                             <>
