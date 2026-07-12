@@ -5939,7 +5939,7 @@ function ClientPageInner() {
             className="stats-toggle"
             onClick={() => setWheelOpen((o) => !o)}
           >
-            <span>🎡 Spin Wheel · $0.01</span>
+            <span>🎡 Spin Wheel · ${WHEEL_USD}</span>
             <span className="stats-chevron">{wheelOpen ? "▲" : "▼"}</span>
           </button>
 
@@ -6111,8 +6111,8 @@ function ClientPageInner() {
                             </>
                           ) : seg.type === "freeCheckin" ? (
                             <>
-                              <path d="M-5 -8 h10 v4 l-5 11 l-5 -11 z" fill="#5c3d0d" />
-                              <text y={12} textAnchor="middle" fontSize={5.5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.5}>FREE</text>
+                              <text y={-1} textAnchor="middle" fontSize={10} fontWeight={800} fill="#5c3d0d">+{seg.creditAmount ?? 1}</text>
+                              <text y={9} textAnchor="middle" fontSize={5.5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.5}>FREE</text>
                             </>
                           ) : seg.type === "accessoryChoice" ? (
                             <>
@@ -6123,12 +6123,17 @@ function ClientPageInner() {
                               <circle cx={3.5} cy={-6.5} r={2} fill="none" stroke="#5c3d0d" strokeWidth={1.3} />
                               <text y={12} textAnchor="middle" fontSize={5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.4}>RARE</text>
                             </>
-                          ) : (
+                          ) : seg.type === "streakSave" ? (
                             <>
-                              <path d="M0 -9 L6 -6.5 V-1 C6 4 3 7.5 0 9.5 C-3 7.5 -6 4 -6 -1 V-6.5 Z" fill="#5c3d0d" />
-                              <text y={12} textAnchor="middle" fontSize={5.5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.5}>SAVE</text>
+                              <text y={-1} textAnchor="middle" fontSize={10} fontWeight={800} fill="#5c3d0d">+{seg.creditAmount ?? 1}</text>
+                              <text y={9} textAnchor="middle" fontSize={5.5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.5}>SAVE</text>
                             </>
-                          )}
+                          ) : seg.type === "degen" ? (
+                            <>
+                              <text y={-1} textAnchor="middle" fontSize={10} fontWeight={800} fill="#5c3d0d">{seg.degenAmount}</text>
+                              <text y={9} textAnchor="middle" fontSize={5.5} fontWeight={800} fill="#8f6a1f" letterSpacing={0.4}>DEGEN</text>
+                            </>
+                          ) : null}
                         </g>
                       );
                     })}
@@ -6166,7 +6171,7 @@ function ClientPageInner() {
                   opacity: wheelAccessoryChoices ? 0.6 : 1,
                 }}
               >
-                {wheelSpinning ? "🎡 Spinning..." : "🎡 Spin · $0.01"}
+                {wheelSpinning ? "🎡 Spinning..." : `🎡 Spin · $${WHEEL_USD}`}
               </button>
 
               {/* ── RARE ACCESSORY PICKER ──────────────────────────────────
