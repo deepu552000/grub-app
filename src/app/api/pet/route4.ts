@@ -134,7 +134,33 @@ async function verifyUsdcTransfer(
 //      the real game logic could produce in one call (core actions + one
 //      equip-XP tick + a buffer). This is a mitigation, not a full fix — xp
 //      itself is still client-reported, not server-recomputed from scratch.
-const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick (up to 9) + a small buffer
+//
+//      This cap now SCALES with real time elapsed since the last save,
+//      instead of being one flat number. Reason: equip-XP ticks (~24h each,
+//      see lib/pet-accessories-state.ts) don't fire silently while a player
+//      is away — they get calculated and granted all at once the next time
+//      the app opens. A player back after 3 days away can legitimately have
+//      3 ticks' worth of xp land in a single save. A flat 25 was sized for
+//      "one unlock + one tick" and was clamping (and silently discarding)
+//      that kind of ordinary, honest catch-up — this was reported as
+//      "evolution deteriorating" by a real player who checked in daily.
+//
+//      Normal daily play only ever needs ~16-19 xp/save (see dailyLimits/
+//      xpPerAction comments in Client.tsx: "~16 max XP/day, ~19/day with
+//      max bond bonus") — so the 40 base alone already comfortably covers
+//      same-day/same-session play with room to spare. The per-hour term is
+//      there specifically for the multi-day-absence catch-up case, not for
+//      day-to-day players.
+//
+//      Uses a SERVER-written checkpoint (_xpCapCheckpoint), not the
+//      client-reported `lastVisit` — trusting a client-supplied timestamp
+//      for this calculation would let the same kind of manual POST we used
+//      to test this route also fake a huge elapsed-time window and blow the
+//      cap open. _xpCapCheckpoint only ever gets set by this server code,
+//      every successful save, so a caller can't influence it.
+const XP_GAIN_BASE_CAP = 40; // baseline for same-session/same-day saves
+const XP_GAIN_PER_HOUR_AWAY = 3; // extra allowance per hour since last save, for legit catch-up
+const XP_GAIN_HARD_CEILING = 400; // absolute ceiling per save regardless of time away — safety net
 
 // NOTE: freeCheckinCredits / streakSaveCredits are NO LONGER sanitized or
 // accepted from the client here at all — see lib/grub-credits.ts. They now
@@ -149,7 +175,28 @@ const MAX_XP_GAIN_PER_SAVE = 25; // generous: unlock (up to 12) + one equip tick
 function sanitizeState(existingRaw: any, incomingState: any) {
   const existingUnlocked: string[] = existingRaw?.accessories?.unlocked ?? [];
   const incomingUnlocked: string[] = incomingState?.accessories?.unlocked ?? [];
-  const safeUnlocked = incomingUnlocked.filter((id: string) => existingUnlocked.includes(id));
+  // Union anchored on existingUnlocked, NOT a filter of incomingUnlocked.
+  // existingUnlocked is server-confirmed truth — nothing lands in it without
+  // going through unlock_accessory's verified payment or wheel_spin's
+  // rare-accessory grant, and both of those callers fold the newly-verified
+  // id into the `existingRaw` they pass in here before calling this. That
+  // means it is always safe to just keep everything already in
+  // existingUnlocked, regardless of what this particular request's
+  // (possibly stale) local `incomingState` happens to know about.
+  //
+  // The old version filtered incomingUnlocked down to whatever existed —
+  // which meant ANY save whose local snapshot didn't yet include a
+  // recently-unlocked accessory (e.g. the plain 800ms debounced autosave
+  // firing while a DIFFERENT accessory's unlock_accessory call was still
+  // mid-flight waiting on its Etherscan verification poll) would silently
+  // drop that accessory from KV when its write landed — even though it was
+  // already paid for and persisted. That's what caused a 3rd purchased
+  // accessory to flip back to locked after two others stuck: whichever save
+  // landed last won, and the stale one's filter erased the newest unlock.
+  const safeUnlocked = Array.from(new Set([
+    ...existingUnlocked,
+    ...incomingUnlocked.filter((id: string) => existingUnlocked.includes(id)),
+  ]));
 
   const incomingEquipped: Record<string, string> = incomingState?.accessories?.equipped ?? {};
   const safeEquipped = Object.fromEntries(
@@ -158,12 +205,26 @@ function sanitizeState(existingRaw: any, incomingState: any) {
 
   const existingXp: number = typeof existingRaw?.xp === "number" ? existingRaw.xp : 0;
   const incomingXp: number = typeof incomingState?.xp === "number" ? incomingState.xp : existingXp;
+
+  // Server-trusted elapsed time since the last save. Missing on records
+  // saved before this change (or on a brand-new record) — default to 0
+  // hours so nobody gets a surprise free jump on migration; they just start
+  // accumulating real allowance from their next save onward.
+  const lastCheckpoint: number =
+    typeof existingRaw?._xpCapCheckpoint === "number" ? existingRaw._xpCapCheckpoint : Date.now();
+  const hoursSinceLastSave = Math.max(0, (Date.now() - lastCheckpoint) / 36e5);
+  const allowedGain = Math.min(
+    XP_GAIN_BASE_CAP + hoursSinceLastSave * XP_GAIN_PER_HOUR_AWAY,
+    XP_GAIN_HARD_CEILING,
+  );
+
   let safeXp = incomingXp;
-  if (incomingXp - existingXp > MAX_XP_GAIN_PER_SAVE) {
+  if (incomingXp - existingXp > allowedGain) {
     console.warn(
-      `[pet] xp gain clamped — requested +${incomingXp - existingXp}, allowed +${MAX_XP_GAIN_PER_SAVE}`,
+      `[pet] xp gain clamped — requested +${incomingXp - existingXp}, allowed +${Math.round(allowedGain)} ` +
+        `(${hoursSinceLastSave.toFixed(1)}h since last save)`,
     );
-    safeXp = existingXp + MAX_XP_GAIN_PER_SAVE;
+    safeXp = existingXp + allowedGain;
   }
   // Floor: this save path (checkin/unlock/wheel_spin/generic) should never
   // be the thing that DECREASES xp — the only legitimate way xp goes down is
@@ -187,6 +248,12 @@ function sanitizeState(existingRaw: any, incomingState: any) {
   return {
     ...incomingState,
     xp: safeXp,
+    // Server-trusted timestamp for the next save's time-scaled xp cap —
+    // always refreshed here (not just when xp changes), since what we're
+    // measuring is "how long since this record was last touched by our own
+    // server code," and that's exactly what stays stale while a player is
+    // genuinely away (no saves happen at all while the app isn't running).
+    _xpCapCheckpoint: Date.now(),
     accessories: {
       ...incomingState?.accessories,
       unlocked: safeUnlocked,
@@ -224,6 +291,19 @@ export async function GET(req: NextRequest) {
 }
 
 // ── POST — save pet state ────────────────────────────────────────────────────
+// Logs every rejection with a consistent [pet] ❌ prefix + the identity/action
+// context, then returns the NextResponse. Added after a run of 3 back-to-back
+// accessory unlocks silently failed with 400s and NOTHING showed up in the
+// Vercel log Messages column — every early-return branch below was bare
+// `NextResponse.json(...)` with no console output at all, so there was no way
+// to tell WHICH check rejected the request without reproducing it with local
+// devtools open. Every rejection path in this file should route through this
+// instead of returning NextResponse.json directly.
+function logReject(status: number, reason: string, details: Record<string, any> = {}) {
+  console.warn(`[pet] ❌ ${status} ${reason}`, details);
+  return NextResponse.json({ error: reason }, { status });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -232,16 +312,13 @@ export async function POST(req: NextRequest) {
     const who = identityLabel(fid, wallet);
 
     if (!key || !state) {
-      return NextResponse.json({ error: "missing fid/wallet or state" }, { status: 400 });
+      return logReject(400, "missing fid/wallet or state", { fid, wallet, action, hasState: !!state });
     }
 
     // ── Ban check — blocks ALL writes for this identity, regardless of action ─
     const currentState = await kv.get<any>(key);
     if (currentState?.banned) {
-      return NextResponse.json(
-        { error: "This account has been suspended." },
-        { status: 403 }
-      );
+      return logReject(403, "This account has been suspended.", { who, action });
     }
 
     // ── Accessory unlock — requires verified on-chain payment ────────────────
@@ -249,40 +326,45 @@ export async function POST(req: NextRequest) {
       const { accessoryId } = body;
 
       if (!accessoryId || !txHash) {
-        return NextResponse.json(
-          { error: "unlock_accessory requires accessoryId and txHash" },
-          { status: 400 }
-        );
+        return logReject(400, "unlock_accessory requires accessoryId and txHash", {
+          who, accessoryId, hasTxHash: !!txHash,
+        });
       }
 
       const expectedPrice = accessoryPriceMicroUsdc(accessoryId);
       if (expectedPrice === null) {
-        return NextResponse.json({ error: "Unknown accessory" }, { status: 400 });
+        return logReject(400, "Unknown accessory", { who, accessoryId });
       }
 
       // Replay attack prevention — each txHash can only unlock once
       const usedKey = `grub:used-tx:${txHash}`;
       const alreadyUsed = await kv.get(usedKey);
       if (alreadyUsed) {
-        return NextResponse.json(
-          { error: "This transaction has already been used to unlock an accessory." },
-          { status: 400 }
-        );
+        // Logged in full (not just a flag) — this is the single most useful
+        // signal for diagnosing a back-to-back-purchase failure: it tells
+        // you exactly which accessory/identity/timestamp actually burned
+        // this txHash, so you can see whether THIS request really is a
+        // dupe/retry of an earlier success, or something reused a hash it
+        // shouldn't have (e.g. a stale txHash carried over from a prior
+        // unlock's closure).
+        return logReject(400, "This transaction has already been used to unlock an accessory.", {
+          who, accessoryId, txHash, previouslyUsedFor: alreadyUsed,
+        });
       }
 
       // Verify USDC transfer on-chain
       const verify = await verifyUsdcTransfer(txHash, expectedPrice);
       if (!verify.ok) {
+        console.warn(`[pet] ❌ 402 verifyUsdcTransfer failed`, { who, accessoryId, txHash, expectedPrice, reason: verify.error });
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
       // Ensure the accessory is actually in state before saving
       const unlocked: string[] = state?.accessories?.unlocked ?? [];
       if (!unlocked.includes(accessoryId)) {
-        return NextResponse.json(
-          { error: "State mismatch — accessoryId not in unlocked list." },
-          { status: 400 }
-        );
+        return logReject(400, "State mismatch — accessoryId not in unlocked list.", {
+          who, accessoryId, txHash, incomingUnlocked: unlocked,
+        });
       }
 
       // Save state — sanitize equipped/xp too, same as every other save path.
@@ -318,22 +400,22 @@ export async function POST(req: NextRequest) {
     // ── Paid checkin — requires verified on-chain payment ───────────────────
     if (action === "checkin") {
       if (!txHash) {
-        return NextResponse.json({ error: "checkin requires txHash" }, { status: 400 });
+        return logReject(400, "checkin requires txHash", { who });
       }
 
       // Replay attack prevention
       const usedKey = `grub:used-tx:${txHash}`;
       const alreadyUsed = await kv.get(usedKey);
       if (alreadyUsed) {
-        return NextResponse.json(
-          { error: "This transaction has already been used." },
-          { status: 400 }
-        );
+        return logReject(400, "This transaction has already been used.", {
+          who, txHash, previouslyUsedFor: alreadyUsed,
+        });
       }
 
       // Verify USDC transfer on-chain
       const verify = await verifyUsdcTransfer(txHash, CHECKIN_MICRO_USDC);
       if (!verify.ok) {
+        console.warn(`[pet] ❌ 402 verifyUsdcTransfer failed`, { who, txHash, reason: verify.error });
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
@@ -377,22 +459,22 @@ export async function POST(req: NextRequest) {
       const { wheelReward, accessoryId } = body;
 
       if (!txHash) {
-        return NextResponse.json({ error: "wheel_spin requires txHash" }, { status: 400 });
+        return logReject(400, "wheel_spin requires txHash", { who, wheelReward });
       }
 
       // Replay attack prevention — same pattern as checkin/unlock_accessory
       const usedKey = `grub:used-tx:${txHash}`;
       const alreadyUsed = await kv.get(usedKey);
       if (alreadyUsed) {
-        return NextResponse.json(
-          { error: "This transaction has already been used." },
-          { status: 400 }
-        );
+        return logReject(400, "This transaction has already been used.", {
+          who, txHash, wheelReward, previouslyUsedFor: alreadyUsed,
+        });
       }
 
       // Verify the $0.01 spin payment on-chain
       const verify = await verifyUsdcTransfer(txHash, SPIN_MICRO_USDC);
       if (!verify.ok) {
+        console.warn(`[pet] ❌ 402 verifyUsdcTransfer failed`, { who, txHash, wheelReward, reason: verify.error });
         return NextResponse.json({ error: verify.error }, { status: 402 });
       }
 
@@ -409,7 +491,7 @@ export async function POST(req: NextRequest) {
         serverComputed.streakSaveCredits = await grantCredit(key, "streakSave");
       } else if (wheelReward === "rareaccessory") {
         if (!accessoryId) {
-          return NextResponse.json({ error: "rareaccessory reward requires accessoryId" }, { status: 400 });
+          return logReject(400, "rareaccessory reward requires accessoryId", { who, txHash });
         }
         const existingUnlocked: string[] = existingForSpin?.accessories?.unlocked ?? [];
         if (!existingUnlocked.includes(accessoryId)) {

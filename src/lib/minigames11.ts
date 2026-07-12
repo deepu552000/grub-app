@@ -875,19 +875,6 @@ export async function requestCashout(identityKey: string, amountDegen: number, w
   if (!Number.isFinite(amountDegen) || amountDegen <= 0) {
     return { ok: false, reason: "invalid cash-out amount" };
   }
-  // Guards this function itself, not just its one current caller
-  // (app/api/minigames/cointoss/route.ts) — anything that calls
-  // requestCashout() directly, now or later, gets the same protection.
-  // This is what was missing when a manual cash-out went through with
-  // wallet: "50": nothing anywhere validated the shape of `wallet` before
-  // it reached sendDegen() below, so it landed in the admin queue instead
-  // of failing fast with a clear reason. ethers.isAddress() (already
-  // imported for the treasury balance read above) does a full EIP-55-aware
-  // check, not just a regex shape match.
-  if (!wallet || !ethers.isAddress(wallet.trim())) {
-    return { ok: false, reason: "cashoutWallet must be a valid Base wallet address (0x followed by 40 hex characters)." };
-  }
-  const trimmedWallet = wallet.trim();
   const balance = await getBalance(identityKey);
   if (balance < amountDegen) {
     return { ok: false, reason: "Not enough balance to cash out that much." };
@@ -910,7 +897,7 @@ export async function requestCashout(identityKey: string, amountDegen: number, w
     const record: PendingCashout = {
       id: `${identityKey}:${Date.now()}`,
       identityKey,
-      wallet: trimmedWallet,
+      wallet,
       amountDegen,
       status: "pending",
       requestedAt: Date.now(),
@@ -918,7 +905,7 @@ export async function requestCashout(identityKey: string, amountDegen: number, w
 
     if (amountDegen <= config.autoCashoutMaxDegen) {
       try {
-        const txHash = await sendDegen(trimmedWallet, amountDegen);
+        const txHash = await sendDegen(wallet, amountDegen);
         const fulfilled: PendingCashout = { ...record, status: "fulfilled", txHash, fulfilledAt: Date.now() };
         const list = await getAllCashouts();
         list.unshift(fulfilled);

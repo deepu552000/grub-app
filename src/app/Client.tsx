@@ -58,6 +58,20 @@ function normalizeWallet(...candidates: (string | null | undefined)[]): string |
   return null;
 }
 
+// Validates a Base/EVM address shape — 0x followed by exactly 40 hex chars.
+// This is a FORMAT check only (no checksum, no on-chain existence check),
+// but it's exactly what's needed to catch the "typed 50 instead of a wallet
+// address" class of mistake before it ever reaches the server: a manual
+// Coin Toss cash-out with cashoutWallet: "50" previously sailed straight
+// through with no validation anywhere (client or server), landed in the
+// admin queue, and had to be caught and fixed by hand. Used both for the
+// inline cash-out field error below and mirrored server-side in
+// app/api/minigames/cointoss/route.ts so a request that bypasses this UI
+// entirely (or a stale client build) still can't queue a bad address.
+function isValidBaseAddress(addr: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(addr.trim());
+}
+
 // Truncates a long hex hash/seed for display — "b9e656aa…ba342a" instead
 // of the full 64-char string. Used only in the Provably Fair panel; full
 // value is always still available via the element's title tooltip.
@@ -864,10 +878,10 @@ function loadStateFromSaved(parsed: PetState): PetState {
 }
 
 // ── Spin Wheel config ────────────────────────────────────────────────────
-// $0.01 per spin. Pure-XP rewards plus two check-in perks (no Glimmer, no
-// "nothing" slot, no exclusive cosmetic — by design). Weights are integers
-// that sum to 100 and double as percentages.
-type WheelRewardType = "xp" | "freeCheckin" | "streakSave" | "accessoryChoice";
+// $0.015 per spin. XP rewards, two x2 check-in perks, two DEGEN payouts, and
+// a rare accessory slot. Weights are integers that sum to 100 and double as
+// percentages.
+type WheelRewardType = "xp" | "freeCheckin" | "streakSave" | "degen" | "accessoryChoice";
 type WheelSegment = {
   id: string;
   label: string;
@@ -875,25 +889,26 @@ type WheelSegment = {
   color: string;
   type: WheelRewardType;
   xp?: number;
+  degenAmount?: number;  // whole DEGEN units, only set when type === "degen"
+  creditAmount?: number; // credits granted, only for "freeCheckin"/"streakSave" (defaults to 1)
   weight: number; // out of 100
 };
 
-// "rareaccessory" (3%) was carved out of the five XP segments only, roughly
-// proportional to their old weights (30/25/20/8/7 -> 29/24/19/8/7 — the three
-// biggest slices each gave up exactly 1 point, the two smallest untouched).
-// freeCheckin/streakSave weights are unchanged. Landing on it lets the player
-// pick any not-yet-unlocked accessory for their cat's CURRENT stage — see
-// doWheelSpin's accessoryChoice branch below for the picker flow, and
-// route.ts's WHEEL_REWARDS["rareaccessory"] for server-side handling.
+// Landing on "rareaccessory" lets the player pick any not-yet-unlocked
+// accessory for their cat's CURRENT stage — see doWheelSpin's
+// accessoryChoice branch below for the picker flow. "degen10"/"degen15" pay
+// out real DEGEN from the treasury, verified/settled server-side in
+// route.ts's wheel_spin handler (same sendDegen() pipeline as referral
+// payouts, destination read straight off the on-chain spin payment).
 const WHEEL_SEGMENTS: WheelSegment[] = [
-  { id: "xp1", label: "+1 XP", shortLabel: "+1", color: "#F5B942", type: "xp", xp: 1, weight: 29 },
-  { id: "xp2", label: "+2 XP", shortLabel: "+2", color: "#F2994A", type: "xp", xp: 2, weight: 24 },
-  { id: "xp3", label: "+3 XP", shortLabel: "+3", color: "#EB5757", type: "xp", xp: 3, weight: 19 },
-  { id: "xp5", label: "+5 XP", shortLabel: "+5", color: "#BB6BD9", type: "xp", xp: 5, weight: 8 },
-  { id: "xp10", label: "+10 XP", shortLabel: "+10", color: "#EE4266", type: "xp", xp: 10, weight: 7 },
-  { id: "freecheckin", label: "Free Check-in", shortLabel: "Free\nCheck-in", color: "#2EC4F1", type: "freeCheckin", weight: 5 },
-  { id: "streaksave", label: "Streak Save", shortLabel: "Streak\nSave", color: "#27AE60", type: "streakSave", weight: 5 },
-  { id: "rareaccessory", label: "Rare Accessory", shortLabel: "Rare\nItem", color: "#FF3CAC", type: "accessoryChoice", weight: 3 },
+  { id: "xp3",           label: "+3 XP",            shortLabel: "+3",                 color: "#EB5757", type: "xp",             xp: 3,  weight: 30 },
+  { id: "xp5",           label: "+5 XP",            shortLabel: "+5",                 color: "#BB6BD9", type: "xp",             xp: 5,  weight: 25 },
+  { id: "xp10",          label: "+10 XP",           shortLabel: "+10",                color: "#EE4266", type: "xp",             xp: 10, weight: 15 },
+  { id: "freecheckin2",  label: "Free Check-in ×2", shortLabel: "Free\nCheck-in x2",   color: "#2EC4F1", type: "freeCheckin",    creditAmount: 2, weight: 10 },
+  { id: "streaksave2",   label: "Streak Save ×2",   shortLabel: "Streak\nSave x2",     color: "#27AE60", type: "streakSave",     creditAmount: 2, weight: 8 },
+  { id: "degen10",       label: "10 DEGEN",         shortLabel: "10\nDEGEN",           color: "#8247E5", type: "degen",          degenAmount: 10, weight: 6 },
+  { id: "degen15",       label: "15 DEGEN",         shortLabel: "15\nDEGEN",           color: "#5B3FBB", type: "degen",          degenAmount: 15, weight: 4 },
+  { id: "rareaccessory", label: "Rare Accessory",   shortLabel: "Rare\nItem",          color: "#FF3CAC", type: "accessoryChoice", weight: 2 },
 ];
 
 // Sanity check in dev — weights must sum to 100.
@@ -1835,6 +1850,7 @@ function ClientPageInner() {
   // lib/minigames.ts's PlaceBetResult), so this doesn't need a second call.
   const [cointossLastResult, setCointossLastResult] = useState<{ result: "heads" | "tails"; won: boolean; payoutDegen: number; serverSeedHash: string; nonce: number; clientSeed: string } | null>(null);
   const [cointossCashoutWallet, setCointossCashoutWallet] = useState("");
+  const [cointossCashoutWalletError, setCointossCashoutWalletError] = useState<string | null>(null);
   const [cointossCashoutAmount, setCointossCashoutAmount] = useState(0);
   const [cointossCashoutLoading, setCointossCashoutLoading] = useState(false);
   // On-chain DEGEN deposit — the counterpart to Cash Out. Player sends
@@ -1963,6 +1979,13 @@ function ClientPageInner() {
 
   async function doCointossCashout() {
     if (cointossCashoutLoading || !cointossCashoutWallet.trim() || cointossCashoutAmount <= 0) return;
+    const trimmedWallet = cointossCashoutWallet.trim();
+    if (!isValidBaseAddress(trimmedWallet)) {
+      setCointossCashoutWalletError("Enter a valid Base wallet address — starts with 0x, followed by 40 characters.");
+      setLastAction("✕ That doesn't look like a wallet address. Double-check and try again.");
+      return;
+    }
+    setCointossCashoutWalletError(null);
     const identity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
     if (!identity) {
       setLastAction("✕ No identity found — open this in Farcaster or connect a wallet first.");
@@ -1973,7 +1996,7 @@ function ClientPageInner() {
       const res = await fetch("/api/minigames/cointoss", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...identity, action: "cashout", amountDegen: cointossCashoutAmount, cashoutWallet: cointossCashoutWallet.trim() }),
+        body: JSON.stringify({ ...identity, action: "cashout", amountDegen: cointossCashoutAmount, cashoutWallet: trimmedWallet }),
       }).then((r) => r.json());
 
       if (!res?.ok) {
@@ -2172,8 +2195,9 @@ function ClientPageInner() {
   // as the accessory XP banner below — reappears every time the app is
   // reopened until the person closes it with the ✕ for that session.
   const [wheelBannerDismissed, setWheelBannerDismissed] = useState(false);
-  // Temporarily hidden (2026-07-09) — flip back to true to re-enable, nothing else removed.
-  const WHEEL_BANNER_ENABLED = false;
+  // Re-enabled (2026-07-12) with the new prize table (DEGEN + x2 credit
+  // rewards) — was temporarily hidden 2026-07-09, nothing else removed.
+  const WHEEL_BANNER_ENABLED = true;
   const showWheelBanner = WHEEL_BANNER_ENABLED && !wheelBannerDismissed;
 
   function dismissWheelBanner() {
@@ -2219,7 +2243,10 @@ function ClientPageInner() {
   // the app is reopened (fresh session) until closed with the ✕ for that
   // session. No longer persisted to localStorage.
   const [tokenBannerDismissed, setTokenBannerDismissed] = useState(false);
-  const showTokenBanner = !tokenBannerDismissed;
+  // Temporarily hidden (2026-07-12) to make room for the Spin Wheel banner —
+  // flip back to true to re-enable, nothing else removed.
+  const TOKEN_BANNER_ENABLED = false;
+  const showTokenBanner = TOKEN_BANNER_ENABLED && !tokenBannerDismissed;
   function dismissTokenBanner() {
     setTokenBannerDismissed(true);
   }
@@ -2366,7 +2393,7 @@ function ClientPageInner() {
   // ── Check-in payment state ────────────────────────────────────────────────
   const FREE_CHECKIN_DAYS = 5;
   const CHECKIN_USD = 0.01; // $0.01 per check-in after the free period
-  const WHEEL_USD = 0.01; // $0.01 per Spin Wheel spin
+  const WHEEL_USD = 0.015; // $0.015 per Spin Wheel spin
   const RECIPIENT = "0xCF8A44059652DB5Af8B4CB62938c5DC6916eB082" as const;
 
   // ── Pending Spin Wheel recovery ───────────────────────────────────────
@@ -3925,8 +3952,10 @@ function ClientPageInner() {
         segment.type === "xp"
           ? { ...prev, xp: prev.xp + (segment.xp ?? 0) }
           : segment.type === "freeCheckin"
-          ? { ...prev, freeCheckinCredits: (prev.freeCheckinCredits ?? 0) + 1 }
-          : { ...prev, streakSaveCredits: (prev.streakSaveCredits ?? 0) + 1 };
+          ? { ...prev, freeCheckinCredits: (prev.freeCheckinCredits ?? 0) + (segment.creditAmount ?? 1) }
+          : segment.type === "streakSave"
+          ? { ...prev, streakSaveCredits: (prev.streakSaveCredits ?? 0) + (segment.creditAmount ?? 1) }
+          : prev; // "degen" pays out on-chain — nothing to bump locally
       computedState = newState;
       try {
         window.localStorage.setItem(scopedStorageKey(identityParam), JSON.stringify(newState));
@@ -5297,10 +5326,10 @@ function ClientPageInner() {
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#49332d", marginBottom: 1 }}>
-                Spin Wheel is live!
+                Spin Wheel leveled up! 🎉
               </div>
               <div style={{ fontSize: "0.70rem", color: "#7a5c4f" }}>
-                Just $0.01 a spin — win XP, a free check-in, or a streak save.
+                Now $0.015 a spin — win XP, real DEGEN, or double rewards: Free Check-in ×2 and Streak Save ×2!
               </div>
             </div>
             <button
@@ -6798,8 +6827,15 @@ function ClientPageInner() {
                     type="text"
                     placeholder="0xYourWallet..."
                     value={cointossCashoutWallet}
-                    onChange={(e) => setCointossCashoutWallet(e.target.value)}
-                    style={{ flex: 2, background: "#fff", color: "#49332d", border: "1px solid #eee0d8", borderRadius: 6, padding: "6px 8px", fontSize: 12 }}
+                    onChange={(e) => {
+                      setCointossCashoutWallet(e.target.value);
+                      if (cointossCashoutWalletError) setCointossCashoutWalletError(null);
+                    }}
+                    style={{
+                      flex: 2, background: "#fff", color: "#49332d",
+                      border: cointossCashoutWalletError ? "1.5px solid #dc2626" : "1px solid #eee0d8",
+                      borderRadius: 6, padding: "6px 8px", fontSize: 12,
+                    }}
                   />
                   <input
                     type="number"
@@ -6809,6 +6845,11 @@ function ClientPageInner() {
                     style={{ flex: 1, background: "#fff", color: "#49332d", border: "1px solid #eee0d8", borderRadius: 6, padding: "6px 8px", fontSize: 12 }}
                   />
                 </div>
+                {cointossCashoutWalletError && (
+                  <span style={{ fontSize: 10.5, color: "#dc2626", fontWeight: 600 }}>
+                    {cointossCashoutWalletError}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={doCointossCashout}
@@ -7809,7 +7850,7 @@ const faqSections = [
   },
   {
     title: "🎡 Spin Wheel",
-    content: "Spin the wheel for $0.01 (USDC on Base) and win a reward:\n\n• +1 XP — 29%\n• +2 XP — 24%\n• +3 XP — 19%\n• +5 XP — 8%\n• +10 XP — 7%\n• Free Check-in — 5% (waives tomorrow's $0.01 check-in)\n• Streak Save — 5% (auto-protects your streak the next time you miss a day)\n• 🌟 Rare Accessory — 3% (pick ANY not-yet-unlocked accessory for your cat's current stage, free — if you already own everything for that stage, you get +10 XP instead)\n\nBanked Free Check-ins and Streak Saves stack up and are used automatically — a Free Check-in is applied the next time you check in, and a Streak Save kicks in automatically if you ever miss a day.",
+    content: "Spin the wheel for $0.015 (USDC on Base) and win a reward:\n\n• +3 XP — 30%\n• +5 XP — 25%\n• +10 XP — 15%\n• Free Check-in ×2 — 10% (banks 2 free check-in credits, waiving your next two $0.01 check-ins)\n• Streak Save ×2 — 8% (banks 2 streak-save credits, each auto-protecting your streak the next time you miss a day)\n• 10 DEGEN — 6% (sent on-chain straight to the wallet you spun with)\n• 15 DEGEN — 4% (sent on-chain straight to the wallet you spun with)\n• 🌟 Rare Accessory — 2% (pick ANY not-yet-unlocked accessory for your cat's current stage, free — if you already own everything for that stage, you get +10 XP instead)\n\nBanked Free Check-ins and Streak Saves stack up and are used automatically — a Free Check-in is applied the next time you check in, and a Streak Save kicks in automatically if you ever miss a day. DEGEN wins are paid out automatically, no extra steps — just wait for the confirmation.",
   },
   {
     title: "🎟️ Raffle",

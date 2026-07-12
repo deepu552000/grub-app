@@ -975,6 +975,29 @@ function ClientPageInner() {
   // hiccups. Cleared the instant a genuine DB read succeeds.
   const untrustedLoadRef = useRef(false);
 
+  // ── Cold-launch diagnostics ─────────────────────────────────────────────
+  // Shared across hydrateWith/applyIdentityLoad and the mount effect below,
+  // so both a stall/crash AND a successful resolution get the same session
+  // id in /api/mount-log — lets you see the full timeline for one real
+  // black-screen episode after the fact, no live debugger needed.
+  const mountSessionRef = useRef<string>(
+    Math.random().toString(36).slice(2) + "-" + Date.now(),
+  );
+  function beacon(stage: string, extra?: Record<string, unknown>) {
+    try {
+      fetch("/api/mount-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify({
+          session: mountSessionRef.current,
+          stage,
+          extra,
+        }),
+      }).catch(() => {});
+    } catch {}
+  }
+
   function hydrateWith(s: PetState) {
     if (hydratedRef.current) return;
     console.log("[MOUNT] hydrateWith() — setting hydrated=true (fallback/no-identity path)");
@@ -982,6 +1005,7 @@ function ClientPageInner() {
     loadedIdentityRef.current = identityParam;
     setState(s);
     setHydrated(true);
+    beacon("hydrated-fallback-path");
   }
 
   // Same as hydrateWith, but WITHOUT the once-only guard. hydrateWith exists
@@ -1003,6 +1027,7 @@ function ClientPageInner() {
     untrustedLoadRef.current = !trusted;
     setState(s);
     setHydrated(true);
+    beacon("hydrated-identity-load", { identity, trusted });
   }
   const { playSfx, sfxOn, toggleSfx, musicOn, toggleMusic, volume, setVolume, musicTrack, setMusicTrack, musicTracks } = useGrubSound();
   const [volumePopoverOpen, setVolumePopoverOpen] = useState(false);
@@ -1220,6 +1245,40 @@ function ClientPageInner() {
   }, [isBaseAppIdentity, walletAddress]);
 
   useEffect(() => {
+    // ── Cold-launch diagnostics ────────────────────────────────────────
+    // Base App's in-app browser has no devtools access, so a black-screen
+    // report from there can't be debugged live. Beacon timestamped
+    // checkpoints through the mount sequence to /api/mount-log (fire and
+    // forget, keepalive so it survives if the tab is about to die) — check
+    // GET /api/mount-log after the next black-screen report to see exactly
+    // how far a real failing session got, without needing to see the
+    // screen or attach a debugger. Uses the shared beacon()/session from
+    // component scope so this ties together with the hydrated-success
+    // checkpoints fired from hydrateWith/applyIdentityLoad above.
+    beacon("effect-start");
+
+    const onError = (e: ErrorEvent) => {
+      beacon("window-error", {
+        message: e.message,
+        filename: e.filename,
+        lineno: e.lineno,
+      });
+    };
+    const onRejection = (e: PromiseRejectionEvent) => {
+      beacon("unhandled-rejection", { reason: String(e.reason) });
+    };
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+
+    // If nothing has progressed past effect-start within 6s, this fires —
+    // that's the "stuck black, never resolves" case, as opposed to a slow
+    // resolve. A normal successful load won't reach this since the
+    // hydrated/ready effects below run first.
+    const stuckWatchdog = setTimeout(() => {
+      beacon("stuck-6s", { readyState: document.readyState });
+    }, 6000);
+    // ────────────────────────────────────────────────────────────────────
+
     // Call ready() as soon as a real paint has happened, NOT synchronously
     // at effect start. React's effect firing doesn't guarantee the browser
     // has actually painted the loading screen yet — on a cold Base App
@@ -1235,8 +1294,13 @@ function ClientPageInner() {
     // host's splash-screen watchdog window, so the "Ready not called"
     // warning this replaced doesn't come back.
     requestAnimationFrame(() => {
+      beacon("first-raf");
       requestAnimationFrame(() => {
-        sdk.actions.ready().catch(() => {});
+        beacon("second-raf-pre-ready");
+        sdk.actions.ready().catch((err) => {
+          beacon("ready-rejected", { error: String(err) });
+        });
+        beacon("ready-called");
         console.log("[MOUNT] ready() called (post-paint)");
       });
     });
@@ -1396,6 +1460,9 @@ function ClientPageInner() {
     return () => {
       clearTimeout(fallbackTimer);
       clearTimeout(hardFailsafeTimer);
+      clearTimeout(stuckWatchdog);
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
     };
   }, []);
 
@@ -5579,7 +5646,7 @@ function ClientPageInner() {
 
           <div className="world-label">
             <span>{stage.world}</span>
-            <strong>{growth}% grown</strong>
+            <strong>{Math.round(progress)}% grown</strong>
           </div>
         </section>
 

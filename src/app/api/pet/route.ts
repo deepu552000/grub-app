@@ -3,6 +3,7 @@ import { kv } from "@vercel/kv";
 import { getAccessoryPriceUsd } from "@/lib/accessories";
 import { grantCredit, spendCreditIfAvailable, getCredits, type CreditType } from "@/lib/grub-credits";
 import { petKey, identityLabel } from "@/lib/pet-key";
+import { sendDegen, recordFailedPayout, acquireLock, releaseLock, logDegenTxn } from "@/lib/referral";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -23,11 +24,10 @@ const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a
 // Checkin price in micro-USDC
 const CHECKIN_MICRO_USDC = 10_000; // $0.01
 
-// Spin Wheel price in micro-USDC — mirrors WHEEL_USD ($0.01) in Client.tsx.
-// Kept as its own constant (even though it's numerically identical to
-// CHECKIN_MICRO_USDC today) so the two prices can diverge later without
-// silently affecting each other.
-const SPIN_MICRO_USDC = 10_000; // $0.01
+// Spin Wheel price in micro-USDC — mirrors WHEEL_USD ($0.015) in Client.tsx.
+// Kept as its own constant so the two prices (checkin vs. spin) can diverge
+// without silently affecting each other.
+const SPIN_MICRO_USDC = 15_000; // $0.015
 
 // Accessory prices are now looked up LIVE per-request via
 // getAccessoryPriceUsd() (lib/accessories.ts) rather than a map built once
@@ -62,7 +62,7 @@ function accessoryPriceMicroUsdc(accessoryId: string): number | null {
 async function verifyUsdcTransfer(
   txHash: string,
   expectedMicroUsdc: number,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; fromAddress?: string }> {
   const recipientTopic = "0x000000000000000000000000" + RECIPIENT.replace(/^0x/, "").toLowerCase();
   const expectedHex    = "0x" + expectedMicroUsdc.toString(16).padStart(64, "0");
 
@@ -107,7 +107,16 @@ async function verifyUsdcTransfer(
           l.data?.toLowerCase()     === expectedHex.toLowerCase()
       );
 
-      if (match) return { ok: true };
+      if (match) {
+        // topics[1] is the indexed `from` address of the Transfer event
+        // (32-byte padded) — the exact wallet that signed and paid for
+        // this transaction. Used as the DEGEN payout destination for
+        // wheel_spin degen wins below; no separate Neynar/Basename lookup
+        // needed since it's read straight off the chain.
+        const fromTopic = match.topics?.[1] as string | undefined;
+        const fromAddress = fromTopic ? "0x" + fromTopic.slice(-40) : undefined;
+        return { ok: true, fromAddress };
+      }
       if (json?.result && logs.length > 0) {
         // Receipt exists but no matching log — tx is real but didn't pay us
         return { ok: false, error: "USDC transfer to Grub not found in transaction." };
@@ -487,8 +496,14 @@ export async function POST(req: NextRequest) {
         // never step on each other now, regardless of what else is saving
         // the blob at the same moment.
         serverComputed.freeCheckinCredits = await grantCredit(key, "freeCheckin");
+      } else if (wheelReward === "freecheckin2") {
+        // "Free Check-in ×2" — single atomic +2 grant (grantCredit already
+        // takes an amount param, so this is one INCRBY, not two calls).
+        serverComputed.freeCheckinCredits = await grantCredit(key, "freeCheckin", 2);
       } else if (wheelReward === "streaksave") {
         serverComputed.streakSaveCredits = await grantCredit(key, "streakSave");
+      } else if (wheelReward === "streaksave2") {
+        serverComputed.streakSaveCredits = await grantCredit(key, "streakSave", 2);
       } else if (wheelReward === "rareaccessory") {
         if (!accessoryId) {
           return logReject(400, "rareaccessory reward requires accessoryId", { who, txHash });
@@ -501,9 +516,10 @@ export async function POST(req: NextRequest) {
           };
         }
       }
-      // Other reward types (xp, etc.) have no dedicated server-computed field
-      // — they fall through to sanitizeState's existing xp cap below, same as
-      // any other save.
+      // xp / degen10 / degen15 have no dedicated pet-state field. XP falls
+      // through to sanitizeState's existing xp cap below, same as any other
+      // save. DEGEN is settled separately, on-chain, after the state write —
+      // see the payout block below.
 
       // serverComputed spreads LAST so it always wins over both the client's
       // `state` and the pre-write existingForSpin snapshot for these fields.
@@ -529,13 +545,96 @@ export async function POST(req: NextRequest) {
       await kv.set(usedKey, { fid: fid ?? null, wallet: wallet ?? null, purpose: "wheel_spin", wheelReward: wheelReward ?? null, ts: Date.now() }, { ex: 60 * 60 * 24 * 365 });
 
       console.log(`[pet] ✅ wheel spin saved ${who} reward=${wheelReward ?? "unknown"} tx=${txHash}`);
+
+      // ── DEGEN payout — degen10 / degen15 ────────────────────────────────
+      // The spin itself is already fully paid-for and persisted above,
+      // regardless of what happens here. Destination = verify.fromAddress,
+      // the exact wallet that signed the USDC spin payment, read straight
+      // off the on-chain Transfer log above — same sendDegen()/lock/
+      // recordFailedPayout pipeline as referral payouts (lib/referral.ts),
+      // just a different (on-chain, not Neynar) way of resolving the one
+      // address it needs. If the DEGEN transfer itself fails, the failure
+      // is logged for retry in the same admin dashboard referral failures
+      // show up in — the player still keeps their spin result either way.
+      let degenPayout: { ok: boolean; amountDegen: number; txHash?: string; reason?: string } | null = null;
+
+      if (wheelReward === "degen10" || wheelReward === "degen15") {
+        const amountDegen = wheelReward === "degen10" ? 10 : 15;
+        const payoutWallet = verify.fromAddress;
+        const payoutIdentity = fid ? Number(fid) : `wallet:${wallet}`;
+
+        if (!payoutWallet) {
+          console.error(`[pet] ❌ wheel degen payout has no fromAddress`, { who, txHash, wheelReward });
+          await recordFailedPayout({
+            fid: payoutIdentity,
+            toFid: payoutIdentity,
+            toWallet: "unknown",
+            amountDegen,
+            type: "wheel_degen",
+            reason: "Could not determine payer wallet from on-chain transfer log.",
+            sideEffect: null,
+          });
+          degenPayout = { ok: false, amountDegen, reason: "Could not determine payout wallet." };
+        } else {
+          // Locked by txHash (unique per spin) so a duplicate/racing request
+          // for the same spin can't ever trigger two DEGEN sends — mirrors
+          // the referral checkin/register payout locks in lib/referral.ts.
+          const payoutLockKey = `grub:wheel-degen-payout:${txHash}`;
+          const gotPayoutLock = await acquireLock(payoutLockKey, 30);
+          if (!gotPayoutLock) {
+            console.warn(`[pet] wheel degen payout for tx ${txHash} already in progress, skipping duplicate`);
+            degenPayout = { ok: false, amountDegen, reason: "Payout already in progress elsewhere." };
+          } else {
+            try {
+              let degenTxHash: string;
+              try {
+                degenTxHash = await sendDegen(payoutWallet, amountDegen);
+              } catch (err: any) {
+                console.error("[pet] wheel degen sendDegen failed:", err);
+                await recordFailedPayout({
+                  fid: payoutIdentity,
+                  toFid: payoutIdentity,
+                  toWallet: payoutWallet,
+                  amountDegen,
+                  type: "wheel_degen",
+                  reason: err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error",
+                  broadcastTxHash: err?.broadcastTxHash ?? null,
+                  sideEffect: null,
+                });
+                return NextResponse.json({
+                  ok: true,
+                  freeCheckinCredits: finalState.freeCheckinCredits,
+                  streakSaveCredits: finalState.streakSaveCredits,
+                  degenPayout: { ok: false, amountDegen, reason: "DEGEN payout failed — logged for retry in dashboard." },
+                });
+              }
+
+              await logDegenTxn({
+                fid: payoutIdentity,
+                toFid: payoutIdentity,
+                type: "wheel_degen",
+                txHash: degenTxHash,
+                amountDegen,
+                toWallet: payoutWallet,
+              });
+
+              console.log(`[pet] ✅ wheel degen paid ${amountDegen} DEGEN to ${payoutWallet} tx=${degenTxHash}`);
+              degenPayout = { ok: true, amountDegen, txHash: degenTxHash };
+            } finally {
+              await releaseLock(payoutLockKey);
+            }
+          }
+        }
+      }
+
       // Return the actual post-grant credit balance so the client can sync
-      // its optimistic local +1 to the real server number instead of trusting
-      // its own guess.
+      // its optimistic local bump to the real server number instead of
+      // trusting its own guess, plus the DEGEN payout result (if any).
       return NextResponse.json({
         ok: true,
         freeCheckinCredits: finalState.freeCheckinCredits,
         streakSaveCredits: finalState.streakSaveCredits,
+        degenPayout,
       });
     }
 

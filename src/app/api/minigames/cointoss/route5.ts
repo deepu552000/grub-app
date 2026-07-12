@@ -32,18 +32,6 @@ import {
   getOrCreateClientSeed,
 } from "@/lib/minigames";
 
-// Format check only (no checksum, no on-chain existence check) — 0x
-// followed by exactly 40 hex chars. This is what was missing when a manual
-// cash-out went through with cashoutWallet: "50": nothing here or in
-// lib/minigames.ts's requestCashout() rejected a non-address string, so it
-// sailed straight into the admin fulfillment queue and had to be caught and
-// fixed by hand. Mirrors the same check added client-side in Client.tsx —
-// this one is the version that actually matters, since it's the one no
-// caller (UI, stale build, direct POST) can bypass.
-function isValidBaseAddress(addr: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test(addr.trim());
-}
-
 export async function GET(req: NextRequest) {
   try {
     const fid = req.nextUrl.searchParams.get("fid");
@@ -168,14 +156,7 @@ export async function POST(req: NextRequest) {
       if (!cashoutWallet || typeof cashoutWallet !== "string") {
         return NextResponse.json({ ok: false, reason: "missing cashoutWallet" }, { status: 400 });
       }
-      const trimmedWallet = cashoutWallet.trim();
-      if (!isValidBaseAddress(trimmedWallet)) {
-        return NextResponse.json(
-          { ok: false, reason: "cashoutWallet must be a valid Base wallet address (0x followed by 40 hex characters)." },
-          { status: 400 },
-        );
-      }
-      const result = await requestCashout(key, Number(amountDegen), trimmedWallet);
+      const result = await requestCashout(key, Number(amountDegen), cashoutWallet);
       if (!result.ok) {
         return NextResponse.json({ ...result, ok: false }, { status: 400 });
       }
