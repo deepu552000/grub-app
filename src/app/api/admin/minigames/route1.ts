@@ -33,6 +33,7 @@ import {
   rotateServerSeed,
   getAllCoinTossPlayerStats,
   backfillCoinTossTotals,
+  purgeCoinTossFlipHistory,
   type CoinTossConfig,
 } from "@/lib/minigames";
 
@@ -206,6 +207,19 @@ export async function POST(req: NextRequest) {
     if (action === "backfill_cointoss_totals") {
       const result = await backfillCoinTossTotals();
       return NextResponse.json({ ok: true, action, ...result });
+    }
+
+    // ── Clears one identity's win/loss FLIP HISTORY only (flip records +
+    // permanent totals + house-totals contribution + identity index entry)
+    // — for wiping test/dev accounts' fake bet outcomes without touching
+    // their real balance, deposits, cash-outs, or credit history ──────────
+    if (action === "purge_cointoss_flip_history") {
+      const { identityKey } = body;
+      if (!identityKey || typeof identityKey !== "string") {
+        return NextResponse.json({ ok: false, reason: "missing identityKey" }, { status: 400 });
+      }
+      const result = await purgeCoinTossFlipHistory(identityKey);
+      return NextResponse.json({ ok: true, action, identityKey, ...result });
     }
 
     return NextResponse.json({ ok: false, reason: `unknown action "${action}"` }, { status: 400 });

@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
       // public hash (never the raw seed — that stays secret until it
       // rotates); seedHistory is raw seeds already revealed, which is what
       // actually lets someone recompute and verify past flips.
-      getRecentFlips(30),
+      getRecentFlips(100),
       getActiveSeedSummary(),
       getSeedHistory(20),
       // Per-player Coin Toss stats (balance, deposits, won/lost, net P&L) —
