@@ -175,10 +175,9 @@ const TYPE_META: Record<string, { color: string; bg: string; label: string }> = 
   referral_join:    { color: C.amberGlow, bg: "#3b1f6e",  label: "Ref Join"  },
   referral_checkin: { color: C.purple,  bg: "#2e1f5e",   label: "Ref Check" },
   wheel_spin:       { color: "#e879f9", bg: "#4a1d5e",   label: "Spin Wheel" },
-  minigame_cashout: { color: "#fb923c", bg: "#431407",   label: "Coin Toss Cash-out" },
+  minigame_cashout: { color: "#fb7185", bg: "#4c0519",   label: "Coin Toss Cash-out" },
   minigame_deposit: { color: "#22d3ee", bg: "#083344",   label: "Minigame Deposit" },
   raffle_ticket:    { color: "#fbbf24", bg: "#451a03",   label: "Raffle Ticket" },
-  wheel_degen:      { color: "#2dd4bf", bg: "#042f2e",   label: "wheel_degen" },
 };
 
 function timeAgo(ts: number): string {
