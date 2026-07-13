@@ -121,6 +121,7 @@ type CoinTossPlayerStats = {
   flips: number;
   wins: number;
   totalWagered: number;
+  betOnWins: number;
   totalWon: number;
   totalLost: number;
   totalDeposited: number;
@@ -873,6 +874,24 @@ function AdminDashboardInner() {
       }
     } catch (err: any) {
       addToast(`✕ ${err?.message ?? "Rotate failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadMinigamesAdmin]);
+
+  const backfillMinigamesTotals = useCallback(async () => {
+    if (!window.confirm("Seed permanent per-player Coin Toss totals from the current flip log? Only needed once, right after this update ships — safe to re-run, but pointless after the first time.")) return;
+    setRaffleActionLoading("minigames_backfill_totals");
+    try {
+      const res = await authedPost("/api/admin/minigames", { action: "backfill_cointoss_totals" });
+      if (res?.ok) {
+        addToast(`✓ Seeded totals for ${res.identitiesSeeded} player(s) from ${res.flipsProcessed} flip(s).`, "success");
+        loadMinigamesAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Backfill failed"}`, "error");
+      }
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Backfill failed"}`, "error");
     } finally {
       setRaffleActionLoading(null);
     }
@@ -2650,26 +2669,38 @@ function AdminDashboardInner() {
                 a manual credit alone or a plain balance with zero plays
                 doesn't earn a row here ── */}
             <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1rem" }}>
-              <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: T.creamMute, borderBottom: `1px solid ${T.border}` }}>
-                Player Stats — {(minigamesAdmin?.playerStats ?? []).length} players
+              <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, borderBottom: `1px solid ${T.border}` }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>
+                  Player Stats — {(minigamesAdmin?.playerStats ?? []).length} players
+                </div>
+                <button
+                  onClick={backfillMinigamesTotals}
+                  disabled={raffleActionLoading === "minigames_backfill_totals"}
+                  title="One-time: seeds permanent per-player totals from the current flip log. Only needed once, right after this update ships."
+                  style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                >
+                  {raffleActionLoading === "minigames_backfill_totals" ? "Seeding…" : "⚙ Backfill Totals (one-time)"}
+                </button>
               </div>
               <div style={{ maxHeight: 360, overflowY: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr>
-                      {["Identity", "Balance", "Deposited", "Won", "Lost", "Net P/L", "Flips", "Last Played"].map((h, i) => (
+                      {["Identity", "Balance", "Deposited", "Total Wagered", "Bet on Wins", "Won", "Lost", "Net P/L", "Flips", "Last Played"].map((h, i) => (
                         <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, position: "sticky", top: 0 }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {(minigamesAdmin?.playerStats ?? []).length === 0 ? (
-                      <tr><td colSpan={8} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No one has played Coin Toss yet.</td></tr>
+                      <tr><td colSpan={10} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No one has played Coin Toss yet.</td></tr>
                     ) : (minigamesAdmin.playerStats as CoinTossPlayerStats[]).map((p) => (
                       <tr key={p.identityKey} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
                         <td style={{ padding: "9px 14px", fontFamily: "monospace" }}>{p.identityKey}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 700, color: T.cream }}>{p.balance.toFixed(1)}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{p.totalDeposited.toFixed(1)}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{p.totalWagered.toFixed(1)}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{p.betOnWins.toFixed(1)}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", color: C.green }}>{p.totalWon.toFixed(1)}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", color: C.red }}>{p.totalLost.toFixed(1)}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 700, color: p.netProfitLoss >= 0 ? C.green : C.red }}>
@@ -3562,6 +3593,8 @@ function AdminDashboardInner() {
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 10 }}>
                         {[
                           ["Deposited", controlState.minigames.coinToss.totalDeposited, T.cream],
+                          ["Total Wagered", controlState.minigames.coinToss.totalWagered, T.cream],
+                          ["Bet on Wins", controlState.minigames.coinToss.betOnWins, T.cream],
                           ["Won", controlState.minigames.coinToss.totalWon, C.green],
                           ["Lost", controlState.minigames.coinToss.totalLost, C.red],
                           [

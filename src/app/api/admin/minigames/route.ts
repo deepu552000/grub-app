@@ -32,6 +32,7 @@ import {
   getSeedHistory,
   rotateServerSeed,
   getAllCoinTossPlayerStats,
+  backfillCoinTossTotals,
   type CoinTossConfig,
 } from "@/lib/minigames";
 
@@ -194,6 +195,17 @@ export async function POST(req: NextRequest) {
     if (action === "rotate_seed") {
       const rotated = await rotateServerSeed();
       return NextResponse.json({ ok: true, action, activeSeed: { serverSeedHash: rotated.serverSeedHash, flipsUsed: rotated.nonce, createdAt: rotated.createdAt } });
+    }
+
+    // ── One-time migration: seeds the new permanent per-player totals
+    // (+ per-identity flip logs + identity index) from whatever's currently
+    // in the shared flip log. Only run this once, after deploying the
+    // totals-tracking change — safe to re-run, but pointless after the
+    // first time since totals are then kept current incrementally on every
+    // flip going forward ──────────────────────────────────────────────────
+    if (action === "backfill_cointoss_totals") {
+      const result = await backfillCoinTossTotals();
+      return NextResponse.json({ ok: true, action, ...result });
     }
 
     return NextResponse.json({ ok: false, reason: `unknown action "${action}"` }, { status: 400 });

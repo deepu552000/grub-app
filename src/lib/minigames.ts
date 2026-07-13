@@ -401,7 +401,7 @@ export type CoinTossFlip = {
 };
 
 const FLIPS_KEY = "grub:minigames:cointoss:flips";
-const MAX_LOGGED_FLIPS = 500; // trim so this key doesn't grow unbounded
+const MAX_LOGGED_FLIPS = 500; // trim so this key doesn't grow unbounded — global, all-players window
 
 async function logFlip(flip: CoinTossFlip) {
   const list = (await kv.get<CoinTossFlip[]>(FLIPS_KEY)) ?? [];
@@ -415,18 +415,143 @@ export async function getRecentFlips(limit = 20): Promise<CoinTossFlip[]> {
   return list.slice(0, limit);
 }
 
+// ── Per-player flip history ─────────────────────────────────────────────
+// Own key per identity, capped at MAX_LOGGED_FLIPS_PER_PLAYER each. This is
+// separate from the shared FLIPS_KEY above (which stays a single 500-flip
+// window across every player combined, feeding the admin Fairness panel's
+// "recent flips" feed). Before this, getFlipsForIdentity() filtered that
+// same shared list down to one identity — meaning a busy site could push a
+// quiet player's flips out of the window entirely even though *they*
+// hadn't flipped 500 times. Storing per-identity means each player gets
+// their own full 500-flip window regardless of how active anyone else is.
+const MAX_LOGGED_FLIPS_PER_PLAYER = 500;
+
+function identityFlipsKey(identityKey: string) {
+  return `grub:minigames:cointoss:flips:${identityKey}`;
+}
+
+async function logFlipForIdentity(identityKey: string, flip: CoinTossFlip) {
+  const key = identityFlipsKey(identityKey);
+  const list = (await kv.get<CoinTossFlip[]>(key)) ?? [];
+  list.unshift(flip);
+  if (list.length > MAX_LOGGED_FLIPS_PER_PLAYER) list.length = MAX_LOGGED_FLIPS_PER_PLAYER;
+  await kv.set(key, list);
+}
+
 /**
- * A single player's own flip history (most recent first) — the actual fix
- * for the "recent flips" strip showing identical results for every user.
- * getRecentFlips() above pulls from the shared, all-players FLIPS_KEY list
- * with no identity filter at all, so every caller was getting the exact
- * same global feed. This filters that same list down to one identityKey,
- * same "safe to return in full, it's the caller's own data" reasoning as
- * getCashoutsForIdentity/getDepositsForIdentity.
+ * A single player's own flip history (most recent first), read from their
+ * own per-identity key — not affected by other players' activity.
  */
 export async function getFlipsForIdentity(identityKey: string, limit = 20): Promise<CoinTossFlip[]> {
-  const list = (await kv.get<CoinTossFlip[]>(FLIPS_KEY)) ?? [];
-  return list.filter((f) => f.identityKey === identityKey).slice(0, limit);
+  const list = (await kv.get<CoinTossFlip[]>(identityFlipsKey(identityKey))) ?? [];
+  return list.slice(0, limit);
+}
+
+// ── Per-player running totals (all-time, never trimmed) ─────────────────
+// Unlike the flip logs above, this is a single small counter object per
+// identity that gets incremented on every flip — never rebuilt by
+// filtering/reducing a stored list, so it can't lose history to a trim.
+// This is what player-facing and admin P/L numbers should read from.
+export type CoinTossTotals = {
+  flips: number;
+  wins: number;
+  totalWagered: number; // sum of every bet placed, all-time
+  betOnWins: number; // sum of betDegen on winning flips only, all-time
+  totalWon: number; // sum of payoutDegen on winning flips, all-time
+  totalLost: number; // sum of betDegen on losing flips, all-time
+  lastPlayedAt: number;
+};
+
+function totalsKey(identityKey: string) {
+  return `grub:minigames:cointoss:totals:${identityKey}`;
+}
+
+async function bumpPlayerTotals(identityKey: string, flip: CoinTossFlip): Promise<CoinTossTotals> {
+  const key = totalsKey(identityKey);
+  const current = (await kv.get<CoinTossTotals>(key)) ?? {
+    flips: 0,
+    wins: 0,
+    totalWagered: 0,
+    betOnWins: 0,
+    totalWon: 0,
+    totalLost: 0,
+    lastPlayedAt: 0,
+  };
+  current.flips += 1;
+  current.totalWagered += flip.betDegen;
+  current.lastPlayedAt = flip.ts;
+  if (flip.won) {
+    current.wins += 1;
+    current.betOnWins += flip.betDegen;
+    current.totalWon += flip.payoutDegen;
+  } else {
+    current.totalLost += flip.betDegen;
+  }
+  await kv.set(key, current);
+  return current;
+}
+
+// ── Index of every identity that's ever placed a flip ───────────────────
+// getAllCoinTossPlayerStats() used to derive its player list by scanning
+// the shared FLIPS_KEY window — so a player who hadn't flipped recently
+// could silently drop out of the Player Stats table once enough other
+// activity pushed them out of the last 500. This index is append-only and
+// never trimmed, so once someone's played once they always show up.
+const IDENTITIES_KEY = "grub:minigames:cointoss:identities";
+
+async function trackIdentity(identityKey: string) {
+  const list = (await kv.get<string[]>(IDENTITIES_KEY)) ?? [];
+  if (!list.includes(identityKey)) {
+    list.push(identityKey);
+    await kv.set(IDENTITIES_KEY, list);
+  }
+}
+
+// ── House-level running totals (all-time, never trimmed) ────────────────
+// Same idea as the per-player totals above, one level up — a single small
+// counter object bumped on every flip, instead of the "all-time" stats
+// being derived by reducing over the shared FLIPS_KEY window (which is
+// capped at MAX_LOGGED_FLIPS and therefore isn't actually all-time once
+// the site passes that many total flips). This is what getCoinTossStats()
+// should read for its allTime block.
+export type CoinTossHouseTotals = {
+  flips: number;
+  wins: number;
+  totalWagered: number;
+  totalPaidOut: number;
+};
+
+const HOUSE_TOTALS_KEY = "grub:minigames:cointoss:house_totals";
+
+async function bumpHouseTotals(flip: CoinTossFlip): Promise<CoinTossHouseTotals> {
+  const current = (await kv.get<CoinTossHouseTotals>(HOUSE_TOTALS_KEY)) ?? {
+    flips: 0,
+    wins: 0,
+    totalWagered: 0,
+    totalPaidOut: 0,
+  };
+  current.flips += 1;
+  current.totalWagered += flip.betDegen;
+  current.totalPaidOut += flip.payoutDegen;
+  if (flip.won) current.wins += 1;
+  await kv.set(HOUSE_TOTALS_KEY, current);
+  return current;
+}
+
+/**
+ * Records a resolved flip everywhere it needs to live: the shared 500-flip
+ * admin feed, the player's own 500-flip history, their permanent running
+ * totals, the house-wide permanent totals, and (if new) the all-time
+ * identity index.
+ */
+async function recordFlip(identityKey: string, flip: CoinTossFlip) {
+  await Promise.all([
+    logFlip(flip),
+    logFlipForIdentity(identityKey, flip),
+    bumpPlayerTotals(identityKey, flip),
+    bumpHouseTotals(flip),
+    trackIdentity(identityKey),
+  ]);
 }
 
 function hourBucketKey(ts: number) {
@@ -729,7 +854,7 @@ export async function placeCoinTossBet(
   }
 
   const ts = Date.now();
-  await logFlip({
+  await recordFlip(identityKey, {
     id: `${identityKey}:${ts}`,
     identityKey,
     betDegen,
@@ -988,43 +1113,39 @@ export async function fulfillCashout(cashoutId: string): Promise<{ ok: true; txH
 }
 
 // ── Per-player Coin Toss stats (Manage User + Games tab) ────────────────
-// Aggregates a player's own flips + deposits into the same shape the admin
-// dashboard already shows at the house level via getCoinTossStats() below —
-// totalWagered/totalWon here mirror that function's totalWagered/
-// totalPaidOut, just filtered to one identityKey instead of summed across
-// everyone. Same FLIPS_KEY-is-a-trimmed-window caveat applies: a player who
-// flipped a lot before the most recent MAX_LOGGED_FLIPS trim will show a
-// partial history here, same as the site-wide "all-time" stats already do.
+// Reads from the permanent CoinTossTotals counter (bumped once per flip in
+// recordFlip/bumpPlayerTotals above) rather than deriving from a stored
+// flip list — so these numbers are true all-time, never affected by the
+// FLIPS_KEY/per-identity-flips trim windows. Those trimmed lists are still
+// used for "recent activity" feeds (getRecentFlips/getFlipsForIdentity),
+// just not for the aggregate stats anymore.
 export type CoinTossPlayerStats = {
   identityKey: string;
   balance: number;
   flips: number;
   wins: number;
-  totalWagered: number; // sum of every bet placed
-  totalWon: number; // sum of payoutDegen on winning flips (gross return, stake + profit)
-  totalLost: number; // sum of betDegen on losing flips (stake forfeited)
+  totalWagered: number; // sum of every bet placed, all-time
+  betOnWins: number; // sum of betDegen on winning flips only (stake risked on wins, not the payout), all-time
+  totalWon: number; // sum of payoutDegen on winning flips (gross return, stake + profit), all-time
+  totalLost: number; // sum of betDegen on losing flips (stake forfeited), all-time
   totalDeposited: number; // sum of on-chain DEGEN deposits credited
   netProfitLoss: number; // totalWon − totalWagered — positive = up overall, negative = down
   lastPlayedAt: number;
 };
 
-function buildPlayerStats(identityKey: string, flips: CoinTossFlip[], totalDeposited: number, balance: number): CoinTossPlayerStats {
-  const wonFlips = flips.filter((f) => f.won);
-  const lostFlips = flips.filter((f) => !f.won);
-  const totalWagered = flips.reduce((sum, f) => sum + f.betDegen, 0);
-  const totalWon = wonFlips.reduce((sum, f) => sum + f.payoutDegen, 0);
-  const totalLost = lostFlips.reduce((sum, f) => sum + f.betDegen, 0);
+function statsFromTotals(identityKey: string, totals: CoinTossTotals, totalDeposited: number, balance: number): CoinTossPlayerStats {
   return {
     identityKey,
     balance,
-    flips: flips.length,
-    wins: wonFlips.length,
-    totalWagered,
-    totalWon,
-    totalLost,
+    flips: totals.flips,
+    wins: totals.wins,
+    totalWagered: totals.totalWagered,
+    betOnWins: totals.betOnWins,
+    totalWon: totals.totalWon,
+    totalLost: totals.totalLost,
     totalDeposited,
-    netProfitLoss: totalWon - totalWagered,
-    lastPlayedAt: flips[0]?.ts ?? 0, // FLIPS_KEY is stored newest-first
+    netProfitLoss: totals.totalWon - totals.totalWagered,
+    lastPlayedAt: totals.lastPlayedAt,
   };
 }
 
@@ -1035,61 +1156,120 @@ function buildPlayerStats(identityKey: string, flips: CoinTossFlip[], totalDepos
  * follows.
  */
 export async function getCoinTossStatsForIdentity(identityKey: string): Promise<CoinTossPlayerStats | null> {
-  const [allFlips, allDeposits, balance] = await Promise.all([
-    kv.get<CoinTossFlip[]>(FLIPS_KEY),
+  const [totals, allDeposits, balance] = await Promise.all([
+    kv.get<CoinTossTotals>(totalsKey(identityKey)),
     getAllDeposits(),
     getBalance(identityKey),
   ]);
-  const mine = (allFlips ?? []).filter((f) => f.identityKey === identityKey);
-  if (mine.length === 0) return null;
+  if (!totals || totals.flips === 0) return null;
   const totalDeposited = allDeposits.filter((d) => d.identityKey === identityKey).reduce((sum, d) => sum + d.amountDegen, 0);
-  return buildPlayerStats(identityKey, mine, totalDeposited, balance);
+  return statsFromTotals(identityKey, totals, totalDeposited, balance);
 }
 
 /**
  * Every identity that's placed at least one flip, with aggregated stats —
  * feeds the Games tab's "Player Stats" table. Sorted by most-recently-active
  * first so the players an admin is most likely checking on surface at top.
+ * Player list comes from the append-only IDENTITIES_KEY index rather than
+ * scanning a trimmed flip list, so a quiet player never silently drops off
+ * the table just because other players have been more active recently.
  */
 export async function getAllCoinTossPlayerStats(): Promise<CoinTossPlayerStats[]> {
-  const [allFlips, allDeposits] = await Promise.all([kv.get<CoinTossFlip[]>(FLIPS_KEY), getAllDeposits()]);
-
-  const flipsByIdentity = new Map<string, CoinTossFlip[]>();
-  for (const f of allFlips ?? []) {
-    const list = flipsByIdentity.get(f.identityKey);
-    if (list) list.push(f);
-    else flipsByIdentity.set(f.identityKey, [f]);
-  }
+  const [identities, allDeposits] = await Promise.all([kv.get<string[]>(IDENTITIES_KEY), getAllDeposits()]);
+  const ids = identities ?? [];
 
   const depositsByIdentity = new Map<string, number>();
   for (const d of allDeposits) {
     depositsByIdentity.set(d.identityKey, (depositsByIdentity.get(d.identityKey) ?? 0) + d.amountDegen);
   }
 
-  const identities = [...flipsByIdentity.keys()];
-  const balances = await Promise.all(identities.map((id) => getBalance(id)));
+  const [totalsList, balances] = await Promise.all([
+    Promise.all(ids.map((id) => kv.get<CoinTossTotals>(totalsKey(id)))),
+    Promise.all(ids.map((id) => getBalance(id))),
+  ]);
 
-  const stats = identities.map((identityKey, i) =>
-    buildPlayerStats(identityKey, flipsByIdentity.get(identityKey)!, depositsByIdentity.get(identityKey) ?? 0, balances[i]),
-  );
+  const stats: CoinTossPlayerStats[] = [];
+  ids.forEach((identityKey, i) => {
+    const totals = totalsList[i];
+    if (!totals) return; // shouldn't happen — index and totals are written together in recordFlip
+    stats.push(statsFromTotals(identityKey, totals, depositsByIdentity.get(identityKey) ?? 0, balances[i]));
+  });
 
   stats.sort((a, b) => b.lastPlayedAt - a.lastPlayedAt);
   return stats;
 }
 
-export async function getCoinTossStats() {
-  const pnl = await getRolling24hPnl();
+/**
+ * One-time migration: rebuilds the per-identity totals, per-identity flip
+ * logs, the identity index, and the house-wide totals from whatever's
+ * currently sitting in the shared FLIPS_KEY. Safe to run any time the site
+ * is still under the MAX_LOGGED_FLIPS (500) global cap — at that point
+ * FLIPS_KEY still holds every flip ever placed, so this is a complete,
+ * lossless seed rather than a partial one. Once the site has ever exceeded
+ * 500 total flips, anything trimmed off before running this is gone for
+ * good — this can't recover data that's already been dropped from
+ * FLIPS_KEY. Idempotent: re-running it just recomputes and overwrites, so
+ * it's safe to trigger more than once (e.g. if run again before crossing
+ * 500).
+ */
+export async function backfillCoinTossTotals(): Promise<{ identitiesSeeded: number; flipsProcessed: number }> {
   const allFlips = (await kv.get<CoinTossFlip[]>(FLIPS_KEY)) ?? [];
-  const totalWagered = allFlips.reduce((sum, f) => sum + f.betDegen, 0);
-  const totalPaidOut = allFlips.reduce((sum, f) => sum + f.payoutDegen, 0);
-  const wins = allFlips.filter((f) => f.won).length;
+
+  const byIdentity = new Map<string, CoinTossFlip[]>();
+  for (const f of allFlips) {
+    const list = byIdentity.get(f.identityKey);
+    if (list) list.push(f);
+    else byIdentity.set(f.identityKey, [f]);
+  }
+
+  const identities = [...byIdentity.keys()];
+
+  await Promise.all(
+    identities.map(async (identityKey) => {
+      const flips = byIdentity.get(identityKey)!; // FLIPS_KEY is newest-first
+      const wonFlips = flips.filter((f) => f.won);
+      const lostFlips = flips.filter((f) => !f.won);
+      const totals: CoinTossTotals = {
+        flips: flips.length,
+        wins: wonFlips.length,
+        totalWagered: flips.reduce((sum, f) => sum + f.betDegen, 0),
+        betOnWins: wonFlips.reduce((sum, f) => sum + f.betDegen, 0),
+        totalWon: wonFlips.reduce((sum, f) => sum + f.payoutDegen, 0),
+        totalLost: lostFlips.reduce((sum, f) => sum + f.betDegen, 0),
+        lastPlayedAt: flips[0]?.ts ?? 0,
+      };
+      await Promise.all([
+        kv.set(totalsKey(identityKey), totals),
+        kv.set(identityFlipsKey(identityKey), flips.slice(0, MAX_LOGGED_FLIPS_PER_PLAYER)),
+      ]);
+    }),
+  );
+
+  await kv.set(IDENTITIES_KEY, identities);
+
+  // Seed house-level totals from the same complete flip list.
+  const houseWins = allFlips.filter((f) => f.won).length;
+  const houseTotals: CoinTossHouseTotals = {
+    flips: allFlips.length,
+    wins: houseWins,
+    totalWagered: allFlips.reduce((sum, f) => sum + f.betDegen, 0),
+    totalPaidOut: allFlips.reduce((sum, f) => sum + f.payoutDegen, 0),
+  };
+  await kv.set(HOUSE_TOTALS_KEY, houseTotals);
+
+  return { identitiesSeeded: identities.length, flipsProcessed: allFlips.length };
+}
+
+export async function getCoinTossStats() {
+  const [pnl, houseTotals] = await Promise.all([getRolling24hPnl(), kv.get<CoinTossHouseTotals>(HOUSE_TOTALS_KEY)]);
+  const totals = houseTotals ?? { flips: 0, wins: 0, totalWagered: 0, totalPaidOut: 0 };
   return {
     allTime: {
-      flips: allFlips.length,
-      totalWagered,
-      totalPaidOut,
-      houseNet: totalWagered - totalPaidOut,
-      winRatePercent: allFlips.length ? (wins / allFlips.length) * 100 : 0,
+      flips: totals.flips,
+      totalWagered: totals.totalWagered,
+      totalPaidOut: totals.totalPaidOut,
+      houseNet: totals.totalWagered - totals.totalPaidOut,
+      winRatePercent: totals.flips ? (totals.wins / totals.flips) * 100 : 0,
     },
     last24h: pnl,
     treasuryDegenBalance: await getTreasuryDegenBalance(),
