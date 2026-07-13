@@ -547,6 +547,10 @@ function AdminDashboardInner() {
   const [minigamesConfigDraft, setMinigamesConfigDraft] = useState<Record<string, string>>({});
   const [showSeedHistory, setShowSeedHistory] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const [cashoutSearch, setCashoutSearch] = useState("");
+  const [cashoutRowLimit, setCashoutRowLimit] = useState(25);
+  const [flipsSearch, setFlipsSearch] = useState("");
+  const [flipsRowLimit, setFlipsRowLimit] = useState(25);
   const [creditFid, setCreditFid] = useState("");
   const [creditWallet, setCreditWallet] = useState("");
   const [creditAmount, setCreditAmount] = useState("");
@@ -2537,13 +2541,31 @@ function AdminDashboardInner() {
               </button>
             </div>
 
-            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginTop: "1rem" }}>
-              <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: T.creamMute, borderBottom: `1px solid ${T.border}` }}>
-                Cash-outs
-                {(() => {
-                  const pendingCount = (minigamesAdmin?.recentCashouts ?? []).filter((c: any) => c.status === "pending").length;
-                  return pendingCount > 0 ? ` (${pendingCount} pending)` : "";
-                })()}
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginTop: "1rem", marginBottom: "1.5rem" }}>
+              <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, borderBottom: `1px solid ${T.border}` }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>
+                  Cash-outs
+                  {(() => {
+                    const pendingCount = (minigamesAdmin?.recentCashouts ?? []).filter((c: any) => c.status === "pending").length;
+                    return pendingCount > 0 ? ` (${pendingCount} pending)` : "";
+                  })()}
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input
+                    placeholder="Search FID or wallet…"
+                    value={cashoutSearch}
+                    onChange={(e) => setCashoutSearch(e.target.value)}
+                    style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream, minWidth: 180 }}
+                  />
+                  <select
+                    value={cashoutRowLimit}
+                    onChange={(e) => setCashoutRowLimit(Number(e.target.value))}
+                    style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream }}
+                  >
+                    {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n} rows</option>)}
+                    <option value={999999}>All</option>
+                  </select>
+                </div>
               </div>
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -2555,9 +2577,16 @@ function AdminDashboardInner() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(minigamesAdmin?.recentCashouts ?? []).length === 0 ? (
-                      <tr><td colSpan={5} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No cash-outs yet.</td></tr>
-                    ) : minigamesAdmin.recentCashouts.map((c: any) => (
+                    {(() => {
+                      const q = cashoutSearch.trim().toLowerCase();
+                      const filtered = (minigamesAdmin?.recentCashouts ?? []).filter((c: any) =>
+                        !q || c.identityKey?.toLowerCase().includes(q) || c.wallet?.toLowerCase().includes(q)
+                      );
+                      const rows = filtered.slice(0, cashoutRowLimit);
+                      if (rows.length === 0) {
+                        return <tr><td colSpan={5} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>{q ? "No matching cash-outs." : "No cash-outs yet."}</td></tr>;
+                      }
+                      return rows.map((c: any) => (
                       <tr key={c.id} style={{ borderBottom: `1px solid ${T.borderSub}`, opacity: c.status === "cancelled" ? 0.5 : 1 }}>
                         <td style={{ padding: "9px 14px", fontFamily: "monospace" }}>{c.identityKey}</td>
                         <td style={{ padding: "9px 14px", fontFamily: "monospace", fontSize: 11 }}>{c.wallet}</td>
@@ -2602,7 +2631,8 @@ function AdminDashboardInner() {
                           )}
                         </td>
                       </tr>
-                    ))}
+                      ));
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -2774,8 +2804,24 @@ function AdminDashboardInner() {
             </div>
 
             <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1rem" }}>
-              <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: T.creamMute, borderBottom: `1px solid ${T.border}` }}>
-                Recent Flips — HMAC Proof
+              <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, borderBottom: `1px solid ${T.border}` }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>Recent Flips — HMAC Proof</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input
+                    placeholder="Search FID or wallet…"
+                    value={flipsSearch}
+                    onChange={(e) => setFlipsSearch(e.target.value)}
+                    style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream, minWidth: 180 }}
+                  />
+                  <select
+                    value={flipsRowLimit}
+                    onChange={(e) => setFlipsRowLimit(Number(e.target.value))}
+                    style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream }}
+                  >
+                    {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n} rows</option>)}
+                    <option value={999999}>All</option>
+                  </select>
+                </div>
               </div>
               <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -2787,9 +2833,16 @@ function AdminDashboardInner() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(minigamesAdmin?.recentFlips ?? []).length === 0 ? (
-                      <tr><td colSpan={8} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No flips yet.</td></tr>
-                    ) : (minigamesAdmin.recentFlips as CoinTossFlipEntry[]).map((f) => (
+                    {(() => {
+                      const q = flipsSearch.trim().toLowerCase();
+                      const filtered = (minigamesAdmin?.recentFlips ?? []).filter((f: any) =>
+                        !q || f.identityKey?.toLowerCase().includes(q)
+                      );
+                      const rows = filtered.slice(0, flipsRowLimit);
+                      if (rows.length === 0) {
+                        return <tr><td colSpan={8} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>{q ? "No matching flips." : "No flips yet."}</td></tr>;
+                      }
+                      return (rows as CoinTossFlipEntry[]).map((f) => (
                       <tr key={f.id} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
                         <td style={{ padding: "8px 14px", fontFamily: "monospace" }}>{f.identityKey}</td>
                         <td style={{ padding: "8px 14px" }}>{f.betDegen} DEGEN</td>
@@ -2815,7 +2868,8 @@ function AdminDashboardInner() {
                         </td>
                         <td style={{ padding: "8px 14px", color: T.textMute, whiteSpace: "nowrap" }}>{timeAgo(f.ts)}</td>
                       </tr>
-                    ))}
+                      ));
+                    })()}
                   </tbody>
                 </table>
               </div>
