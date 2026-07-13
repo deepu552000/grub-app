@@ -875,6 +875,19 @@ export async function requestCashout(identityKey: string, amountDegen: number, w
   if (!Number.isFinite(amountDegen) || amountDegen <= 0) {
     return { ok: false, reason: "invalid cash-out amount" };
   }
+  // Guards this function itself, not just its one current caller
+  // (app/api/minigames/cointoss/route.ts) — anything that calls
+  // requestCashout() directly, now or later, gets the same protection.
+  // This is what was missing when a manual cash-out went through with
+  // wallet: "50": nothing anywhere validated the shape of `wallet` before
+  // it reached sendDegen() below, so it landed in the admin queue instead
+  // of failing fast with a clear reason. ethers.isAddress() (already
+  // imported for the treasury balance read above) does a full EIP-55-aware
+  // check, not just a regex shape match.
+  if (!wallet || !ethers.isAddress(wallet.trim())) {
+    return { ok: false, reason: "cashoutWallet must be a valid Base wallet address (0x followed by 40 hex characters)." };
+  }
+  const trimmedWallet = wallet.trim();
   const balance = await getBalance(identityKey);
   if (balance < amountDegen) {
     return { ok: false, reason: "Not enough balance to cash out that much." };
@@ -897,7 +910,7 @@ export async function requestCashout(identityKey: string, amountDegen: number, w
     const record: PendingCashout = {
       id: `${identityKey}:${Date.now()}`,
       identityKey,
-      wallet,
+      wallet: trimmedWallet,
       amountDegen,
       status: "pending",
       requestedAt: Date.now(),
@@ -905,7 +918,7 @@ export async function requestCashout(identityKey: string, amountDegen: number, w
 
     if (amountDegen <= config.autoCashoutMaxDegen) {
       try {
-        const txHash = await sendDegen(wallet, amountDegen);
+        const txHash = await sendDegen(trimmedWallet, amountDegen);
         const fulfilled: PendingCashout = { ...record, status: "fulfilled", txHash, fulfilledAt: Date.now() };
         const list = await getAllCashouts();
         list.unshift(fulfilled);
@@ -972,6 +985,96 @@ export async function fulfillCashout(cashoutId: string): Promise<{ ok: true; txH
     console.error("[minigames] fulfillCashout sendDegen failed:", err);
     return { ok: false, reason: err?.reason ?? err?.shortMessage ?? err?.message ?? "unknown error" };
   }
+}
+
+// ── Per-player Coin Toss stats (Manage User + Games tab) ────────────────
+// Aggregates a player's own flips + deposits into the same shape the admin
+// dashboard already shows at the house level via getCoinTossStats() below —
+// totalWagered/totalWon here mirror that function's totalWagered/
+// totalPaidOut, just filtered to one identityKey instead of summed across
+// everyone. Same FLIPS_KEY-is-a-trimmed-window caveat applies: a player who
+// flipped a lot before the most recent MAX_LOGGED_FLIPS trim will show a
+// partial history here, same as the site-wide "all-time" stats already do.
+export type CoinTossPlayerStats = {
+  identityKey: string;
+  balance: number;
+  flips: number;
+  wins: number;
+  totalWagered: number; // sum of every bet placed
+  totalWon: number; // sum of payoutDegen on winning flips (gross return, stake + profit)
+  totalLost: number; // sum of betDegen on losing flips (stake forfeited)
+  totalDeposited: number; // sum of on-chain DEGEN deposits credited
+  netProfitLoss: number; // totalWon − totalWagered — positive = up overall, negative = down
+  lastPlayedAt: number;
+};
+
+function buildPlayerStats(identityKey: string, flips: CoinTossFlip[], totalDeposited: number, balance: number): CoinTossPlayerStats {
+  const wonFlips = flips.filter((f) => f.won);
+  const lostFlips = flips.filter((f) => !f.won);
+  const totalWagered = flips.reduce((sum, f) => sum + f.betDegen, 0);
+  const totalWon = wonFlips.reduce((sum, f) => sum + f.payoutDegen, 0);
+  const totalLost = lostFlips.reduce((sum, f) => sum + f.betDegen, 0);
+  return {
+    identityKey,
+    balance,
+    flips: flips.length,
+    wins: wonFlips.length,
+    totalWagered,
+    totalWon,
+    totalLost,
+    totalDeposited,
+    netProfitLoss: totalWon - totalWagered,
+    lastPlayedAt: flips[0]?.ts ?? 0, // FLIPS_KEY is stored newest-first
+  };
+}
+
+/**
+ * One player's Coin Toss stats, or null if they've never flipped — used to
+ * gate the Manage User panel's Coin Toss block so it only appears for users
+ * who've actually played, same "played only" rule the Games tab table below
+ * follows.
+ */
+export async function getCoinTossStatsForIdentity(identityKey: string): Promise<CoinTossPlayerStats | null> {
+  const [allFlips, allDeposits, balance] = await Promise.all([
+    kv.get<CoinTossFlip[]>(FLIPS_KEY),
+    getAllDeposits(),
+    getBalance(identityKey),
+  ]);
+  const mine = (allFlips ?? []).filter((f) => f.identityKey === identityKey);
+  if (mine.length === 0) return null;
+  const totalDeposited = allDeposits.filter((d) => d.identityKey === identityKey).reduce((sum, d) => sum + d.amountDegen, 0);
+  return buildPlayerStats(identityKey, mine, totalDeposited, balance);
+}
+
+/**
+ * Every identity that's placed at least one flip, with aggregated stats —
+ * feeds the Games tab's "Player Stats" table. Sorted by most-recently-active
+ * first so the players an admin is most likely checking on surface at top.
+ */
+export async function getAllCoinTossPlayerStats(): Promise<CoinTossPlayerStats[]> {
+  const [allFlips, allDeposits] = await Promise.all([kv.get<CoinTossFlip[]>(FLIPS_KEY), getAllDeposits()]);
+
+  const flipsByIdentity = new Map<string, CoinTossFlip[]>();
+  for (const f of allFlips ?? []) {
+    const list = flipsByIdentity.get(f.identityKey);
+    if (list) list.push(f);
+    else flipsByIdentity.set(f.identityKey, [f]);
+  }
+
+  const depositsByIdentity = new Map<string, number>();
+  for (const d of allDeposits) {
+    depositsByIdentity.set(d.identityKey, (depositsByIdentity.get(d.identityKey) ?? 0) + d.amountDegen);
+  }
+
+  const identities = [...flipsByIdentity.keys()];
+  const balances = await Promise.all(identities.map((id) => getBalance(id)));
+
+  const stats = identities.map((identityKey, i) =>
+    buildPlayerStats(identityKey, flipsByIdentity.get(identityKey)!, depositsByIdentity.get(identityKey) ?? 0, balances[i]),
+  );
+
+  stats.sort((a, b) => b.lastPlayedAt - a.lastPlayedAt);
+  return stats;
 }
 
 export async function getCoinTossStats() {

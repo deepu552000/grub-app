@@ -112,6 +112,22 @@ type RevealedSeedEntry = {
   revealedAt: number;
 };
 
+// Mirrors CoinTossPlayerStats in lib/minigames.ts — one player's aggregated
+// Coin Toss stats (balance, deposits, won/lost, net P&L). Only ever includes
+// identities that have placed at least one flip.
+type CoinTossPlayerStats = {
+  identityKey: string;
+  balance: number;
+  flips: number;
+  wins: number;
+  totalWagered: number;
+  totalWon: number;
+  totalLost: number;
+  totalDeposited: number;
+  netProfitLoss: number;
+  lastPlayedAt: number;
+};
+
 type TxnEntry = {
   fid: number | string; // string for Base App wallet-only users, e.g. "wallet:0xabc..."
   type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin" | "wheel_spin" | "minigame_cashout";
@@ -158,7 +174,7 @@ const TYPE_META: Record<string, { color: string; bg: string; label: string }> = 
   referral_join:    { color: C.amberGlow, bg: "#3b1f6e",  label: "Ref Join"  },
   referral_checkin: { color: C.purple,  bg: "#2e1f5e",   label: "Ref Check" },
   wheel_spin:       { color: "#e879f9", bg: "#4a1d5e",   label: "Spin Wheel" },
-  minigame_cashout: { color: "#dc2626", bg: "#450a0a",   label: "Coin Toss Cash-out" },
+  minigame_cashout: { color: "#fb7185", bg: "#4c0519",   label: "Coin Toss Cash-out" },
   minigame_deposit: { color: "#22d3ee", bg: "#083344",   label: "Minigame Deposit" },
   raffle_ticket:    { color: "#fbbf24", bg: "#451a03",   label: "Raffle Ticket" },
 };
@@ -2629,6 +2645,45 @@ function AdminDashboardInner() {
                 </table>
               </div>
             </div>
+
+            {/* ── Player Stats — only identities that have actually flipped;
+                a manual credit alone or a plain balance with zero plays
+                doesn't earn a row here ── */}
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1rem" }}>
+              <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: T.creamMute, borderBottom: `1px solid ${T.border}` }}>
+                Player Stats — {(minigamesAdmin?.playerStats ?? []).length} players
+              </div>
+              <div style={{ maxHeight: 360, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {["Identity", "Balance", "Deposited", "Won", "Lost", "Net P/L", "Flips", "Last Played"].map((h, i) => (
+                        <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, position: "sticky", top: 0 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(minigamesAdmin?.playerStats ?? []).length === 0 ? (
+                      <tr><td colSpan={8} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No one has played Coin Toss yet.</td></tr>
+                    ) : (minigamesAdmin.playerStats as CoinTossPlayerStats[]).map((p) => (
+                      <tr key={p.identityKey} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
+                        <td style={{ padding: "9px 14px", fontFamily: "monospace" }}>{p.identityKey}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 700, color: T.cream }}>{p.balance.toFixed(1)}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{p.totalDeposited.toFixed(1)}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: C.green }}>{p.totalWon.toFixed(1)}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: C.red }}>{p.totalLost.toFixed(1)}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 700, color: p.netProfitLoss >= 0 ? C.green : C.red }}>
+                          {p.netProfitLoss >= 0 ? "+" : ""}{p.netProfitLoss.toFixed(1)}
+                        </td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{p.flips} ({p.wins}W)</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute, whiteSpace: "nowrap" }}>{timeAgo(p.lastPlayedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: "1rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>🔒 Provably Fair — Active Seed</div>
@@ -3488,6 +3543,46 @@ function AdminDashboardInner() {
                       <Btn onClick={() => runAction("grant_credit", { creditType: "streakSave", amount: 1 })} variant="default">+1 Streak Save</Btn>
                       <Btn onClick={() => runAction("revoke_credit", { creditType: "streakSave", amount: 1 })} variant="red">−1 Streak Save</Btn>
                     </div>
+                  </div>
+
+                  {/* Coin Toss — internal balance always shown (it's just
+                      their current in-game number); the deposited/won/lost/
+                      net breakdown only renders once they've actually
+                      placed a flip, same "played only" rule the Games tab
+                      Player Stats table follows. */}
+                  <div style={{ background: T.surfaceAlt, borderRadius: 10, padding: "14px" }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.creamDim, margin: "0 0 12px" }}>🪙 Coin Toss</p>
+                    <div style={{ display: "flex", gap: 16, marginBottom: controlState.minigames?.coinToss ? 12 : 0 }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: T.creamMute, marginBottom: 1 }}>Balance</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: T.cream }}>{(controlState.minigames?.coinTossBalance ?? 0).toFixed(1)} DEGEN</div>
+                      </div>
+                    </div>
+                    {controlState.minigames?.coinToss && (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 10 }}>
+                        {[
+                          ["Deposited", controlState.minigames.coinToss.totalDeposited, T.cream],
+                          ["Won", controlState.minigames.coinToss.totalWon, C.green],
+                          ["Lost", controlState.minigames.coinToss.totalLost, C.red],
+                          [
+                            "Net P/L",
+                            controlState.minigames.coinToss.netProfitLoss,
+                            controlState.minigames.coinToss.netProfitLoss >= 0 ? C.green : C.red,
+                          ],
+                        ].map(([label, value, color]: any) => (
+                          <div key={label}>
+                            <div style={{ fontSize: 10, color: T.creamMute, marginBottom: 1 }}>{label}</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color }}>
+                              {label === "Net P/L" && value >= 0 ? "+" : ""}{Number(value).toFixed(1)}
+                            </div>
+                          </div>
+                        ))}
+                        <div>
+                          <div style={{ fontSize: 10, color: T.creamMute, marginBottom: 1 }}>Flips</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: T.cream }}>{controlState.minigames.coinToss.flips} ({controlState.minigames.coinToss.wins}W)</div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Referral — split into two clearly separate actions */}

@@ -125,7 +125,6 @@ export async function GET(req: NextRequest) {
             flips: coinToss.flips,
             wins: coinToss.wins,
             totalWagered: coinToss.totalWagered,
-            betOnWins: coinToss.betOnWins,
             totalWon: coinToss.totalWon,
             totalLost: coinToss.totalLost,
             totalDeposited: coinToss.totalDeposited,

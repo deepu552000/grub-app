@@ -121,6 +121,7 @@ type CoinTossPlayerStats = {
   flips: number;
   wins: number;
   totalWagered: number;
+  betOnWins: number;
   totalWon: number;
   totalLost: number;
   totalDeposited: number;
@@ -2657,19 +2658,21 @@ function AdminDashboardInner() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr>
-                      {["Identity", "Balance", "Deposited", "Won", "Lost", "Net P/L", "Flips", "Last Played"].map((h, i) => (
+                      {["Identity", "Balance", "Deposited", "Total Wagered", "Bet on Wins", "Won", "Lost", "Net P/L", "Flips", "Last Played"].map((h, i) => (
                         <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, position: "sticky", top: 0 }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {(minigamesAdmin?.playerStats ?? []).length === 0 ? (
-                      <tr><td colSpan={8} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No one has played Coin Toss yet.</td></tr>
+                      <tr><td colSpan={10} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No one has played Coin Toss yet.</td></tr>
                     ) : (minigamesAdmin.playerStats as CoinTossPlayerStats[]).map((p) => (
                       <tr key={p.identityKey} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
                         <td style={{ padding: "9px 14px", fontFamily: "monospace" }}>{p.identityKey}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 700, color: T.cream }}>{p.balance.toFixed(1)}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{p.totalDeposited.toFixed(1)}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{p.totalWagered.toFixed(1)}</td>
+                        <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{p.betOnWins.toFixed(1)}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", color: C.green }}>{p.totalWon.toFixed(1)}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", color: C.red }}>{p.totalLost.toFixed(1)}</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 700, color: p.netProfitLoss >= 0 ? C.green : C.red }}>
@@ -3562,6 +3565,8 @@ function AdminDashboardInner() {
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 10 }}>
                         {[
                           ["Deposited", controlState.minigames.coinToss.totalDeposited, T.cream],
+                          ["Total Wagered", controlState.minigames.coinToss.totalWagered, T.cream],
+                          ["Bet on Wins", controlState.minigames.coinToss.betOnWins, T.cream],
                           ["Won", controlState.minigames.coinToss.totalWon, C.green],
                           ["Lost", controlState.minigames.coinToss.totalLost, C.red],
                           [
