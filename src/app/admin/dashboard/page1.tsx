@@ -897,24 +897,6 @@ function AdminDashboardInner() {
     }
   }, [authedPost, addToast, loadMinigamesAdmin]);
 
-  const purgeMinigamesFlipHistory = useCallback(async (identityKey: string) => {
-    if (!window.confirm(`Clear Coin Toss WIN/LOSS FLIP HISTORY for ${identityKey}?\n\nThis removes their flip records, totals, and Player Stats row. Their balance, deposits, cash-outs, and credit history are NOT touched. This can't be undone.`)) return;
-    setRaffleActionLoading(`minigames_purge_${identityKey}`);
-    try {
-      const res = await authedPost("/api/admin/minigames", { action: "purge_cointoss_flip_history", identityKey });
-      if (res?.ok) {
-        addToast(`✓ Cleared ${res.flipsRemoved} flip(s) for ${identityKey}.`, "success");
-        loadMinigamesAdmin();
-      } else {
-        addToast(`✕ ${res?.reason ?? "Purge failed"}`, "error");
-      }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Purge failed"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadMinigamesAdmin]);
-
   const toggleMinigamesEnabled = useCallback(async () => {
     setRaffleActionLoading("minigames_toggle");
     try {
@@ -2704,14 +2686,14 @@ function AdminDashboardInner() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr>
-                      {["Identity", "Balance", "Deposited", "Total Wagered", "Bet on Wins", "Won", "Lost", "Net P/L", "Flips", "Last Played", "Actions"].map((h, i) => (
+                      {["Identity", "Balance", "Deposited", "Total Wagered", "Bet on Wins", "Won", "Lost", "Net P/L", "Flips", "Last Played"].map((h, i) => (
                         <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, position: "sticky", top: 0 }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {(minigamesAdmin?.playerStats ?? []).length === 0 ? (
-                      <tr><td colSpan={11} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No one has played Coin Toss yet.</td></tr>
+                      <tr><td colSpan={10} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No one has played Coin Toss yet.</td></tr>
                     ) : (minigamesAdmin.playerStats as CoinTossPlayerStats[]).map((p) => (
                       <tr key={p.identityKey} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
                         <td style={{ padding: "9px 14px", fontFamily: "monospace" }}>{p.identityKey}</td>
@@ -2726,16 +2708,6 @@ function AdminDashboardInner() {
                         </td>
                         <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute }}>{p.flips} ({p.wins}W)</td>
                         <td style={{ padding: "9px 14px", textAlign: "right", color: T.textMute, whiteSpace: "nowrap" }}>{timeAgo(p.lastPlayedAt)}</td>
-                        <td style={{ padding: "9px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
-                          <button
-                            onClick={() => purgeMinigamesFlipHistory(p.identityKey)}
-                            disabled={raffleActionLoading === `minigames_purge_${p.identityKey}`}
-                            title="Clears this identity's win/loss flip history only — balance, deposits, cash-outs, and credit history are untouched."
-                            style={{ background: "transparent", border: `1px solid ${C.red}`, color: C.red, borderRadius: 6, padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
-                          >
-                            {raffleActionLoading === `minigames_purge_${p.identityKey}` ? "Clearing…" : "🗑 Clear Flips"}
-                          </button>
-                        </td>
                       </tr>
                     ))}
                   </tbody>

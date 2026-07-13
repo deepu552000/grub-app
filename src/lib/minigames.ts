@@ -554,6 +554,70 @@ async function recordFlip(identityKey: string, flip: CoinTossFlip) {
   ]);
 }
 
+/**
+ * Clears just the WIN/LOSS FLIP HISTORY for one identity — their shared-log
+ * flip entries, their per-identity flip log, their permanent totals
+ * (flips/wins/totalWagered/betOnWins/totalWon/totalLost), this identity's
+ * contribution to the house-wide totals, and their entry in the identity
+ * index (so they drop out of the Player Stats table entirely once they
+ * have zero flips, same "played only" rule that table already follows).
+ *
+ * Deliberately does NOT touch: internal balance, deposits, cash-outs,
+ * manual credit history, or client seed — those are real actions/money
+ * movements, not fabricated bet outcomes, and should survive a test-data
+ * cleanup like this untouched. Use this for test/dev identities whose
+ * flip win/loss numbers were never meant to count.
+ *
+ * Does not adjust the rolling-24h house P&L buckets — those age out within
+ * 24h on their own, so this is only meaningful for flips still inside that
+ * window. If you're clearing flips from the last 24h, the "last 24h" card
+ * on the dashboard will look slightly off until that window rolls past
+ * them naturally.
+ */
+export async function purgeCoinTossFlipHistory(identityKey: string): Promise<{ flipsRemoved: number }> {
+  const [globalFlips, myFlips, houseTotals] = await Promise.all([
+    kv.get<CoinTossFlip[]>(FLIPS_KEY),
+    kv.get<CoinTossFlip[]>(identityFlipsKey(identityKey)),
+    kv.get<CoinTossHouseTotals>(HOUSE_TOTALS_KEY),
+  ]);
+
+  // Union of both stores (by flip id) so the house-totals subtraction is
+  // correct even if the two logs have drifted apart for any reason.
+  const removed = new Map<string, CoinTossFlip>();
+  for (const f of globalFlips ?? []) if (f.identityKey === identityKey) removed.set(f.id, f);
+  for (const f of myFlips ?? []) if (f.identityKey === identityKey) removed.set(f.id, f);
+  const removedFlips = [...removed.values()];
+
+  const remainingGlobal = (globalFlips ?? []).filter((f) => f.identityKey !== identityKey);
+
+  const ops: Promise<any>[] = [
+    kv.set(FLIPS_KEY, remainingGlobal),
+    kv.del(identityFlipsKey(identityKey)),
+    kv.del(totalsKey(identityKey)),
+  ];
+
+  const list = (await kv.get<string[]>(IDENTITIES_KEY)) ?? [];
+  if (list.includes(identityKey)) {
+    ops.push(kv.set(IDENTITIES_KEY, list.filter((id) => id !== identityKey)));
+  }
+
+  if (houseTotals && removedFlips.length > 0) {
+    const wins = removedFlips.filter((f) => f.won).length;
+    const totalWagered = removedFlips.reduce((sum, f) => sum + f.betDegen, 0);
+    const totalPaidOut = removedFlips.reduce((sum, f) => sum + f.payoutDegen, 0);
+    const adjusted: CoinTossHouseTotals = {
+      flips: Math.max(0, houseTotals.flips - removedFlips.length),
+      wins: Math.max(0, houseTotals.wins - wins),
+      totalWagered: Math.max(0, houseTotals.totalWagered - totalWagered),
+      totalPaidOut: Math.max(0, houseTotals.totalPaidOut - totalPaidOut),
+    };
+    ops.push(kv.set(HOUSE_TOTALS_KEY, adjusted));
+  }
+
+  await Promise.all(ops);
+  return { flipsRemoved: removedFlips.length };
+}
+
 function hourBucketKey(ts: number) {
   const hour = Math.floor(ts / (60 * 60 * 1000));
   return `grub:minigames:cointoss:pnl:${hour}`;
