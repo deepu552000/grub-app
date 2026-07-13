@@ -548,9 +548,7 @@ function AdminDashboardInner() {
   const [showSeedHistory, setShowSeedHistory] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [cashoutSearch, setCashoutSearch] = useState("");
-  const [cashoutRowLimit, setCashoutRowLimit] = useState(25);
   const [flipsSearch, setFlipsSearch] = useState("");
-  const [flipsRowLimit, setFlipsRowLimit] = useState(25);
   const [creditFid, setCreditFid] = useState("");
   const [creditWallet, setCreditWallet] = useState("");
   const [creditAmount, setCreditAmount] = useState("");
@@ -2557,14 +2555,16 @@ function AdminDashboardInner() {
                     onChange={(e) => setCashoutSearch(e.target.value)}
                     style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream, minWidth: 180 }}
                   />
-                  <select
-                    value={cashoutRowLimit}
-                    onChange={(e) => setCashoutRowLimit(Number(e.target.value))}
-                    style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream }}
-                  >
-                    {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n} rows</option>)}
-                    <option value={999999}>All</option>
-                  </select>
+                  <span style={{ fontSize: 11, color: T.textMute, whiteSpace: "nowrap" }}>
+                    {(() => {
+                      const q = cashoutSearch.trim().toLowerCase();
+                      const all = minigamesAdmin?.recentCashouts ?? [];
+                      const filteredCount = all.filter((c: any) =>
+                        !q || c.identityKey?.toLowerCase().includes(q) || c.wallet?.toLowerCase().includes(q)
+                      ).length;
+                      return `${filteredCount} of ${all.length} rows`;
+                    })()}
+                  </span>
                 </div>
               </div>
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
@@ -2579,10 +2579,9 @@ function AdminDashboardInner() {
                   <tbody>
                     {(() => {
                       const q = cashoutSearch.trim().toLowerCase();
-                      const filtered = (minigamesAdmin?.recentCashouts ?? []).filter((c: any) =>
+                      const rows = (minigamesAdmin?.recentCashouts ?? []).filter((c: any) =>
                         !q || c.identityKey?.toLowerCase().includes(q) || c.wallet?.toLowerCase().includes(q)
                       );
-                      const rows = filtered.slice(0, cashoutRowLimit);
                       if (rows.length === 0) {
                         return <tr><td colSpan={5} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>{q ? "No matching cash-outs." : "No cash-outs yet."}</td></tr>;
                       }
@@ -2813,14 +2812,16 @@ function AdminDashboardInner() {
                     onChange={(e) => setFlipsSearch(e.target.value)}
                     style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream, minWidth: 180 }}
                   />
-                  <select
-                    value={flipsRowLimit}
-                    onChange={(e) => setFlipsRowLimit(Number(e.target.value))}
-                    style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream }}
-                  >
-                    {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n} rows</option>)}
-                    <option value={999999}>All</option>
-                  </select>
+                  <span style={{ fontSize: 11, color: T.textMute, whiteSpace: "nowrap" }}>
+                    {(() => {
+                      const q = flipsSearch.trim().toLowerCase();
+                      const all = minigamesAdmin?.recentFlips ?? [];
+                      const filteredCount = all.filter((f: any) =>
+                        !q || f.identityKey?.toLowerCase().includes(q)
+                      ).length;
+                      return `${filteredCount} of ${all.length} rows`;
+                    })()}
+                  </span>
                 </div>
               </div>
               <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
@@ -2835,10 +2836,9 @@ function AdminDashboardInner() {
                   <tbody>
                     {(() => {
                       const q = flipsSearch.trim().toLowerCase();
-                      const filtered = (minigamesAdmin?.recentFlips ?? []).filter((f: any) =>
+                      const rows = (minigamesAdmin?.recentFlips ?? []).filter((f: any) =>
                         !q || f.identityKey?.toLowerCase().includes(q)
                       );
-                      const rows = filtered.slice(0, flipsRowLimit);
                       if (rows.length === 0) {
                         return <tr><td colSpan={8} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>{q ? "No matching flips." : "No flips yet."}</td></tr>;
                       }
