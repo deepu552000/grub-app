@@ -23,7 +23,6 @@ import { getAuth } from "@clerk/nextjs/server";
 import { registerReferral, registerReferralBase } from "@/lib/referral";
 import { grantCredit, revokeCredit, getCredits } from "@/lib/grub-credits";
 import { petKey } from "@/lib/pet-key";
-import { getBalance, getCoinTossStatsForIdentity } from "@/lib/minigames";
 
 const VALID_ACCESSORY_IDS = new Set(ACCESSORIES.map((a) => a.id));
 
@@ -81,21 +80,6 @@ export async function GET(req: NextRequest) {
   // a mirror and can lag by design (see lib/grub-credits.ts).
   const credits = await getCredits(petKey(fid)!);
 
-  // Coin Toss internal balance + played stats for this same identity — the
-  // identityKey minigames.ts keys everything under is exactly this fid
-  // string (a numeric FID, or "wallet:0x..." for Base App users, same
-  // convention already used everywhere else on this page). Balance is
-  // shown regardless of play history (it's just their current wallet-in-
-  // game number); the deeper won/lost/net figures only exist once
-  // getCoinTossStatsForIdentity finds at least one flip, so `coinToss` is
-  // null for a user who's never played — the dashboard hides that block
-  // in that case instead of showing an all-zero table.
-  const minigamesKey = petKey(fid)!;
-  const [coinTossBalance, coinToss] = await Promise.all([
-    getBalance(minigamesKey),
-    getCoinTossStatsForIdentity(minigamesKey),
-  ]);
-
   return NextResponse.json({
     ok: true,
     fid,
@@ -115,22 +99,6 @@ export async function GET(req: NextRequest) {
     referral: {
       referredByFid,
       referredUsers,
-    },
-    minigames: {
-      coinTossBalance,
-      // null when this identity has never placed a flip — dashboard should
-      // hide the won/lost/net breakdown in that case, not render zeros.
-      coinToss: coinToss
-        ? {
-            flips: coinToss.flips,
-            wins: coinToss.wins,
-            totalWagered: coinToss.totalWagered,
-            totalWon: coinToss.totalWon,
-            totalLost: coinToss.totalLost,
-            totalDeposited: coinToss.totalDeposited,
-            netProfitLoss: coinToss.netProfitLoss,
-          }
-        : null,
     },
   });
 }
