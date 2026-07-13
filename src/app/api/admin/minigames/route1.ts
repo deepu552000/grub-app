@@ -20,7 +20,7 @@ import {
   setCoinTossConfig,
   getCoinTossStats,
   getAlerts,
-  getPendingCashouts,
+  getRecentCashouts,
   fulfillCashout,
   cancelCashout,
   creditBalance,
@@ -31,6 +31,7 @@ import {
   getActiveSeedSummary,
   getSeedHistory,
   rotateServerSeed,
+  getAllCoinTossPlayerStats,
   type CoinTossConfig,
 } from "@/lib/minigames";
 
@@ -51,11 +52,14 @@ export async function GET(req: NextRequest) {
   if (!(await checkAuth(req))) return unauthorized();
 
   try {
-    const [config, stats, alerts, pendingCashouts, creditHistory, recentFlips, activeSeed, seedHistory] = await Promise.all([
+    const [config, stats, alerts, recentCashouts, creditHistory, recentFlips, activeSeed, seedHistory, playerStats] = await Promise.all([
       getCoinTossConfig(),
       getCoinTossStats(),
       getAlerts(),
-      getPendingCashouts(),
+      // All statuses (pending/fulfilled/cancelled), not just pending — so a
+      // cash-out record stays visible in the dashboard after it's actioned
+      // instead of disappearing the moment it's sent or cancelled.
+      getRecentCashouts(20),
       getCreditHistory(50),
       // Provably-fair data for the admin "Fairness" panel — recentFlips
       // carries the HMAC inputs (serverSeedHash, nonce, clientSeed) each
@@ -66,8 +70,12 @@ export async function GET(req: NextRequest) {
       getRecentFlips(30),
       getActiveSeedSummary(),
       getSeedHistory(20),
+      // Per-player Coin Toss stats (balance, deposits, won/lost, net P&L) —
+      // only ever includes identities that have placed at least one flip.
+      // Feeds the "Player Stats" table in the Games tab's Coin Toss block.
+      getAllCoinTossPlayerStats(),
     ]);
-    return NextResponse.json({ ok: true, config, stats, alerts, pendingCashouts, creditHistory, recentFlips, activeSeed, seedHistory });
+    return NextResponse.json({ ok: true, config, stats, alerts, recentCashouts, creditHistory, recentFlips, activeSeed, seedHistory, playerStats });
   } catch (err: any) {
     console.error("[admin/minigames] GET error:", err);
     return NextResponse.json({ ok: false, reason: err?.message }, { status: 500 });

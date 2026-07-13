@@ -1001,7 +1001,6 @@ export type CoinTossPlayerStats = {
   flips: number;
   wins: number;
   totalWagered: number; // sum of every bet placed
-  betOnWins: number; // sum of betDegen on winning flips only (stake risked on wins, not the payout)
   totalWon: number; // sum of payoutDegen on winning flips (gross return, stake + profit)
   totalLost: number; // sum of betDegen on losing flips (stake forfeited)
   totalDeposited: number; // sum of on-chain DEGEN deposits credited
@@ -1013,7 +1012,6 @@ function buildPlayerStats(identityKey: string, flips: CoinTossFlip[], totalDepos
   const wonFlips = flips.filter((f) => f.won);
   const lostFlips = flips.filter((f) => !f.won);
   const totalWagered = flips.reduce((sum, f) => sum + f.betDegen, 0);
-  const betOnWins = wonFlips.reduce((sum, f) => sum + f.betDegen, 0);
   const totalWon = wonFlips.reduce((sum, f) => sum + f.payoutDegen, 0);
   const totalLost = lostFlips.reduce((sum, f) => sum + f.betDegen, 0);
   return {
@@ -1022,7 +1020,6 @@ function buildPlayerStats(identityKey: string, flips: CoinTossFlip[], totalDepos
     flips: flips.length,
     wins: wonFlips.length,
     totalWagered,
-    betOnWins,
     totalWon,
     totalLost,
     totalDeposited,
