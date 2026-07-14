@@ -549,11 +549,6 @@ function AdminDashboardInner() {
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [cashoutSearch, setCashoutSearch] = useState("");
   const [flipsSearch, setFlipsSearch] = useState("");
-  const [playerHistoryQuery, setPlayerHistoryQuery] = useState("");
-  const [playerHistoryResults, setPlayerHistoryResults] = useState<CoinTossFlipEntry[] | null>(null);
-  const [playerHistoryIdentityKey, setPlayerHistoryIdentityKey] = useState<string | null>(null);
-  const [playerHistoryError, setPlayerHistoryError] = useState<string | null>(null);
-  const [playerHistoryLoading, setPlayerHistoryLoading] = useState(false);
   const [creditFid, setCreditFid] = useState("");
   const [creditWallet, setCreditWallet] = useState("");
   const [creditAmount, setCreditAmount] = useState("");
@@ -922,32 +917,6 @@ function AdminDashboardInner() {
       setRaffleActionLoading(null);
     }
   }, [authedPost, addToast, loadMinigamesAdmin]);
-
-  const lookupPlayerFlipHistory = useCallback(async () => {
-    const raw = playerHistoryQuery.trim();
-    if (!raw) return;
-    setPlayerHistoryLoading(true);
-    setPlayerHistoryError(null);
-    setPlayerHistoryResults(null);
-    setPlayerHistoryIdentityKey(null);
-    try {
-      // Accept either an fid (numeric) or a wallet address in the same box —
-      // mirrors the fid/wallet dual-input pattern used by Manual Credit below.
-      const isNumeric = /^\d+$/.test(raw);
-      const body = isNumeric ? { action: "lookup_flip_history", fid: raw } : { action: "lookup_flip_history", wallet: raw };
-      const res = await authedPost("/api/admin/minigames", body);
-      if (res?.ok) {
-        setPlayerHistoryResults(res.flips ?? []);
-        setPlayerHistoryIdentityKey(res.identityKey ?? null);
-      } else {
-        setPlayerHistoryError(res?.reason ?? "Lookup failed");
-      }
-    } catch (err: any) {
-      setPlayerHistoryError(err?.message ?? "Lookup failed");
-    } finally {
-      setPlayerHistoryLoading(false);
-    }
-  }, [authedPost, playerHistoryQuery]);
 
   const toggleMinigamesEnabled = useCallback(async () => {
     setRaffleActionLoading("minigames_toggle");
@@ -2904,101 +2873,6 @@ function AdminDashboardInner() {
                   </tbody>
                 </table>
               </div>
-            </div>
-
-            {/* ── Player Flip History — on-demand lookup of one player's full
-                per-identity flip log (up to 500, via getFlipsForIdentity),
-                separate from the shared global feed above which is capped
-                at 100 across all players combined ── */}
-            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1rem" }}>
-              <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, borderBottom: `1px solid ${T.border}` }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>Player Flip History</div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <input
-                    placeholder="FID or wallet…"
-                    value={playerHistoryQuery}
-                    onChange={(e) => setPlayerHistoryQuery(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") lookupPlayerFlipHistory(); }}
-                    style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream, minWidth: 180 }}
-                  />
-                  <button
-                    onClick={lookupPlayerFlipHistory}
-                    disabled={playerHistoryLoading || !playerHistoryQuery.trim()}
-                    style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                  >
-                    {playerHistoryLoading ? "Searching…" : "Search"}
-                  </button>
-                  {playerHistoryResults !== null && (
-                    <button
-                      onClick={() => { setPlayerHistoryResults(null); setPlayerHistoryIdentityKey(null); setPlayerHistoryError(null); setPlayerHistoryQuery(""); }}
-                      style={{ background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                    >
-                      ✕ Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {playerHistoryError && (
-                <div style={{ padding: "14px", color: "#dc2626", fontSize: 12 }}>{playerHistoryError}</div>
-              )}
-
-              {playerHistoryResults === null && !playerHistoryError && (
-                <div style={{ padding: "20px 14px", textAlign: "center", color: T.textMute, fontSize: 12 }}>
-                  Enter an FID or wallet above and hit Search to pull that player's full flip history.
-                </div>
-              )}
-
-              {playerHistoryResults !== null && (
-                <>
-                  <div style={{ padding: "8px 14px", fontSize: 11, color: T.textMute, borderBottom: `1px solid ${T.borderSub}` }}>
-                    {playerHistoryIdentityKey} — {playerHistoryResults.length} flip{playerHistoryResults.length === 1 ? "" : "s"}
-                  </div>
-                  <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                      <thead>
-                        <tr>
-                          {["Bet", "Choice → Result", "Outcome", "Nonce", "Client Seed", "Server Seed Hash", "Time"].map((h) => (
-                            <th key={h} style={{ textAlign: "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, whiteSpace: "nowrap" }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {playerHistoryResults.length === 0 ? (
-                          <tr><td colSpan={7} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No flips for this player yet.</td></tr>
-                        ) : (
-                          playerHistoryResults.map((f, i) => (
-                            <tr key={f.id ?? i} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
-                              <td style={{ padding: "8px 14px" }}>{f.betDegen} DEGEN</td>
-                              <td style={{ padding: "8px 14px", textTransform: "capitalize" }}>{f.choice} → {f.result}</td>
-                              <td style={{ padding: "8px 14px", fontWeight: 700, color: f.won ? C.green : C.red }}>
-                                {f.won ? `+${f.payoutDegen.toFixed(2)}` : "Lost"}
-                                {f.won && f.feeTakenDegen > 0 && (
-                                  <span style={{ fontWeight: 400, color: T.textMute }}> ({f.feeTakenDegen.toFixed(2)} fee)</span>
-                                )}
-                              </td>
-                              <td style={{ padding: "8px 14px", color: T.textSub }}>{f.nonce}</td>
-                              <td style={{ padding: "8px 14px", fontFamily: "monospace", color: T.textSub }}>{f.clientSeed}</td>
-                              <td style={{ padding: "8px 14px" }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                  <span style={{ fontFamily: "monospace", color: T.textMute }} title={f.serverSeedHash}>{shortHash(f.serverSeedHash)}</span>
-                                  <button
-                                    onClick={() => copyToClipboard(f.serverSeedHash)}
-                                    style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "1px 5px", fontSize: 9, cursor: "pointer" }}
-                                  >
-                                    {copiedHash === f.serverSeedHash ? "✓" : "Copy"}
-                                  </button>
-                                </div>
-                              </td>
-                              <td style={{ padding: "8px 14px", color: T.textMute, whiteSpace: "nowrap" }}>{timeAgo(f.ts)}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
             </div>
           </>
         )}

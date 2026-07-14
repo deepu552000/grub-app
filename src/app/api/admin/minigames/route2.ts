@@ -28,7 +28,6 @@ import {
   getBalance,
   getCreditHistory,
   getRecentFlips,
-  getFlipsForIdentity,
   getActiveSeedSummary,
   getSeedHistory,
   rotateServerSeed,
@@ -187,20 +186,6 @@ export async function POST(req: NextRequest) {
       }
       const balance = await getBalance(key);
       return NextResponse.json({ ok: true, action, identityKey: key, balance });
-    }
-
-    // ── On-demand lookup of one player's full per-identity flip history
-    // (up to 500, via getFlipsForIdentity) — powers the admin dashboard's
-    // "Player Flip History" search box. Separate from getRecentFlips above,
-    // which is the shared, all-players-combined feed capped at 100 ─────────
-    if (action === "lookup_flip_history") {
-      const { fid, wallet } = body;
-      const key = petKey(fid ?? null, wallet ?? null);
-      if (!key) {
-        return NextResponse.json({ ok: false, reason: "missing fid or wallet" }, { status: 400 });
-      }
-      const flips = await getFlipsForIdentity(key, 500);
-      return NextResponse.json({ ok: true, action, identityKey: key, flips });
     }
 
     // ── Manually rotate the provably-fair server seed — reveals the
