@@ -34,7 +34,7 @@ export type FailedPayout = {
   toFid: number | string;      // fid, or "wallet:0x..." for Base
   toWallet: string;
   amountDegen: number;
-  type: "referral_join" | "referral_checkin";
+  type: "referral_join" | "referral_checkin" | "wheel_degen";
   reason: string;
   ts: number;
   // Optional KV write to apply once the retry succeeds (e.g. marking a
@@ -181,7 +181,7 @@ export async function getWalletFromNeynar(
 export async function logDegenTxn(entry: {
   fid: number | string;
   toFid: number | string;
-  type: "referral_join" | "referral_checkin";
+  type: "referral_join" | "referral_checkin" | "wheel_degen";
   txHash: string;
   amountDegen: number;
   toWallet: string;

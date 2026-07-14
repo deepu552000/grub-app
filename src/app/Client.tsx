@@ -1238,6 +1238,13 @@ function ClientPageInner() {
     const refParam = new URL(window.location.href).searchParams.get("ref");
     if (!refParam || refParam.toLowerCase() === walletAddress.toLowerCase()) return;
 
+    // Base App referrals are wallet-to-wallet only. An FC-style link
+    // (?ref=<fid>, e.g. "202051") opened here is a mismatched link, not a
+    // valid referral — skip before ever calling the API, instead of
+    // sending a bare FID as "referrerWallet" and letting it fail later at
+    // payout time (see registerReferralBase's matching server-side guard).
+    if (!/^0x[a-fA-F0-9]{40}$/.test(refParam.trim())) return;
+
     referralAttemptedRef.current = true;
     fetch("/api/referral/register", {
       method: "POST",
@@ -1411,7 +1418,12 @@ function ClientPageInner() {
           setFid(ctx.user.fid);
           // Check for referral link ?ref=<FID> and register if present
           const refParam = new URL(window.location.href).searchParams.get("ref");
-          if (refParam && String(ctx.user.fid) !== refParam) {
+          // FC referrals are fid-to-fid only. A Base App wallet link
+          // (?ref=0x...) opened here must be rejected before parseInt —
+          // parseInt("0xfafe...") parses the hex digits as a real number
+          // instead of returning NaN, so a plain truthy/NaN check wouldn't
+          // catch a mismatched wallet link. Require pure decimal digits.
+          if (refParam && /^\d+$/.test(refParam) && String(ctx.user.fid) !== refParam) {
             fetch("/api/referral/register", {
               method: "POST",
               headers: { "Content-Type": "application/json" },

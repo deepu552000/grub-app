@@ -25,6 +25,23 @@ const BUILDER_CODE_SUFFIX = Attribution.toDataSuffix({
 
 const FAILED_PAYOUTS_KEY = "failed-payouts";
 
+// Format check only (no checksum, no on-chain existence check) — 0x
+// followed by exactly 40 hex chars. Same pattern as
+// app/api/minigames/cointoss/route.ts's isValidBaseAddress. This is the
+// gate that keeps the two referral identity systems from ever crossing:
+// an FC-style link (?ref=<fid>, e.g. "202051") opened inside Base App
+// used to sail straight into registerReferralBase as if it were a wallet,
+// get written into refbase:/referrerbase: KV as a "wallet", and then blow
+// up at payout time with ethers rejecting "202051" as an invalid address
+// — after the referral relationship was already corrupted in KV. Rejecting
+// here, before any KV write or payout attempt, means a mismatched link
+// (FC link opened in Base App, or vice versa) is just a clean no-op
+// instead of a silent data-corruption bug that only surfaces later as a
+// mystery failed payout.
+function isValidBaseAddress(addr: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(addr.trim());
+}
+
 // A DEGEN payout that failed to send (e.g. treasury wallet ran out of DEGEN,
 // RPC hiccup, bad wallet address, etc). Logged so it can be retried from the
 // dashboard once the underlying issue (usually: refill the treasury) is fixed.
@@ -236,6 +253,18 @@ export async function registerReferral(
   newUserFID: number,
   referrerFID: number
 ): Promise<RegisterReferralResult> {
+  // Symmetric guard to isValidBaseAddress() in registerReferralBase below —
+  // rejects a non-numeric/invalid FID before any KV write, instead of
+  // silently producing a corrupt "ref:NaN" key. FC referrals are fid-to-fid
+  // only. Uses isSafeInteger (not just isFinite) because parseInt("0x...")
+  // parses a wallet address AS HEX rather than returning NaN — e.g.
+  // parseInt("0xfafe8a3a594dcf3dbaf5adca3ba8c00caedf4cd6") silently becomes
+  // ~1.4e48, a finite-but-garbage number that a plain isFinite check would
+  // have let straight through.
+  if (!Number.isSafeInteger(newUserFID) || !Number.isSafeInteger(referrerFID) || newUserFID <= 0 || referrerFID <= 0) {
+    return { ok: false, reason: "invalid fid — FC referral links only work inside the Farcaster app." };
+  }
+
   if (newUserFID === referrerFID) {
     return { ok: false, reason: "self-referral" };
   }
@@ -338,6 +367,20 @@ export async function registerReferralBase(
 ): Promise<RegisterReferralResult> {
   const newUser = newUserWallet.toLowerCase();
   const referrer = referrerWallet.toLowerCase();
+
+  // Reject anything that isn't a real wallet address BEFORE touching KV or
+  // attempting a payout — most commonly an FC-style link (?ref=<fid>, a
+  // bare numeric string like "202051") opened inside Base App. Base App
+  // referrals are wallet-to-wallet only; an FC link opened here is a
+  // mismatched link, not a valid referral, so this is a clean no-op rather
+  // than writing a corrupt "wallet" into refbase:/referrerbase: that can
+  // only ever fail at payout time.
+  if (!isValidBaseAddress(referrer)) {
+    return {
+      ok: false,
+      reason: "referrerWallet is not a valid wallet address — FC referral links only work inside the Farcaster app; Base App referrals are wallet-to-wallet only.",
+    };
+  }
 
   if (newUser === referrer) {
     return { ok: false, reason: "self-referral" };
