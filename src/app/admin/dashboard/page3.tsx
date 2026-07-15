@@ -1461,41 +1461,28 @@ function AdminDashboardInner() {
             style={{
               background: T.surface,
               border: `1px solid ${modal.type === "success" ? C.green + "66" : C.red + "66"}`,
-              borderRadius: 10,
-              padding: "14px 16px",
-              maxWidth: 300,
-              width: "88vw",
+              borderRadius: 14,
+              padding: "28px 32px",
+              maxWidth: 380,
+              width: "90vw",
               boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${modal.type === "success" ? C.green : C.red}22`,
+              textAlign: "center",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <span
-                style={{
-                  flexShrink: 0,
-                  width: 18, height: 18, borderRadius: "50%",
-                  background: modal.type === "success" ? C.green : C.red,
-                  color: modal.type === "success" ? "#001a0d" : "#fff",
-                  fontSize: 11, fontWeight: 900, lineHeight: "18px", textAlign: "center",
-                }}
-              >
-                {modal.type === "success" ? "✓" : "✕"}
-              </span>
-              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4 }}>{modal.msg}</p>
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button
-                onClick={() => setModal(null)}
-                style={{
-                  background: modal.type === "success" ? C.green : C.red,
-                  border: "none", borderRadius: 6,
-                  color: modal.type === "success" ? "#001a0d" : "#fff",
-                  padding: "5px 18px", fontSize: 12, fontWeight: 700,
-                  cursor: "pointer", fontFamily: "inherit",
-                }}
-              >
-                OK
-              </button>
-            </div>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>{modal.type === "success" ? "✅" : "❌"}</div>
+            <p style={{ fontSize: 14, fontWeight: 600, color: T.cream, margin: "0 0 20px", lineHeight: 1.5 }}>{modal.msg}</p>
+            <button
+              onClick={() => setModal(null)}
+              style={{
+                background: modal.type === "success" ? C.green : C.red,
+                border: "none", borderRadius: 8,
+                color: modal.type === "success" ? "#001a0d" : "#fff",
+                padding: "9px 28px", fontSize: 13, fontWeight: 700,
+                cursor: "pointer", fontFamily: "inherit",
+              }}
+            >
+              OK
+            </button>
           </div>
         </div>
       )}
@@ -1515,26 +1502,25 @@ function AdminDashboardInner() {
             style={{
               background: T.surface,
               border: `1px solid ${confirmModal.danger === false ? C.green + "66" : C.red + "66"}`,
-              borderRadius: 10,
-              padding: "14px 16px",
-              maxWidth: 320,
-              width: "88vw",
+              borderRadius: 14,
+              padding: "28px 32px",
+              maxWidth: 420,
+              width: "90vw",
               boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${confirmModal.danger === false ? C.green : C.red}22`,
+              textAlign: "center",
             }}
           >
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 14 }}>
-              <span style={{ flexShrink: 0, fontSize: 15, lineHeight: "18px" }}>{confirmModal.danger === false ? "❓" : "⚠️"}</span>
-              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "pre-line" }}>{confirmModal.msg}</p>
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>{confirmModal.danger === false ? "❓" : "⚠️"}</div>
+            <p style={{ fontSize: 14, fontWeight: 600, color: T.cream, margin: "0 0 22px", lineHeight: 1.5, whiteSpace: "pre-line" }}>{confirmModal.msg}</p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
               <button
                 onClick={() => setConfirmModal(null)}
                 style={{
                   background: "transparent",
                   border: `1px solid ${T.creamDim}77`,
-                  borderRadius: 6,
+                  borderRadius: 8,
                   color: T.cream,
-                  padding: "5px 16px", fontSize: 12, fontWeight: 700,
+                  padding: "9px 22px", fontSize: 13, fontWeight: 700,
                   cursor: "pointer", fontFamily: "inherit",
                 }}
               >
@@ -1548,9 +1534,9 @@ function AdminDashboardInner() {
                 }}
                 style={{
                   background: confirmModal.danger === false ? C.green : C.red,
-                  border: "none", borderRadius: 6,
+                  border: "none", borderRadius: 8,
                   color: confirmModal.danger === false ? "#001a0d" : "#fff",
-                  padding: "5px 16px", fontSize: 12, fontWeight: 700,
+                  padding: "9px 22px", fontSize: 13, fontWeight: 700,
                   cursor: "pointer", fontFamily: "inherit",
                 }}
               >
@@ -1576,17 +1562,16 @@ function AdminDashboardInner() {
             style={{
               background: T.surface,
               border: `1px solid ${C.red}66`,
-              borderRadius: 10,
-              padding: "14px 16px",
-              maxWidth: 320,
-              width: "88vw",
+              borderRadius: 14,
+              padding: "28px 32px",
+              maxWidth: 420,
+              width: "90vw",
               boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${C.red}22`,
+              textAlign: "center",
             }}
           >
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
-              <span style={{ flexShrink: 0, fontSize: 15, lineHeight: "18px" }}>⚠️</span>
-              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "pre-line" }}>{promptModal.msg}</p>
-            </div>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
+            <p style={{ fontSize: 14, fontWeight: 600, color: T.cream, margin: "0 0 14px", lineHeight: 1.5, whiteSpace: "pre-line" }}>{promptModal.msg}</p>
             <input
               autoFocus
               value={promptModal.value}
@@ -1604,20 +1589,20 @@ function AdminDashboardInner() {
               placeholder="Enter a reason…"
               style={{
                 width: "100%", boxSizing: "border-box",
-                background: T.surfaceAlt, border: `1px solid ${T.creamDim}55`, borderRadius: 6,
-                color: T.cream, padding: "7px 10px", fontSize: 12, fontFamily: "inherit",
-                marginBottom: 12, outline: "none",
+                background: T.surfaceAlt, border: `1px solid ${T.creamDim}55`, borderRadius: 8,
+                color: T.cream, padding: "9px 12px", fontSize: 13, fontFamily: "inherit",
+                marginBottom: 20, outline: "none",
               }}
             />
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
               <button
                 onClick={() => setPromptModal(null)}
                 style={{
                   background: "transparent",
                   border: `1px solid ${T.creamDim}77`,
-                  borderRadius: 6,
+                  borderRadius: 8,
                   color: T.cream,
-                  padding: "5px 16px", fontSize: 12, fontWeight: 700,
+                  padding: "9px 22px", fontSize: 13, fontWeight: 700,
                   cursor: "pointer", fontFamily: "inherit",
                 }}
               >
@@ -1632,9 +1617,9 @@ function AdminDashboardInner() {
                 }}
                 style={{
                   background: C.red,
-                  border: "none", borderRadius: 6,
+                  border: "none", borderRadius: 8,
                   color: "#fff",
-                  padding: "5px 16px", fontSize: 12, fontWeight: 700,
+                  padding: "9px 22px", fontSize: 13, fontWeight: 700,
                   cursor: "pointer", fontFamily: "inherit",
                 }}
               >
