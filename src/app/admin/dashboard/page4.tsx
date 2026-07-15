@@ -1462,13 +1462,13 @@ function AdminDashboardInner() {
               background: T.surface,
               border: `1px solid ${modal.type === "success" ? C.green + "66" : C.red + "66"}`,
               borderRadius: 10,
-              padding: "12px 14px",
-              width: "max-content",
-              maxWidth: "88vw",
+              padding: "14px 16px",
+              maxWidth: 300,
+              width: "88vw",
               boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${modal.type === "success" ? C.green : C.red}22`,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
               <span
                 style={{
                   flexShrink: 0,
@@ -1480,9 +1480,9 @@ function AdminDashboardInner() {
               >
                 {modal.type === "success" ? "✓" : "✕"}
               </span>
-              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "nowrap" }}>{modal.msg}</p>
+              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4 }}>{modal.msg}</p>
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-start" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 onClick={() => setModal(null)}
                 style={{
