@@ -505,14 +505,6 @@ function AdminDashboardInner() {
   // keep addToast name so runAction callers don't need changing
   const addToast = showModal;
 
-  // Confirm modal (replaces window.confirm) — set msg + onConfirm, modal
-  // renders Cancel/Confirm buttons and calls onConfirm() only if the admin
-  // clicks Confirm. danger=true renders the Confirm button in red.
-  const [confirmModal, setConfirmModal] = useState<{ msg: string; onConfirm: () => void; danger?: boolean } | null>(null);
-  const askConfirm = useCallback((msg: string, onConfirm: () => void, danger: boolean = true) => {
-    setConfirmModal({ msg, onConfirm, danger });
-  }, []);
-
   // Light theme overrides — Claude's actual palette
   const T = dark ? {
     bg: C.bg, surface: C.surface, surfaceAlt: C.surfaceAlt, border: C.border, borderSub: C.borderSub,
@@ -877,62 +869,59 @@ function AdminDashboardInner() {
     }
   }, [authedPost, addToast, minigamesConfigDraft, loadMinigamesAdmin]);
 
-  const rotateMinigamesSeed = useCallback(() => {
-    askConfirm("Rotate the active provably-fair seed now? The current seed's raw value will be revealed into seed history, and a fresh seed will back all flips from here on.", async () => {
-      setRaffleActionLoading("minigames_rotate_seed");
-      try {
-        const res = await authedPost("/api/admin/minigames", { action: "rotate_seed" });
-        if (res?.ok) {
-          addToast("✓ Seed rotated — previous seed revealed to history.", "success");
-          loadMinigamesAdmin();
-        } else {
-          addToast(`✕ ${res?.reason ?? "Rotate failed"}`, "error");
-        }
-      } catch (err: any) {
-        addToast(`✕ ${err?.message ?? "Rotate failed"}`, "error");
-      } finally {
-        setRaffleActionLoading(null);
+  const rotateMinigamesSeed = useCallback(async () => {
+    if (!window.confirm("Rotate the active provably-fair seed now? The current seed's raw value will be revealed into seed history, and a fresh seed will back all flips from here on.")) return;
+    setRaffleActionLoading("minigames_rotate_seed");
+    try {
+      const res = await authedPost("/api/admin/minigames", { action: "rotate_seed" });
+      if (res?.ok) {
+        addToast("✓ Seed rotated — previous seed revealed to history.", "success");
+        loadMinigamesAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Rotate failed"}`, "error");
       }
-    });
-  }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Rotate failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadMinigamesAdmin]);
 
-  const backfillMinigamesTotals = useCallback(() => {
-    askConfirm("Seed permanent per-player Coin Toss totals from the current flip log? Only needed once, right after this update ships — safe to re-run, but pointless after the first time.", async () => {
-      setRaffleActionLoading("minigames_backfill_totals");
-      try {
-        const res = await authedPost("/api/admin/minigames", { action: "backfill_cointoss_totals" });
-        if (res?.ok) {
-          addToast(`✓ Seeded totals for ${res.identitiesSeeded} player(s) from ${res.flipsProcessed} flip(s).`, "success");
-          loadMinigamesAdmin();
-        } else {
-          addToast(`✕ ${res?.reason ?? "Backfill failed"}`, "error");
-        }
-      } catch (err: any) {
-        addToast(`✕ ${err?.message ?? "Backfill failed"}`, "error");
-      } finally {
-        setRaffleActionLoading(null);
+  const backfillMinigamesTotals = useCallback(async () => {
+    if (!window.confirm("Seed permanent per-player Coin Toss totals from the current flip log? Only needed once, right after this update ships — safe to re-run, but pointless after the first time.")) return;
+    setRaffleActionLoading("minigames_backfill_totals");
+    try {
+      const res = await authedPost("/api/admin/minigames", { action: "backfill_cointoss_totals" });
+      if (res?.ok) {
+        addToast(`✓ Seeded totals for ${res.identitiesSeeded} player(s) from ${res.flipsProcessed} flip(s).`, "success");
+        loadMinigamesAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Backfill failed"}`, "error");
       }
-    }, false);
-  }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Backfill failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadMinigamesAdmin]);
 
-  const purgeMinigamesFlipHistory = useCallback((identityKey: string) => {
-    askConfirm(`Clear Coin Toss WIN/LOSS FLIP HISTORY for ${identityKey}?\n\nThis removes their flip records, totals, and Player Stats row. Their balance, deposits, cash-outs, and credit history are NOT touched. This can't be undone.`, async () => {
-      setRaffleActionLoading(`minigames_purge_${identityKey}`);
-      try {
-        const res = await authedPost("/api/admin/minigames", { action: "purge_cointoss_flip_history", identityKey });
-        if (res?.ok) {
-          addToast(`✓ Cleared ${res.flipsRemoved} flip(s) for ${identityKey}.`, "success");
-          loadMinigamesAdmin();
-        } else {
-          addToast(`✕ ${res?.reason ?? "Purge failed"}`, "error");
-        }
-      } catch (err: any) {
-        addToast(`✕ ${err?.message ?? "Purge failed"}`, "error");
-      } finally {
-        setRaffleActionLoading(null);
+  const purgeMinigamesFlipHistory = useCallback(async (identityKey: string) => {
+    if (!window.confirm(`Clear Coin Toss WIN/LOSS FLIP HISTORY for ${identityKey}?\n\nThis removes their flip records, totals, and Player Stats row. Their balance, deposits, cash-outs, and credit history are NOT touched. This can't be undone.`)) return;
+    setRaffleActionLoading(`minigames_purge_${identityKey}`);
+    try {
+      const res = await authedPost("/api/admin/minigames", { action: "purge_cointoss_flip_history", identityKey });
+      if (res?.ok) {
+        addToast(`✓ Cleared ${res.flipsRemoved} flip(s) for ${identityKey}.`, "success");
+        loadMinigamesAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Purge failed"}`, "error");
       }
-    });
-  }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Purge failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadMinigamesAdmin]);
 
   const lookupPlayerFlipHistory = useCallback(async () => {
     const raw = playerHistoryQuery.trim();
@@ -1071,24 +1060,23 @@ function AdminDashboardInner() {
   // Runs the same reveal→lock→open sequence the Sunday cron does, out of
   // schedule. Safe to click any time — each step is a no-op if there's
   // nothing for it to do.
-  const forceDrawRaffle = useCallback(() => {
-    askConfirm("Force a raffle draw right now? This reveals any round awaiting reveal, locks the current open round, and opens a new one.", async () => {
-      setRaffleActionLoading("force_draw");
-      try {
-        const res = await authedPost("/api/admin/raffle", { action: "force_draw" });
-        if (res?.ok) {
-          addToast("✓ Raffle draw forced.", "success");
-          loadRaffleAdmin();
-        } else {
-          addToast(`✕ ${res?.reason ?? "Force draw failed"}`, "error");
-        }
-      } catch (err: any) {
-        addToast(`✕ ${err?.message ?? "Force draw failed"}`, "error");
-      } finally {
-        setRaffleActionLoading(null);
+  const forceDrawRaffle = useCallback(async () => {
+    if (!window.confirm("Force a raffle draw right now? This reveals any round awaiting reveal, locks the current open round, and opens a new one.")) return;
+    setRaffleActionLoading("force_draw");
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "force_draw" });
+      if (res?.ok) {
+        addToast("✓ Raffle draw forced.", "success");
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Force draw failed"}`, "error");
       }
-    });
-  }, [askConfirm, authedPost, addToast, loadRaffleAdmin]);
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Force draw failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
 
   // Reveals a stuck "awaiting reveal" round WITHOUT locking/opening the
   // currently-open round — safe to click repeatedly while waiting on the
@@ -1138,59 +1126,57 @@ function AdminDashboardInner() {
   // treasury (same env-configured wallet the referral DEGEN payouts use).
   // Idempotent server-side via round.refunds, so a repeated click after a
   // refresh just comes back "already refunded" instead of double-paying.
-  const refundRaffleEntrant = useCallback((roundId: string, identityKey: string, amountMicroUsdc: number) => {
+  const refundRaffleEntrant = useCallback(async (roundId: string, identityKey: string, amountMicroUsdc: number) => {
     const amountUsd = (amountMicroUsdc / 1_000_000).toFixed(2);
-    askConfirm(`Refund $${amountUsd} USDC to ${identityKey}? This sends real money from the treasury.`, async () => {
-      const loadingKey = `refund_${roundId}_${identityKey}`;
-      setRaffleActionLoading(loadingKey);
-      try {
-        const res = await authedPost("/api/admin/raffle", { action: "refund_entrant", roundId, identityKey });
-        if (res?.ok) {
-          addToast(`✓ Refunded $${amountUsd} to ${identityKey} (tx ${String(res.txHash ?? "").slice(0, 10)}…)`, "success");
-          loadRaffleAdmin();
-        } else {
-          addToast(`✕ ${res?.reason ?? "Refund failed"}`, "error");
-        }
-      } catch (err: any) {
-        addToast(`✕ ${err?.message ?? "Refund failed"}`, "error");
-      } finally {
-        setRaffleActionLoading(null);
+    if (!window.confirm(`Refund $${amountUsd} USDC to ${identityKey}? This sends real money from the treasury.`)) return;
+    const loadingKey = `refund_${roundId}_${identityKey}`;
+    setRaffleActionLoading(loadingKey);
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "refund_entrant", roundId, identityKey });
+      if (res?.ok) {
+        addToast(`✓ Refunded $${amountUsd} to ${identityKey} (tx ${String(res.txHash ?? "").slice(0, 10)}…)`, "success");
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Refund failed"}`, "error");
       }
-    });
-  }, [askConfirm, authedPost, addToast, loadRaffleAdmin]);
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Refund failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
 
   // Refunds every entrant of a voided round, one USDC send each. Each
   // entrant refunds independently server-side — a single bad wallet lookup
   // or RPC hiccup doesn't block or roll back the others, so check the
   // partial-failure toast below and retry just the failed ones individually.
-  const refundRaffleAll = useCallback((roundId: string, entrantCount: number) => {
-    askConfirm(`Refund ALL ${entrantCount} entrant(s) in round ${roundId}? This sends real USDC from the treasury — one transaction per entrant.`, async () => {
-      const loadingKey = `refundall_${roundId}`;
-      setRaffleActionLoading(loadingKey);
-      try {
-        const res = await authedPost("/api/admin/raffle", { action: "refund_all", roundId });
-        if (res?.ok) {
-          const results = res.results ?? [];
-          const okCount = results.filter((r: any) => r.ok).length;
-          const failCount = results.length - okCount;
-          addToast(
-            failCount > 0
-              ? `✓ Refunded ${okCount}/${results.length} — ${failCount} failed (see console + failed-refunds log)`
-              : `✓ Refunded all ${okCount} entrant(s).`,
-            failCount > 0 ? "error" : "success",
-          );
-          if (failCount > 0) console.error("[raffle] refund_all partial failures:", results.filter((r: any) => !r.ok));
-          loadRaffleAdmin();
-        } else {
-          addToast(`✕ ${res?.reason ?? "Refund all failed"}`, "error");
-        }
-      } catch (err: any) {
-        addToast(`✕ ${err?.message ?? "Refund all failed"}`, "error");
-      } finally {
-        setRaffleActionLoading(null);
+  const refundRaffleAll = useCallback(async (roundId: string, entrantCount: number) => {
+    if (!window.confirm(`Refund ALL ${entrantCount} entrant(s) in round ${roundId}? This sends real USDC from the treasury — one transaction per entrant.`)) return;
+    const loadingKey = `refundall_${roundId}`;
+    setRaffleActionLoading(loadingKey);
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "refund_all", roundId });
+      if (res?.ok) {
+        const results = res.results ?? [];
+        const okCount = results.filter((r: any) => r.ok).length;
+        const failCount = results.length - okCount;
+        addToast(
+          failCount > 0
+            ? `✓ Refunded ${okCount}/${results.length} — ${failCount} failed (see console + failed-refunds log)`
+            : `✓ Refunded all ${okCount} entrant(s).`,
+          failCount > 0 ? "error" : "success",
+        );
+        if (failCount > 0) console.error("[raffle] refund_all partial failures:", results.filter((r: any) => !r.ok));
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Refund all failed"}`, "error");
       }
-    });
-  }, [askConfirm, authedPost, addToast, loadRaffleAdmin]);
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Refund all failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
 
   // Picks/changes the open round's prize kind. Server-side enforces
   // "only while open" — setRoundPrizeKind() throws once the round locks, so
@@ -1216,25 +1202,24 @@ function AdminDashboardInner() {
   // Sends a round's pending DEGEN prize. System builds and broadcasts the
   // transfer itself (same treasury/sendDegen as referral payouts) — admin
   // only clicks the button, no amount or tx hash entry.
-  const sendDegenPrize = useCallback((roundId: string, amountDegen: number, winnerKey: string) => {
-    askConfirm(`Send ${amountDegen} DEGEN to ${winnerKey}? This sends real tokens from the treasury.`, async () => {
-      const loadingKey = `degenprize_${roundId}`;
-      setRaffleActionLoading(loadingKey);
-      try {
-        const res = await authedPost("/api/admin/raffle", { action: "send_degen_prize", roundId });
-        if (res?.ok) {
-          addToast(`✓ Sent ${amountDegen} DEGEN (tx ${String(res.txHash ?? "").slice(0, 10)}…)`, "success");
-          loadRaffleAdmin();
-        } else {
-          addToast(`✕ ${res?.reason ?? "DEGEN payout failed"}`, "error");
-        }
-      } catch (err: any) {
-        addToast(`✕ ${err?.message ?? "DEGEN payout failed"}`, "error");
-      } finally {
-        setRaffleActionLoading(null);
+  const sendDegenPrize = useCallback(async (roundId: string, amountDegen: number, winnerKey: string) => {
+    if (!window.confirm(`Send ${amountDegen} DEGEN to ${winnerKey}? This sends real tokens from the treasury.`)) return;
+    const loadingKey = `degenprize_${roundId}`;
+    setRaffleActionLoading(loadingKey);
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "send_degen_prize", roundId });
+      if (res?.ok) {
+        addToast(`✓ Sent ${amountDegen} DEGEN (tx ${String(res.txHash ?? "").slice(0, 10)}…)`, "success");
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "DEGEN payout failed"}`, "error");
       }
-    });
-  }, [askConfirm, authedPost, addToast, loadRaffleAdmin]);
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "DEGEN payout failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
 
   // Grants a round's pending accessory prize — admin types/picks the
   // accessory id, writes straight into the winner's closet.
@@ -1474,66 +1459,6 @@ function AdminDashboardInner() {
             >
               OK
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Confirm Modal (replaces window.confirm) ── */}
-      {confirmModal && (
-        <div
-          onClick={() => setConfirmModal(null)}
-          style={{
-            position: "fixed", inset: 0, zIndex: 2100,
-            background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: T.surface,
-              border: `1px solid ${confirmModal.danger === false ? C.green + "66" : C.red + "66"}`,
-              borderRadius: 14,
-              padding: "28px 32px",
-              maxWidth: 420,
-              width: "90vw",
-              boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${confirmModal.danger === false ? C.green : C.red}22`,
-              textAlign: "center",
-            }}
-          >
-            <div style={{ fontSize: 36, marginBottom: 12 }}>{confirmModal.danger === false ? "❓" : "⚠️"}</div>
-            <p style={{ fontSize: 14, fontWeight: 600, color: T.cream, margin: "0 0 22px", lineHeight: 1.5, whiteSpace: "pre-line" }}>{confirmModal.msg}</p>
-            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-              <button
-                onClick={() => setConfirmModal(null)}
-                style={{
-                  background: "transparent",
-                  border: `1px solid ${T.creamDim}77`,
-                  borderRadius: 8,
-                  color: T.cream,
-                  padding: "9px 22px", fontSize: 13, fontWeight: 700,
-                  cursor: "pointer", fontFamily: "inherit",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const fn = confirmModal.onConfirm;
-                  setConfirmModal(null);
-                  fn();
-                }}
-                style={{
-                  background: confirmModal.danger === false ? C.green : C.red,
-                  border: "none", borderRadius: 8,
-                  color: confirmModal.danger === false ? "#001a0d" : "#fff",
-                  padding: "9px 22px", fontSize: 13, fontWeight: 700,
-                  cursor: "pointer", fontFamily: "inherit",
-                }}
-              >
-                Confirm
-              </button>
-            </div>
           </div>
         </div>
       )}
