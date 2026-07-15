@@ -1480,9 +1480,9 @@ function AdminDashboardInner() {
               >
                 {modal.type === "success" ? "✓" : "✕"}
               </span>
-              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "nowrap" }}>{modal.msg}</p>
+              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "nowrap" }}>{modal.msg.replace(/^[✓✕]\s*/, "")}</p>
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-start" }}>
+            <div style={{ display: "flex", justifyContent: "center" }}>
               <button
                 onClick={() => setModal(null)}
                 style={{

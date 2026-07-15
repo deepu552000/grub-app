@@ -513,6 +513,15 @@ function AdminDashboardInner() {
     setConfirmModal({ msg, onConfirm, danger });
   }, []);
 
+  // Prompt modal (replaces window.prompt) — for actions that need a short
+  // text reason before proceeding, e.g. voiding a raffle round. Cancel
+  // resolves like window.prompt's null; Confirm always calls onConfirm,
+  // even with an empty string, and the caller decides the fallback text.
+  const [promptModal, setPromptModal] = useState<{ msg: string; onConfirm: (value: string) => void; value: string } | null>(null);
+  const askPrompt = useCallback((msg: string, onConfirm: (value: string) => void) => {
+    setPromptModal({ msg, onConfirm, value: "" });
+  }, []);
+
   // Light theme overrides — Claude's actual palette
   const T = dark ? {
     bg: C.bg, surface: C.surface, surfaceAlt: C.surfaceAlt, border: C.border, borderSub: C.borderSub,
@@ -1115,24 +1124,24 @@ function AdminDashboardInner() {
 
   // Voids an in-flight round without drawing a winner. Does not auto-refund
   // entrants — same philosophy as the rest of the admin toolkit.
-  const voidRaffleRound = useCallback(async (roundId: string) => {
-    const reason = window.prompt(`Void round ${roundId}? Tickets are NOT auto-refunded. Enter a reason:`);
-    if (reason === null) return;
-    setRaffleActionLoading(`void_${roundId}`);
-    try {
-      const res = await authedPost("/api/admin/raffle", { action: "void_round", roundId, reason: reason || "voided by admin" });
-      if (res?.ok) {
-        addToast(`✓ Round ${roundId} voided.`, "success");
-        loadRaffleAdmin();
-      } else {
-        addToast(`✕ ${res?.reason ?? "Void failed"}`, "error");
+  const voidRaffleRound = useCallback((roundId: string) => {
+    askPrompt(`Void round ${roundId}? Tickets are NOT auto-refunded. Enter a reason:`, async (reason) => {
+      setRaffleActionLoading(`void_${roundId}`);
+      try {
+        const res = await authedPost("/api/admin/raffle", { action: "void_round", roundId, reason: reason || "voided by admin" });
+        if (res?.ok) {
+          addToast(`✓ Round ${roundId} voided.`, "success");
+          loadRaffleAdmin();
+        } else {
+          addToast(`✕ ${res?.reason ?? "Void failed"}`, "error");
+        }
+      } catch (err: any) {
+        addToast(`✕ ${err?.message ?? "Void failed"}`, "error");
+      } finally {
+        setRaffleActionLoading(null);
       }
-    } catch (err: any) {
-      addToast(`✕ ${err?.message ?? "Void failed"}`, "error");
-    } finally {
-      setRaffleActionLoading(null);
-    }
-  }, [authedPost, addToast, loadRaffleAdmin]);
+    });
+  }, [askPrompt, authedPost, addToast, loadRaffleAdmin]);
 
   // Refunds one entrant of a voided round — sends real USDC out of the
   // treasury (same env-configured wallet the referral DEGEN payouts use).
@@ -1452,28 +1461,41 @@ function AdminDashboardInner() {
             style={{
               background: T.surface,
               border: `1px solid ${modal.type === "success" ? C.green + "66" : C.red + "66"}`,
-              borderRadius: 14,
-              padding: "28px 32px",
-              maxWidth: 380,
-              width: "90vw",
+              borderRadius: 10,
+              padding: "12px 14px",
+              width: "max-content",
+              maxWidth: "88vw",
               boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${modal.type === "success" ? C.green : C.red}22`,
-              textAlign: "center",
             }}
           >
-            <div style={{ fontSize: 36, marginBottom: 12 }}>{modal.type === "success" ? "✅" : "❌"}</div>
-            <p style={{ fontSize: 14, fontWeight: 600, color: T.cream, margin: "0 0 20px", lineHeight: 1.5 }}>{modal.msg}</p>
-            <button
-              onClick={() => setModal(null)}
-              style={{
-                background: modal.type === "success" ? C.green : C.red,
-                border: "none", borderRadius: 8,
-                color: modal.type === "success" ? "#001a0d" : "#fff",
-                padding: "9px 28px", fontSize: 13, fontWeight: 700,
-                cursor: "pointer", fontFamily: "inherit",
-              }}
-            >
-              OK
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span
+                style={{
+                  flexShrink: 0,
+                  width: 18, height: 18, borderRadius: "50%",
+                  background: modal.type === "success" ? C.green : C.red,
+                  color: modal.type === "success" ? "#001a0d" : "#fff",
+                  fontSize: 11, fontWeight: 900, lineHeight: "18px", textAlign: "center",
+                }}
+              >
+                {modal.type === "success" ? "✓" : "✕"}
+              </span>
+              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "nowrap" }}>{modal.msg}</p>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-start" }}>
+              <button
+                onClick={() => setModal(null)}
+                style={{
+                  background: modal.type === "success" ? C.green : C.red,
+                  border: "none", borderRadius: 6,
+                  color: modal.type === "success" ? "#001a0d" : "#fff",
+                  padding: "5px 18px", fontSize: 12, fontWeight: 700,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                OK
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1493,25 +1515,26 @@ function AdminDashboardInner() {
             style={{
               background: T.surface,
               border: `1px solid ${confirmModal.danger === false ? C.green + "66" : C.red + "66"}`,
-              borderRadius: 14,
-              padding: "28px 32px",
-              maxWidth: 420,
-              width: "90vw",
+              borderRadius: 10,
+              padding: "14px 16px",
+              maxWidth: 320,
+              width: "88vw",
               boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${confirmModal.danger === false ? C.green : C.red}22`,
-              textAlign: "center",
             }}
           >
-            <div style={{ fontSize: 36, marginBottom: 12 }}>{confirmModal.danger === false ? "❓" : "⚠️"}</div>
-            <p style={{ fontSize: 14, fontWeight: 600, color: T.cream, margin: "0 0 22px", lineHeight: 1.5, whiteSpace: "pre-line" }}>{confirmModal.msg}</p>
-            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 14 }}>
+              <span style={{ flexShrink: 0, fontSize: 15, lineHeight: "18px" }}>{confirmModal.danger === false ? "❓" : "⚠️"}</span>
+              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "pre-line" }}>{confirmModal.msg}</p>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button
                 onClick={() => setConfirmModal(null)}
                 style={{
                   background: "transparent",
                   border: `1px solid ${T.creamDim}77`,
-                  borderRadius: 8,
+                  borderRadius: 6,
                   color: T.cream,
-                  padding: "9px 22px", fontSize: 13, fontWeight: 700,
+                  padding: "5px 16px", fontSize: 12, fontWeight: 700,
                   cursor: "pointer", fontFamily: "inherit",
                 }}
               >
@@ -1525,9 +1548,93 @@ function AdminDashboardInner() {
                 }}
                 style={{
                   background: confirmModal.danger === false ? C.green : C.red,
-                  border: "none", borderRadius: 8,
+                  border: "none", borderRadius: 6,
                   color: confirmModal.danger === false ? "#001a0d" : "#fff",
-                  padding: "9px 22px", fontSize: 13, fontWeight: 700,
+                  padding: "5px 16px", fontSize: 12, fontWeight: 700,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Prompt Modal (replaces window.prompt) ── */}
+      {promptModal && (
+        <div
+          onClick={() => setPromptModal(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 2100,
+            background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: T.surface,
+              border: `1px solid ${C.red}66`,
+              borderRadius: 10,
+              padding: "14px 16px",
+              maxWidth: 320,
+              width: "88vw",
+              boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${C.red}22`,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
+              <span style={{ flexShrink: 0, fontSize: 15, lineHeight: "18px" }}>⚠️</span>
+              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "pre-line" }}>{promptModal.msg}</p>
+            </div>
+            <input
+              autoFocus
+              value={promptModal.value}
+              onChange={(e) => setPromptModal((m) => (m ? { ...m, value: e.target.value } : m))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const fn = promptModal.onConfirm;
+                  const val = promptModal.value;
+                  setPromptModal(null);
+                  fn(val);
+                } else if (e.key === "Escape") {
+                  setPromptModal(null);
+                }
+              }}
+              placeholder="Enter a reason…"
+              style={{
+                width: "100%", boxSizing: "border-box",
+                background: T.surfaceAlt, border: `1px solid ${T.creamDim}55`, borderRadius: 6,
+                color: T.cream, padding: "7px 10px", fontSize: 12, fontFamily: "inherit",
+                marginBottom: 12, outline: "none",
+              }}
+            />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setPromptModal(null)}
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${T.creamDim}77`,
+                  borderRadius: 6,
+                  color: T.cream,
+                  padding: "5px 16px", fontSize: 12, fontWeight: 700,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const fn = promptModal.onConfirm;
+                  const val = promptModal.value;
+                  setPromptModal(null);
+                  fn(val);
+                }}
+                style={{
+                  background: C.red,
+                  border: "none", borderRadius: 6,
+                  color: "#fff",
+                  padding: "5px 16px", fontSize: 12, fontWeight: 700,
                   cursor: "pointer", fontFamily: "inherit",
                 }}
               >
