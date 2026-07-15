@@ -513,15 +513,6 @@ function AdminDashboardInner() {
     setConfirmModal({ msg, onConfirm, danger });
   }, []);
 
-  // Prompt modal (replaces window.prompt) — for actions that need a short
-  // text reason before proceeding, e.g. voiding a raffle round. Cancel
-  // resolves like window.prompt's null; Confirm always calls onConfirm,
-  // even with an empty string, and the caller decides the fallback text.
-  const [promptModal, setPromptModal] = useState<{ msg: string; onConfirm: (value: string) => void; value: string } | null>(null);
-  const askPrompt = useCallback((msg: string, onConfirm: (value: string) => void) => {
-    setPromptModal({ msg, onConfirm, value: "" });
-  }, []);
-
   // Light theme overrides — Claude's actual palette
   const T = dark ? {
     bg: C.bg, surface: C.surface, surfaceAlt: C.surfaceAlt, border: C.border, borderSub: C.borderSub,
@@ -1124,24 +1115,24 @@ function AdminDashboardInner() {
 
   // Voids an in-flight round without drawing a winner. Does not auto-refund
   // entrants — same philosophy as the rest of the admin toolkit.
-  const voidRaffleRound = useCallback((roundId: string) => {
-    askPrompt(`Void round ${roundId}? Tickets are NOT auto-refunded. Enter a reason:`, async (reason) => {
-      setRaffleActionLoading(`void_${roundId}`);
-      try {
-        const res = await authedPost("/api/admin/raffle", { action: "void_round", roundId, reason: reason || "voided by admin" });
-        if (res?.ok) {
-          addToast(`✓ Round ${roundId} voided.`, "success");
-          loadRaffleAdmin();
-        } else {
-          addToast(`✕ ${res?.reason ?? "Void failed"}`, "error");
-        }
-      } catch (err: any) {
-        addToast(`✕ ${err?.message ?? "Void failed"}`, "error");
-      } finally {
-        setRaffleActionLoading(null);
+  const voidRaffleRound = useCallback(async (roundId: string) => {
+    const reason = window.prompt(`Void round ${roundId}? Tickets are NOT auto-refunded. Enter a reason:`);
+    if (reason === null) return;
+    setRaffleActionLoading(`void_${roundId}`);
+    try {
+      const res = await authedPost("/api/admin/raffle", { action: "void_round", roundId, reason: reason || "voided by admin" });
+      if (res?.ok) {
+        addToast(`✓ Round ${roundId} voided.`, "success");
+        loadRaffleAdmin();
+      } else {
+        addToast(`✕ ${res?.reason ?? "Void failed"}`, "error");
       }
-    });
-  }, [askPrompt, authedPost, addToast, loadRaffleAdmin]);
+    } catch (err: any) {
+      addToast(`✕ ${err?.message ?? "Void failed"}`, "error");
+    } finally {
+      setRaffleActionLoading(null);
+    }
+  }, [authedPost, addToast, loadRaffleAdmin]);
 
   // Refunds one entrant of a voided round — sends real USDC out of the
   // treasury (same env-configured wallet the referral DEGEN payouts use).
@@ -1536,89 +1527,6 @@ function AdminDashboardInner() {
                   background: confirmModal.danger === false ? C.green : C.red,
                   border: "none", borderRadius: 8,
                   color: confirmModal.danger === false ? "#001a0d" : "#fff",
-                  padding: "9px 22px", fontSize: 13, fontWeight: 700,
-                  cursor: "pointer", fontFamily: "inherit",
-                }}
-              >
-                Confirm
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Prompt Modal (replaces window.prompt) ── */}
-      {promptModal && (
-        <div
-          onClick={() => setPromptModal(null)}
-          style={{
-            position: "fixed", inset: 0, zIndex: 2100,
-            background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: T.surface,
-              border: `1px solid ${C.red}66`,
-              borderRadius: 14,
-              padding: "28px 32px",
-              maxWidth: 420,
-              width: "90vw",
-              boxShadow: `0 8px 40px rgba(0,0,0,0.35), 0 0 0 1px ${C.red}22`,
-              textAlign: "center",
-            }}
-          >
-            <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
-            <p style={{ fontSize: 14, fontWeight: 600, color: T.cream, margin: "0 0 14px", lineHeight: 1.5, whiteSpace: "pre-line" }}>{promptModal.msg}</p>
-            <input
-              autoFocus
-              value={promptModal.value}
-              onChange={(e) => setPromptModal((m) => (m ? { ...m, value: e.target.value } : m))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  const fn = promptModal.onConfirm;
-                  const val = promptModal.value;
-                  setPromptModal(null);
-                  fn(val);
-                } else if (e.key === "Escape") {
-                  setPromptModal(null);
-                }
-              }}
-              placeholder="Enter a reason…"
-              style={{
-                width: "100%", boxSizing: "border-box",
-                background: T.surfaceAlt, border: `1px solid ${T.creamDim}55`, borderRadius: 8,
-                color: T.cream, padding: "9px 12px", fontSize: 13, fontFamily: "inherit",
-                marginBottom: 20, outline: "none",
-              }}
-            />
-            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-              <button
-                onClick={() => setPromptModal(null)}
-                style={{
-                  background: "transparent",
-                  border: `1px solid ${T.creamDim}77`,
-                  borderRadius: 8,
-                  color: T.cream,
-                  padding: "9px 22px", fontSize: 13, fontWeight: 700,
-                  cursor: "pointer", fontFamily: "inherit",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const fn = promptModal.onConfirm;
-                  const val = promptModal.value;
-                  setPromptModal(null);
-                  fn(val);
-                }}
-                style={{
-                  background: C.red,
-                  border: "none", borderRadius: 8,
-                  color: "#fff",
                   padding: "9px 22px", fontSize: 13, fontWeight: 700,
                   cursor: "pointer", fontFamily: "inherit",
                 }}
