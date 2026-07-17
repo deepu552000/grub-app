@@ -574,11 +574,10 @@ async function recordFlip(identityKey: string, flip: CoinTossFlip) {
  * cleanup like this untouched. Use this for test/dev identities whose
  * flip win/loss numbers were never meant to count.
  *
- * Does not adjust the rolling-24h house P&L buckets — those age out within
- * 24h on their own, so this is only meaningful for flips still inside that
- * window. If you're clearing flips from the last 24h, the "last 24h" card
- * on the dashboard will look slightly off until that window rolls past
- * them naturally.
+ * Adjusts the rolling-24h house P&L buckets for any of the removed flips
+ * that still fall inside the current 24h window, by exact per-flip amount
+ * (see adjustCoinTossPnlBuckets) — so the "last 24h" card reflects the
+ * purge immediately instead of only once those flips age out on their own.
  */
 export async function purgeCoinTossFlipHistory(identityKey: string): Promise<{ flipsRemoved: number }> {
   const [globalFlips, myFlips, houseTotals] = await Promise.all([
@@ -600,6 +599,7 @@ export async function purgeCoinTossFlipHistory(identityKey: string): Promise<{ f
     kv.set(FLIPS_KEY, remainingGlobal),
     kv.del(identityFlipsKey(identityKey)),
     kv.del(totalsKey(identityKey)),
+    adjustCoinTossPnlBuckets(removedFlips),
   ];
 
   const list = (await kv.get<string[]>(IDENTITIES_KEY)) ?? [];
@@ -638,6 +638,43 @@ async function recordPnl(ts: number, wagered: number, paidOut: number) {
   return updated;
 }
 
+/**
+ * Precisely subtracts a set of purged flips' wagered/paidOut from whichever
+ * hourly PnL buckets they actually landed in. The buckets only store a
+ * summed {wagered, paidOut} per hour with no per-identity breakdown, so we
+ * can't subtract "this identity's share" in one shot the way house totals
+ * can — instead each flip's own `ts` tells us exactly which bucket to
+ * adjust, so we group by bucket key and subtract the exact removed amount
+ * from each one. Flips already outside the rolling 24h window are skipped:
+ * they're not contributing to the number currently shown, so there's
+ * nothing to adjust and no reason to touch (or resurrect the TTL on) a
+ * bucket that's about to age out anyway.
+ */
+async function adjustCoinTossPnlBuckets(removedFlips: CoinTossFlip[]) {
+  const now = Date.now();
+  const windowMs = 24 * 60 * 60 * 1000;
+  const deltas = new Map<string, { wagered: number; paidOut: number }>();
+  for (const f of removedFlips) {
+    if (now - f.ts >= windowMs) continue;
+    const key = hourBucketKey(f.ts);
+    const d = deltas.get(key) ?? { wagered: 0, paidOut: 0 };
+    d.wagered += f.betDegen;
+    d.paidOut += f.payoutDegen;
+    deltas.set(key, d);
+  }
+  if (deltas.size === 0) return;
+  await Promise.all(
+    [...deltas.entries()].map(async ([key, delta]) => {
+      const existing = (await kv.get<{ wagered: number; paidOut: number }>(key)) ?? { wagered: 0, paidOut: 0 };
+      const adjusted = {
+        wagered: Math.max(0, existing.wagered - delta.wagered),
+        paidOut: Math.max(0, existing.paidOut - delta.paidOut),
+      };
+      await kv.set(key, adjusted, { ex: 60 * 60 * 48 });
+    }),
+  );
+}
+
 /** Sums the last 24 hourly buckets. House net = wagered − paidOut (positive = house is up). */
 export async function getRolling24hPnl(): Promise<{ wagered: number; paidOut: number; houseNet: number }> {
   const now = Date.now();
@@ -651,6 +688,46 @@ export async function getRolling24hPnl(): Promise<{ wagered: number; paidOut: nu
     }
   }
   return { wagered, paidOut, houseNet: wagered - paidOut };
+}
+
+/**
+ * One-off fix-up: rebuilds every hourly PnL bucket in the current 24h
+ * window from scratch, using whatever's currently in the shared FLIPS_KEY
+ * (last 500 flips, global — same source and same cap caveat as
+ * backfillCoinTossTotals above). Use this once to immediately correct a
+ * "House Net (24h)" figure left over from a purge that happened before the
+ * bucket-adjustment fix shipped — going forward, purgeCoinTossFlipHistory
+ * keeps buckets in sync on its own, so this shouldn't be needed
+ * repeatedly. Idempotent: every bucket in the window is fully overwritten
+ * (not added to) each run, so it's safe to re-run any time the number
+ * looks off.
+ */
+export async function recomputeCoinTossPnlBuckets(): Promise<{ bucketsRebuilt: number; flipsProcessed: number }> {
+  const now = Date.now();
+  const windowMs = 24 * 60 * 60 * 1000;
+  const allFlips = (await kv.get<CoinTossFlip[]>(FLIPS_KEY)) ?? [];
+  const inWindow = allFlips.filter((f) => now - f.ts < windowMs);
+
+  const buckets = new Map<string, { wagered: number; paidOut: number }>();
+  for (const f of inWindow) {
+    const key = hourBucketKey(f.ts);
+    const b = buckets.get(key) ?? { wagered: 0, paidOut: 0 };
+    b.wagered += f.betDegen;
+    b.paidOut += f.payoutDegen;
+    buckets.set(key, b);
+  }
+
+  // Rewrite every bucket in the current 24h window, not just the ones with
+  // remaining flips — an hour whose only activity belonged to a purged
+  // identity needs to land at {0,0}, not keep whatever stale value it had.
+  const allBucketKeys: string[] = [];
+  for (let i = 0; i < 24; i++) allBucketKeys.push(hourBucketKey(now - i * 60 * 60 * 1000));
+
+  await Promise.all(
+    allBucketKeys.map((key) => kv.set(key, buckets.get(key) ?? { wagered: 0, paidOut: 0 }, { ex: 60 * 60 * 48 })),
+  );
+
+  return { bucketsRebuilt: allBucketKeys.length, flipsProcessed: inWindow.length };
 }
 
 const ALERTS_KEY = "grub:minigames:cointoss:alerts";
@@ -1662,8 +1739,9 @@ async function recordDiceRoll(identityKey: string, roll: DiceRoll) {
 
 /**
  * Clears just the WIN/LOSS ROLL HISTORY for one identity — mirrors
- * purgeCoinTossFlipHistory exactly. Does NOT touch balance, deposits,
- * cash-outs, manual credit history, or client seed.
+ * purgeCoinTossFlipHistory exactly, including the rolling-24h PnL bucket
+ * adjustment. Does NOT touch balance, deposits, cash-outs, manual credit
+ * history, or client seed.
  */
 export async function purgeDiceRollHistory(identityKey: string): Promise<{ rollsRemoved: number }> {
   const [globalRolls, myRolls, houseTotals] = await Promise.all([
@@ -1683,6 +1761,7 @@ export async function purgeDiceRollHistory(identityKey: string): Promise<{ rolls
     kv.set(DICE_ROLLS_KEY, remainingGlobal),
     kv.del(identityDiceRollsKey(identityKey)),
     kv.del(diceTotalsKey(identityKey)),
+    adjustDicePnlBuckets(removedRolls),
   ];
 
   const list = (await kv.get<string[]>(DICE_IDENTITIES_KEY)) ?? [];
@@ -1722,6 +1801,32 @@ async function recordDicePnl(ts: number, wagered: number, paidOut: number) {
   return updated;
 }
 
+/** Mirrors adjustCoinTossPnlBuckets exactly — see that function for the full explanation. */
+async function adjustDicePnlBuckets(removedRolls: DiceRoll[]) {
+  const now = Date.now();
+  const windowMs = 24 * 60 * 60 * 1000;
+  const deltas = new Map<string, { wagered: number; paidOut: number }>();
+  for (const r of removedRolls) {
+    if (now - r.ts >= windowMs) continue;
+    const key = diceHourBucketKey(r.ts);
+    const d = deltas.get(key) ?? { wagered: 0, paidOut: 0 };
+    d.wagered += r.betDegen;
+    d.paidOut += r.payoutDegen;
+    deltas.set(key, d);
+  }
+  if (deltas.size === 0) return;
+  await Promise.all(
+    [...deltas.entries()].map(async ([key, delta]) => {
+      const existing = (await kv.get<{ wagered: number; paidOut: number }>(key)) ?? { wagered: 0, paidOut: 0 };
+      const adjusted = {
+        wagered: Math.max(0, existing.wagered - delta.wagered),
+        paidOut: Math.max(0, existing.paidOut - delta.paidOut),
+      };
+      await kv.set(key, adjusted, { ex: 60 * 60 * 48 });
+    }),
+  );
+}
+
 export async function getDiceRolling24hPnl(): Promise<{ wagered: number; paidOut: number; houseNet: number }> {
   const now = Date.now();
   let wagered = 0;
@@ -1734,6 +1839,32 @@ export async function getDiceRolling24hPnl(): Promise<{ wagered: number; paidOut
     }
   }
   return { wagered, paidOut, houseNet: wagered - paidOut };
+}
+
+/** Mirrors recomputeCoinTossPnlBuckets exactly — see that function for the full explanation. */
+export async function recomputeDicePnlBuckets(): Promise<{ bucketsRebuilt: number; rollsProcessed: number }> {
+  const now = Date.now();
+  const windowMs = 24 * 60 * 60 * 1000;
+  const allRolls = (await kv.get<DiceRoll[]>(DICE_ROLLS_KEY)) ?? [];
+  const inWindow = allRolls.filter((r) => now - r.ts < windowMs);
+
+  const buckets = new Map<string, { wagered: number; paidOut: number }>();
+  for (const r of inWindow) {
+    const key = diceHourBucketKey(r.ts);
+    const b = buckets.get(key) ?? { wagered: 0, paidOut: 0 };
+    b.wagered += r.betDegen;
+    b.paidOut += r.payoutDegen;
+    buckets.set(key, b);
+  }
+
+  const allBucketKeys: string[] = [];
+  for (let i = 0; i < 24; i++) allBucketKeys.push(diceHourBucketKey(now - i * 60 * 60 * 1000));
+
+  await Promise.all(
+    allBucketKeys.map((key) => kv.set(key, buckets.get(key) ?? { wagered: 0, paidOut: 0 }, { ex: 60 * 60 * 48 })),
+  );
+
+  return { bucketsRebuilt: allBucketKeys.length, rollsProcessed: inWindow.length };
 }
 
 const DICE_ALERTS_KEY = "grub:minigames:dice:alerts";

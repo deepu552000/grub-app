@@ -1003,6 +1003,25 @@ function AdminDashboardInner() {
     }, false);
   }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
 
+  const recomputeCoinTossPnlBuckets = useCallback(() => {
+    askConfirm("Rebuild Coin Toss's rolling 24h PnL buckets from the current flip log? Use this once to fix a \"House Net (24h)\" figure left over from a purge done before the bucket-fix shipped — safe to re-run any time.", async () => {
+      setRaffleActionLoading("minigames_recompute_pnl");
+      try {
+        const res = await authedPost("/api/admin/minigames", { action: "recompute_cointoss_pnl_buckets" });
+        if (res?.ok) {
+          addToast(`✓ Rebuilt ${res.bucketsRebuilt} bucket(s) from ${res.flipsProcessed} flip(s) in the last 24h.`, "success");
+          loadMinigamesAdmin();
+        } else {
+          addToast(`✕ ${res?.reason ?? "Recompute failed"}`, "error");
+        }
+      } catch (err: any) {
+        addToast(`✕ ${err?.message ?? "Recompute failed"}`, "error");
+      } finally {
+        setRaffleActionLoading(null);
+      }
+    }, false);
+  }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
+
   const purgeMinigamesFlipHistory = useCallback((identityKey: string) => {
     askConfirm(`Clear Coin Toss WIN/LOSS FLIP HISTORY for ${identityKey}?\n\nThis removes their flip records, totals, and Player Stats row. Their balance, deposits, cash-outs, and credit history are NOT touched. This can't be undone.`, async () => {
       setRaffleActionLoading(`minigames_purge_${identityKey}`);
@@ -1083,6 +1102,25 @@ function AdminDashboardInner() {
         setRaffleActionLoading(null);
       }
     });
+  }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
+
+  const recomputeDicePnlBuckets = useCallback(() => {
+    askConfirm("Rebuild Dice's rolling 24h PnL buckets from the current roll log? Use this once to fix a \"House Net (24h)\" figure left over from a purge done before the bucket-fix shipped — safe to re-run any time.", async () => {
+      setRaffleActionLoading("dice_recompute_pnl");
+      try {
+        const res = await authedPost("/api/admin/minigames", { action: "recompute_dice_pnl_buckets" });
+        if (res?.ok) {
+          addToast(`✓ Rebuilt ${res.bucketsRebuilt} bucket(s) from ${res.rollsProcessed} roll(s) in the last 24h.`, "success");
+          loadMinigamesAdmin();
+        } else {
+          addToast(`✕ ${res?.reason ?? "Recompute failed"}`, "error");
+        }
+      } catch (err: any) {
+        addToast(`✕ ${err?.message ?? "Recompute failed"}`, "error");
+      } finally {
+        setRaffleActionLoading(null);
+      }
+    }, false);
   }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
 
   const purgeDiceRollHistory = useCallback((identityKey: string) => {
@@ -2902,6 +2940,14 @@ function AdminDashboardInner() {
               <button onClick={loadMinigamesAdmin} style={{ background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                 ↺ Refresh
               </button>
+              <button
+                onClick={recomputeCoinTossPnlBuckets}
+                disabled={raffleActionLoading === "minigames_recompute_pnl"}
+                title="One-off: rebuilds the rolling 24h PnL buckets from the current flip log. Use after a purge done before this fix shipped."
+                style={{ background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              >
+                {raffleActionLoading === "minigames_recompute_pnl" ? "Rebuilding…" : "⟲ Recompute 24h PnL"}
+              </button>
             </div>
 
             <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: "1rem" }}>
@@ -3455,6 +3501,14 @@ function AdminDashboardInner() {
           </button>
           <button onClick={loadMinigamesAdmin} style={{ background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
             ↺ Refresh
+          </button>
+          <button
+            onClick={recomputeDicePnlBuckets}
+            disabled={raffleActionLoading === "dice_recompute_pnl"}
+            title="One-off: rebuilds the rolling 24h PnL buckets from the current roll log. Use after a purge done before this fix shipped."
+            style={{ background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+          >
+            {raffleActionLoading === "dice_recompute_pnl" ? "Rebuilding…" : "⟲ Recompute 24h PnL"}
           </button>
           <button
             onClick={rotateDiceSeed}

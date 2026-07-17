@@ -38,7 +38,6 @@ import {
   getAllCoinTossPlayerStats,
   backfillCoinTossTotals,
   purgeCoinTossFlipHistory,
-  recomputeCoinTossPnlBuckets,
   type CoinTossConfig,
   // ── Dice ──────────────────────────────────────────────────────────────
   getDiceConfig,
@@ -52,7 +51,6 @@ import {
   rotateDiceServerSeed,
   getAllDicePlayerStats,
   purgeDiceRollHistory,
-  recomputeDicePnlBuckets,
   type DiceConfig,
 } from "@/lib/minigames";
 
@@ -325,21 +323,6 @@ export async function POST(req: NextRequest) {
       }
       const result = await purgeDiceRollHistory(identityKey);
       return NextResponse.json({ ok: true, action, identityKey, ...result });
-    }
-
-    // ── One-off fix-up: rebuild Coin Toss's rolling-24h PnL buckets from
-    // scratch. Use after a purge done before the bucket-adjustment fix
-    // shipped, to correct a lingering "House Net (24h)" figure immediately
-    // instead of waiting for it to age out on its own. ─────────────────────
-    if (action === "recompute_cointoss_pnl_buckets") {
-      const result = await recomputeCoinTossPnlBuckets();
-      return NextResponse.json({ ok: true, action, ...result });
-    }
-
-    // ── Same fix-up, for Dice's own bucket set ──────────────────────────────
-    if (action === "recompute_dice_pnl_buckets") {
-      const result = await recomputeDicePnlBuckets();
-      return NextResponse.json({ ok: true, action, ...result });
     }
 
     return NextResponse.json({ ok: false, reason: `unknown action "${action}"` }, { status: 400 });
