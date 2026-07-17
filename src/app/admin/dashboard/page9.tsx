@@ -2887,18 +2887,17 @@ function AdminDashboardInner() {
               <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute, marginBottom: 10 }}>Config</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
                 {[
-                  { key: "minBetDegen", label: "Min bet (DEGEN)", hint: "Smallest bet a player can place per flip." },
-                  { key: "maxBetDegen", label: "Max bet (DEGEN)", hint: "Largest bet a player can place per flip." },
-                  { key: "feePercentOnWin", label: "Fee % on wins", hint: "Cut taken from the profit portion of a win only — e.g. 10 means winner keeps 90% of their profit. Losses are untouched." },
-                  { key: "maxBetPercentOfTreasury", label: "Max bet % of treasury", hint: "Bet is also capped at this % of the live treasury, whichever is lower than Max bet." },
-                  { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)", hint: "Coin Toss auto-pauses if rolling 24h house losses hit this — own bucket, separate from Dice's breaker." },
-                  { key: "maxFlipsPerMinutePerUser", label: "Max flips/min/user", hint: "Rate limit — flips a single player can place per minute." },
-                  { key: "autoCashoutMaxDegen", label: "Auto cash-out max (DEGEN)", hint: "Cash-out requests at or under this amount send immediately. Above it, they queue for manual admin approval." },
-                  { key: "seedRotateAfterFlips", label: "Auto-rotate seed after N flips", hint: "Provably-fair seed auto-rotates (and reveals) once it's backed this many flips." },
+                  { key: "minBetDegen", label: "Min bet (DEGEN)" },
+                  { key: "maxBetDegen", label: "Max bet (DEGEN)" },
+                  { key: "feePercentOnWin", label: "Fee % on wins" },
+                  { key: "maxBetPercentOfTreasury", label: "Max bet % of treasury" },
+                  { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)" },
+                  { key: "maxFlipsPerMinutePerUser", label: "Max flips/min/user" },
+                  { key: "autoCashoutMaxDegen", label: "Auto cash-out max (DEGEN)" },
+                  { key: "seedRotateAfterFlips", label: "Auto-rotate seed after N flips" },
                 ].map((f) => (
-                  <label key={f.key} style={{ fontSize: 11, color: T.creamMute }} title={f.hint}>
+                  <label key={f.key} style={{ fontSize: 11, color: T.creamMute }}>
                     {f.label}
-                    <div style={{ fontSize: 10, fontWeight: 400, color: T.textMute, marginTop: 2, lineHeight: 1.4 }}>{f.hint}</div>
                     <input
                       type="number"
                       value={minigamesConfigDraft[f.key] ?? ""}
@@ -3423,21 +3422,20 @@ function AdminDashboardInner() {
           <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute, marginBottom: 10 }}>Config</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
             {[
-              { key: "minBetDegen", label: "Min bet (DEGEN)", hint: "Smallest bet a player can place per roll." },
-              { key: "maxBetDegen", label: "Max bet (DEGEN)", hint: "Largest bet a player can place per roll." },
-              { key: "maxBetPercentOfTreasury", label: "Max bet % of treasury", hint: "Bet is also capped at this % of the live treasury, whichever is lower than Max bet." },
-              { key: "houseEdgePercent", label: "House edge %", hint: "House's average take per bet, e.g. 2 = house keeps ~2% regardless of target picked." },
-              { key: "minWinChancePercent", label: "Min win chance %", hint: "Lowest win chance a player can pick. Picking low chance = high multiplier — this floor caps that multiplier from going too high." },
-              { key: "maxWinChancePercent", label: "Max win chance %", hint: "Highest win chance a player can pick. Stops near-guaranteed, near-1x payout bets that are pointless to offer." },
-              { key: "maxMultiplier", label: "Max multiplier (x)", hint: "Hard ceiling on payout multiplier no matter what chance is picked — protects the pool from an extreme long-shot bet." },
-              { key: "maxPayoutDegen", label: "Max payout per roll (DEGEN)", hint: "Hard ceiling on payout for a single roll, regardless of bet size × multiplier." },
-              { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)", hint: "Dice auto-pauses if rolling 24h house losses hit this — separate bucket from Coin Toss's breaker." },
-              { key: "maxRollsPerMinutePerUser", label: "Max rolls/min/user", hint: "Rate limit — rolls a single player can place per minute." },
-              { key: "seedRotateAfterRolls", label: "Auto-rotate seed after N rolls", hint: "Provably-fair seed auto-rotates (and reveals) once it's backed this many rolls." },
+              { key: "minBetDegen", label: "Min bet (DEGEN)" },
+              { key: "maxBetDegen", label: "Max bet (DEGEN)" },
+              { key: "maxBetPercentOfTreasury", label: "Max bet % of treasury" },
+              { key: "houseEdgePercent", label: "House edge %" },
+              { key: "minWinChancePercent", label: "Min win chance %" },
+              { key: "maxWinChancePercent", label: "Max win chance %" },
+              { key: "maxMultiplier", label: "Max multiplier (x)" },
+              { key: "maxPayoutDegen", label: "Max payout per roll (DEGEN)" },
+              { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)" },
+              { key: "maxRollsPerMinutePerUser", label: "Max rolls/min/user" },
+              { key: "seedRotateAfterRolls", label: "Auto-rotate seed after N rolls" },
             ].map((f) => (
-              <label key={f.key} style={{ fontSize: 11, color: T.creamMute }} title={f.hint}>
+              <label key={f.key} style={{ fontSize: 11, color: T.creamMute }}>
                 {f.label}
-                <div style={{ fontSize: 10, fontWeight: 400, color: T.textMute, marginTop: 2, lineHeight: 1.4 }}>{f.hint}</div>
                 <input
                   type="number"
                   value={diceConfigDraft[f.key] ?? ""}
