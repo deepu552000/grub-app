@@ -147,6 +147,30 @@ type DicePlayerStats = {
   lastPlayedAt: number;
 };
 
+// Mirrors DiceRoll in lib/minigames.ts — one resolved roll, including the
+// HMAC provably-fair inputs it was resolved against. Own seed/nonce lineage
+// from Coin Toss's CoinTossFlipEntry above — Dice rolls never share a
+// serverSeedHash with a Coin Toss flip, even though both reuse the same
+// per-identity clientSeed. No feeTakenDegen field: unlike Coin Toss, Dice
+// has no separate on-win fee — its house edge is baked into the win-chance
+// → multiplier formula itself.
+type DiceRollEntry = {
+  id: string;
+  identityKey: string;
+  betDegen: number;
+  target: number;
+  direction: "under" | "over";
+  roll: number;
+  won: boolean;
+  winChancePercent: number;
+  multiplier: number;
+  payoutDegen: number;
+  ts: number;
+  serverSeedHash: string;
+  nonce: number;
+  clientSeed: string;
+};
+
 type TxnEntry = {
   fid: number | string; // string for Base App wallet-only users, e.g. "wallet:0xabc..."
   type: "accessory_unlock" | "checkin" | "referral_join" | "referral_checkin" | "wheel_spin" | "minigame_cashout";
@@ -590,6 +614,18 @@ function AdminDashboardInner() {
   const [playerHistoryIdentityKey, setPlayerHistoryIdentityKey] = useState<string | null>(null);
   const [playerHistoryError, setPlayerHistoryError] = useState<string | null>(null);
   const [playerHistoryLoading, setPlayerHistoryLoading] = useState(false);
+
+  // ── Dice Provably Fair / roll-history — own state from Coin Toss's above.
+  // Dice's seed history, recent-rolls search, and per-player lookup are all
+  // backed by their own KV lists (see lib/minigames.ts), so none of this
+  // reuses or overwrites the Coin Toss state block. ─────────────────────────
+  const [showDiceSeedHistory, setShowDiceSeedHistory] = useState(false);
+  const [rollsSearch, setRollsSearch] = useState("");
+  const [playerRollHistoryQuery, setPlayerRollHistoryQuery] = useState("");
+  const [playerRollHistoryResults, setPlayerRollHistoryResults] = useState<DiceRollEntry[] | null>(null);
+  const [playerRollHistoryIdentityKey, setPlayerRollHistoryIdentityKey] = useState<string | null>(null);
+  const [playerRollHistoryError, setPlayerRollHistoryError] = useState<string | null>(null);
+  const [playerRollHistoryLoading, setPlayerRollHistoryLoading] = useState(false);
   const [creditFid, setCreditFid] = useState("");
   const [creditWallet, setCreditWallet] = useState("");
   const [creditAmount, setCreditAmount] = useState("");
@@ -1072,6 +1108,33 @@ function AdminDashboardInner() {
       setPlayerHistoryLoading(false);
     }
   }, [authedPost, playerHistoryQuery]);
+
+  const lookupPlayerRollHistory = useCallback(async () => {
+    const raw = playerRollHistoryQuery.trim();
+    if (!raw) return;
+    setPlayerRollHistoryLoading(true);
+    setPlayerRollHistoryError(null);
+    setPlayerRollHistoryResults(null);
+    setPlayerRollHistoryIdentityKey(null);
+    try {
+      // Same fid-or-wallet dual input as lookupPlayerFlipHistory above, but
+      // hits lookup_dice_history — its own action, its own per-identity
+      // roll list (getDiceRollsForIdentity), not the Coin Toss flip list.
+      const isNumeric = /^\d+$/.test(raw);
+      const body = isNumeric ? { action: "lookup_dice_history", fid: raw } : { action: "lookup_dice_history", wallet: raw };
+      const res = await authedPost("/api/admin/minigames", body);
+      if (res?.ok) {
+        setPlayerRollHistoryResults(res.rolls ?? []);
+        setPlayerRollHistoryIdentityKey(res.identityKey ?? null);
+      } else {
+        setPlayerRollHistoryError(res?.reason ?? "Lookup failed");
+      }
+    } catch (err: any) {
+      setPlayerRollHistoryError(err?.message ?? "Lookup failed");
+    } finally {
+      setPlayerRollHistoryLoading(false);
+    }
+  }, [authedPost, playerRollHistoryQuery]);
 
   const toggleMinigamesEnabled = useCallback(async () => {
     setRaffleActionLoading("minigames_toggle");
@@ -2824,17 +2887,18 @@ function AdminDashboardInner() {
               <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute, marginBottom: 10 }}>Config</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
                 {[
-                  { key: "minBetDegen", label: "Min bet (DEGEN)" },
-                  { key: "maxBetDegen", label: "Max bet (DEGEN)" },
-                  { key: "feePercentOnWin", label: "Fee % on wins" },
-                  { key: "maxBetPercentOfTreasury", label: "Max bet % of treasury" },
-                  { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)" },
-                  { key: "maxFlipsPerMinutePerUser", label: "Max flips/min/user" },
-                  { key: "autoCashoutMaxDegen", label: "Auto cash-out max (DEGEN)" },
-                  { key: "seedRotateAfterFlips", label: "Auto-rotate seed after N flips" },
+                  { key: "minBetDegen", label: "Min bet (DEGEN)", hint: "Smallest bet a player can place per flip." },
+                  { key: "maxBetDegen", label: "Max bet (DEGEN)", hint: "Largest bet a player can place per flip." },
+                  { key: "feePercentOnWin", label: "Fee % on wins", hint: "Cut taken from the profit portion of a win only — e.g. 10 means winner keeps 90% of their profit. Losses are untouched." },
+                  { key: "maxBetPercentOfTreasury", label: "Max bet % of treasury", hint: "Bet is also capped at this % of the live treasury, whichever is lower than Max bet." },
+                  { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)", hint: "Coin Toss auto-pauses if rolling 24h house losses hit this — own bucket, separate from Dice's breaker." },
+                  { key: "maxFlipsPerMinutePerUser", label: "Max flips/min/user", hint: "Rate limit — flips a single player can place per minute." },
+                  { key: "autoCashoutMaxDegen", label: "Auto cash-out max (DEGEN)", hint: "Cash-out requests at or under this amount send immediately. Above it, they queue for manual admin approval." },
+                  { key: "seedRotateAfterFlips", label: "Auto-rotate seed after N flips", hint: "Provably-fair seed auto-rotates (and reveals) once it's backed this many flips." },
                 ].map((f) => (
-                  <label key={f.key} style={{ fontSize: 11, color: T.creamMute }}>
+                  <label key={f.key} style={{ fontSize: 11, color: T.creamMute }} title={f.hint}>
                     {f.label}
+                    <div style={{ fontSize: 10, fontWeight: 400, color: T.textMute, marginTop: 2, lineHeight: 1.4 }}>{f.hint}</div>
                     <input
                       type="number"
                       value={minigamesConfigDraft[f.key] ?? ""}
@@ -2888,8 +2952,8 @@ function AdminDashboardInner() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr>
-                      {["Identity", "Wallet", "Amount", "Requested", "Status"].map((h, i) => (
-                        <th key={h} style={{ textAlign: i >= 2 ? "right" : "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, position: "sticky", top: 0 }}>{h}</th>
+                      {["Identity", "Wallet", "Game", "Amount", "Requested", "Status"].map((h, i) => (
+                        <th key={h} style={{ textAlign: i >= 3 ? "right" : "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, position: "sticky", top: 0 }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -2900,12 +2964,30 @@ function AdminDashboardInner() {
                         !q || c.identityKey?.toLowerCase().includes(q) || c.wallet?.toLowerCase().includes(q)
                       );
                       if (rows.length === 0) {
-                        return <tr><td colSpan={5} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>{q ? "No matching cash-outs." : "No cash-outs yet."}</td></tr>;
+                        return <tr><td colSpan={6} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>{q ? "No matching cash-outs." : "No cash-outs yet."}</td></tr>;
                       }
                       return rows.map((c: any) => (
                       <tr key={c.id} style={{ borderBottom: `1px solid ${T.borderSub}`, opacity: c.status === "cancelled" ? 0.5 : 1 }}>
                         <td style={{ padding: "9px 14px", fontFamily: "monospace" }}>{c.identityKey}</td>
                         <td style={{ padding: "9px 14px", fontFamily: "monospace", fontSize: 11 }}>{c.wallet}</td>
+                        <td style={{ padding: "9px 14px" }}>
+                          {/* sourceGame is a UI breadcrumb — which panel the
+                              player clicked "Cash Out" from, not a real
+                              ledger split (balance is fully shared). Blank
+                              for cash-outs requested before this field
+                              existed. */}
+                          {c.sourceGame ? (
+                            <span style={{
+                              fontSize: 10, fontWeight: 700, borderRadius: 5, padding: "2px 7px",
+                              background: c.sourceGame === "dice" ? "#3730a3" : "#78350f",
+                              color: c.sourceGame === "dice" ? "#c7d2fe" : "#fed7aa",
+                            }}>
+                              {c.sourceGame === "dice" ? "🎲 Dice" : "🪙 Coin Toss"}
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: 10, color: T.textMute }}>—</span>
+                          )}
+                        </td>
                         <td style={{
                           padding: "9px 14px", textAlign: "right", fontWeight: 700,
                           color: c.status === "cancelled" ? T.textMute : "#dc2626",
@@ -3341,20 +3423,21 @@ function AdminDashboardInner() {
           <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute, marginBottom: 10 }}>Config</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
             {[
-              { key: "minBetDegen", label: "Min bet (DEGEN)" },
-              { key: "maxBetDegen", label: "Max bet (DEGEN)" },
-              { key: "maxBetPercentOfTreasury", label: "Max bet % of treasury" },
-              { key: "houseEdgePercent", label: "House edge %" },
-              { key: "minWinChancePercent", label: "Min win chance %" },
-              { key: "maxWinChancePercent", label: "Max win chance %" },
-              { key: "maxMultiplier", label: "Max multiplier (x)" },
-              { key: "maxPayoutDegen", label: "Max payout per roll (DEGEN)" },
-              { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)" },
-              { key: "maxRollsPerMinutePerUser", label: "Max rolls/min/user" },
-              { key: "seedRotateAfterRolls", label: "Auto-rotate seed after N rolls" },
+              { key: "minBetDegen", label: "Min bet (DEGEN)", hint: "Smallest bet a player can place per roll." },
+              { key: "maxBetDegen", label: "Max bet (DEGEN)", hint: "Largest bet a player can place per roll." },
+              { key: "maxBetPercentOfTreasury", label: "Max bet % of treasury", hint: "Bet is also capped at this % of the live treasury, whichever is lower than Max bet." },
+              { key: "houseEdgePercent", label: "House edge %", hint: "House's average take per bet, e.g. 2 = house keeps ~2% regardless of target picked." },
+              { key: "minWinChancePercent", label: "Min win chance %", hint: "Lowest win chance a player can pick. Picking low chance = high multiplier — this floor caps that multiplier from going too high." },
+              { key: "maxWinChancePercent", label: "Max win chance %", hint: "Highest win chance a player can pick. Stops near-guaranteed, near-1x payout bets that are pointless to offer." },
+              { key: "maxMultiplier", label: "Max multiplier (x)", hint: "Hard ceiling on payout multiplier no matter what chance is picked — protects the pool from an extreme long-shot bet." },
+              { key: "maxPayoutDegen", label: "Max payout per roll (DEGEN)", hint: "Hard ceiling on payout for a single roll, regardless of bet size × multiplier." },
+              { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)", hint: "Dice auto-pauses if rolling 24h house losses hit this — separate bucket from Coin Toss's breaker." },
+              { key: "maxRollsPerMinutePerUser", label: "Max rolls/min/user", hint: "Rate limit — rolls a single player can place per minute." },
+              { key: "seedRotateAfterRolls", label: "Auto-rotate seed after N rolls", hint: "Provably-fair seed auto-rotates (and reveals) once it's backed this many rolls." },
             ].map((f) => (
-              <label key={f.key} style={{ fontSize: 11, color: T.creamMute }}>
+              <label key={f.key} style={{ fontSize: 11, color: T.creamMute }} title={f.hint}>
                 {f.label}
+                <div style={{ fontSize: 10, fontWeight: 400, color: T.textMute, marginTop: 2, lineHeight: 1.4 }}>{f.hint}</div>
                 <input
                   type="number"
                   value={diceConfigDraft[f.key] ?? ""}
@@ -3423,6 +3506,286 @@ function AdminDashboardInner() {
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* ── Provably Fair — Active Seed (Dice) — own commitment from Coin
+            Toss's above: separate serverSeed/hash, separate nonce, separate
+            rotation cadence (seedRotateAfterRolls). Only the per-identity
+            clientSeed is shared between the two games. ── */}
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: "1rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>🔒 Provably Fair — Active Seed (Dice)</div>
+            <div style={{ fontSize: 10, color: T.textMute, maxWidth: 480, lineHeight: 1.5 }}>
+              Every roll resolves as HMAC-SHA256(serverSeed, "dice:"+clientSeed+":"+nonce) → 1–100. Only the seed's
+              hash is shown while it's live — the raw seed is revealed once it rotates, at which
+              point anyone can recompute it and confirm every roll below. This seed is independent
+              of Coin Toss's — rotating one never touches the other.
+            </div>
+          </div>
+          {minigamesAdmin?.diceActiveSeed ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 10, color: T.textMute, marginBottom: 3 }}>Server Seed Hash (committed)</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontFamily: "monospace", fontSize: 12, color: T.cream }} title={minigamesAdmin.diceActiveSeed.serverSeedHash}>
+                    {shortHash(minigamesAdmin.diceActiveSeed.serverSeedHash)}
+                  </span>
+                  <button
+                    onClick={() => copyToClipboard(minigamesAdmin.diceActiveSeed.serverSeedHash)}
+                    style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "2px 6px", fontSize: 10, cursor: "pointer" }}
+                  >
+                    {copiedHash === minigamesAdmin.diceActiveSeed.serverSeedHash ? "✓" : "Copy"}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: T.textMute, marginBottom: 3 }}>Rolls Used (nonce)</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: T.cream }}>{minigamesAdmin.diceActiveSeed.rollsUsed}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: T.textMute, marginBottom: 3 }}>Committed</div>
+                <div style={{ fontSize: 13, color: T.textSub }}>{timeAgo(minigamesAdmin.diceActiveSeed.createdAt)}</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: T.textMute }}>No active seed yet — mints on the first roll.</div>
+          )}
+
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={() => setShowDiceSeedHistory((v) => !v)}
+                style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+              >
+                {showDiceSeedHistory ? "▾" : "▸"} Revealed Seed History {(minigamesAdmin?.diceSeedHistory ?? []).length > 0 && `(${minigamesAdmin.diceSeedHistory.length})`}
+              </button>
+              <button
+                onClick={rotateDiceSeed}
+                disabled={raffleActionLoading === "dice_rotate_seed"}
+                style={{ background: "transparent", color: "#7c3aed", border: "1px solid #7c3aed", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+              >
+                {raffleActionLoading === "dice_rotate_seed" ? "Rotating…" : "🔄 Rotate Seed Now"}
+              </button>
+              <span style={{ fontSize: 10, color: T.textMute }}>
+                Auto-rotates every {minigamesAdmin?.diceConfig?.seedRotateAfterRolls ?? "—"} rolls
+              </span>
+            </div>
+            {showDiceSeedHistory && (
+              <div style={{ marginTop: 10, maxHeight: 220, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead>
+                    <tr>
+                      {["Raw Seed (revealed)", "Hash", "Rolls", "Revealed"].map((h) => (
+                        <th key={h} style={{ textAlign: "left", padding: "6px 10px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(minigamesAdmin?.diceSeedHistory ?? []).length === 0 ? (
+                      <tr><td colSpan={4} style={{ padding: "14px", textAlign: "center", color: T.textMute }}>No seeds have rotated out yet.</td></tr>
+                    ) : (minigamesAdmin.diceSeedHistory as RevealedSeedEntry[]).map((s) => (
+                      <tr key={s.serverSeedHash} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
+                        <td style={{ padding: "7px 10px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontFamily: "monospace" }} title={s.serverSeed}>{shortHash(s.serverSeed)}</span>
+                            <button
+                              onClick={() => copyToClipboard(s.serverSeed)}
+                              style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "2px 6px", fontSize: 10, cursor: "pointer" }}
+                            >
+                              {copiedHash === s.serverSeed ? "✓" : "Copy"}
+                            </button>
+                          </div>
+                        </td>
+                        <td style={{ padding: "7px 10px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontFamily: "monospace", color: T.textMute }} title={s.serverSeedHash}>{shortHash(s.serverSeedHash)}</span>
+                            <button
+                              onClick={() => copyToClipboard(s.serverSeedHash)}
+                              style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "2px 6px", fontSize: 10, cursor: "pointer" }}
+                            >
+                              {copiedHash === s.serverSeedHash ? "✓" : "Copy"}
+                            </button>
+                          </div>
+                        </td>
+                        <td style={{ padding: "7px 10px", color: T.textSub }}>{s.finalNonce}</td>
+                        <td style={{ padding: "7px 10px", color: T.textMute }}>{timeAgo(s.revealedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Recent Rolls — HMAC Proof — own feed from Coin Toss's Recent
+            Flips above: sourced from getRecentDiceRolls, capped at 100
+            across all players, independent of the Coin Toss flip feed. ── */}
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1rem" }}>
+          <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, borderBottom: `1px solid ${T.border}` }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>Recent Rolls — HMAC Proof</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                placeholder="Search FID or wallet…"
+                value={rollsSearch}
+                onChange={(e) => setRollsSearch(e.target.value)}
+                style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream, minWidth: 180 }}
+              />
+              <span style={{ fontSize: 11, color: T.textMute, whiteSpace: "nowrap" }}>
+                {(() => {
+                  const q = rollsSearch.trim().toLowerCase();
+                  const all = minigamesAdmin?.recentDiceRolls ?? [];
+                  const filteredCount = all.filter((r: any) =>
+                    !q || r.identityKey?.toLowerCase().includes(q)
+                  ).length;
+                  return `${filteredCount} of ${all.length} rows`;
+                })()}
+              </span>
+            </div>
+          </div>
+          <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr>
+                  {["Identity", "Bet", "Target", "Roll", "Outcome", "Chance / Mult", "Nonce", "Client Seed", "Server Seed Hash", "Time"].map((h) => (
+                    <th key={h} style={{ textAlign: "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const q = rollsSearch.trim().toLowerCase();
+                  const rows = (minigamesAdmin?.recentDiceRolls ?? []).filter((r: any) =>
+                    !q || r.identityKey?.toLowerCase().includes(q)
+                  );
+                  if (rows.length === 0) {
+                    return <tr><td colSpan={10} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>{q ? "No matching rolls." : "No rolls yet."}</td></tr>;
+                  }
+                  return (rows as DiceRollEntry[]).map((r) => (
+                  <tr key={r.id} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
+                    <td style={{ padding: "8px 14px", fontFamily: "monospace" }}>{r.identityKey}</td>
+                    <td style={{ padding: "8px 14px" }}>{r.betDegen} DEGEN</td>
+                    <td style={{ padding: "8px 14px", textTransform: "capitalize" }}>{r.direction} {r.target}</td>
+                    <td style={{ padding: "8px 14px" }}>{r.roll}</td>
+                    <td style={{ padding: "8px 14px", fontWeight: 700, color: r.won ? C.green : C.red }}>
+                      {r.won ? `+${r.payoutDegen.toFixed(2)}` : "Lost"}
+                    </td>
+                    <td style={{ padding: "8px 14px", color: T.textSub }}>{r.winChancePercent.toFixed(1)}% / {r.multiplier.toFixed(2)}x</td>
+                    <td style={{ padding: "8px 14px", color: T.textSub }}>{r.nonce}</td>
+                    <td style={{ padding: "8px 14px", fontFamily: "monospace", color: T.textSub }}>{r.clientSeed}</td>
+                    <td style={{ padding: "8px 14px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontFamily: "monospace", color: T.textMute }} title={r.serverSeedHash}>{shortHash(r.serverSeedHash)}</span>
+                        <button
+                          onClick={() => copyToClipboard(r.serverSeedHash)}
+                          style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "1px 5px", fontSize: 9, cursor: "pointer" }}
+                        >
+                          {copiedHash === r.serverSeedHash ? "✓" : "Copy"}
+                        </button>
+                      </div>
+                    </td>
+                    <td style={{ padding: "8px 14px", color: T.textMute, whiteSpace: "nowrap" }}>{timeAgo(r.ts)}</td>
+                  </tr>
+                  ));
+                })()}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* ── Player Roll History — on-demand lookup of one player's full
+            per-identity roll log (up to 500, via getDiceRollsForIdentity),
+            separate from the shared global feed above which is capped at
+            100 across all players combined. Mirrors Player Flip History
+            for Coin Toss, but never mixes the two games' rows. ── */}
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: "1.5rem" }}>
+          <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, borderBottom: `1px solid ${T.border}` }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.creamMute }}>Player Roll History</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                placeholder="FID or wallet…"
+                value={playerRollHistoryQuery}
+                onChange={(e) => setPlayerRollHistoryQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") lookupPlayerRollHistory(); }}
+                style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 9px", fontSize: 11, color: T.cream, minWidth: 180 }}
+              />
+              <button
+                onClick={lookupPlayerRollHistory}
+                disabled={playerRollHistoryLoading || !playerRollHistoryQuery.trim()}
+                style={{ background: "#7c3aed", color: "#fff", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+              >
+                {playerRollHistoryLoading ? "Searching…" : "Search"}
+              </button>
+              {playerRollHistoryResults !== null && (
+                <button
+                  onClick={() => { setPlayerRollHistoryResults(null); setPlayerRollHistoryIdentityKey(null); setPlayerRollHistoryError(null); setPlayerRollHistoryQuery(""); }}
+                  style={{ background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                >
+                  ✕ Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {playerRollHistoryError && (
+            <div style={{ padding: "14px", color: "#dc2626", fontSize: 12 }}>{playerRollHistoryError}</div>
+          )}
+
+          {playerRollHistoryResults === null && !playerRollHistoryError && (
+            <div style={{ padding: "20px 14px", textAlign: "center", color: T.textMute, fontSize: 12 }}>
+              Enter an FID or wallet above and hit Search to pull that player's full roll history.
+            </div>
+          )}
+
+          {playerRollHistoryResults !== null && (
+            <>
+              <div style={{ padding: "8px 14px", fontSize: 11, color: T.textMute, borderBottom: `1px solid ${T.borderSub}` }}>
+                {playerRollHistoryIdentityKey} — {playerRollHistoryResults.length} roll{playerRollHistoryResults.length === 1 ? "" : "s"}
+              </div>
+              <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {["Bet", "Target", "Roll", "Outcome", "Chance / Mult", "Nonce", "Client Seed", "Server Seed Hash", "Time"].map((h) => (
+                        <th key={h} style={{ textAlign: "left", padding: "9px 14px", color: T.creamMute, fontWeight: 700, fontSize: 10, textTransform: "uppercase", borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt, whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {playerRollHistoryResults.length === 0 ? (
+                      <tr><td colSpan={9} style={{ padding: "20px 14px", textAlign: "center", color: T.textMute }}>No rolls for this player yet.</td></tr>
+                    ) : (
+                      playerRollHistoryResults.map((r, i) => (
+                        <tr key={r.id ?? i} style={{ borderBottom: `1px solid ${T.borderSub}` }}>
+                          <td style={{ padding: "8px 14px" }}>{r.betDegen} DEGEN</td>
+                          <td style={{ padding: "8px 14px", textTransform: "capitalize" }}>{r.direction} {r.target}</td>
+                          <td style={{ padding: "8px 14px" }}>{r.roll}</td>
+                          <td style={{ padding: "8px 14px", fontWeight: 700, color: r.won ? C.green : C.red }}>
+                            {r.won ? `+${r.payoutDegen.toFixed(2)}` : "Lost"}
+                          </td>
+                          <td style={{ padding: "8px 14px", color: T.textSub }}>{r.winChancePercent.toFixed(1)}% / {r.multiplier.toFixed(2)}x</td>
+                          <td style={{ padding: "8px 14px", color: T.textSub }}>{r.nonce}</td>
+                          <td style={{ padding: "8px 14px", fontFamily: "monospace", color: T.textSub }}>{r.clientSeed}</td>
+                          <td style={{ padding: "8px 14px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <span style={{ fontFamily: "monospace", color: T.textMute }} title={r.serverSeedHash}>{shortHash(r.serverSeedHash)}</span>
+                              <button
+                                onClick={() => copyToClipboard(r.serverSeedHash)}
+                                style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.creamMute, borderRadius: 5, padding: "1px 5px", fontSize: 9, cursor: "pointer" }}
+                              >
+                                {copiedHash === r.serverSeedHash ? "✓" : "Copy"}
+                              </button>
+                            </div>
+                          </td>
+                          <td style={{ padding: "8px 14px", color: T.textMute, whiteSpace: "nowrap" }}>{timeAgo(r.ts)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
           </>
         )}

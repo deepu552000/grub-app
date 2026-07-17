@@ -607,6 +607,10 @@ function AdminDashboardInner() {
   const [diceConfigDraft, setDiceConfigDraft] = useState<Record<string, string>>({});
   const [showSeedHistory, setShowSeedHistory] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  // Which config field's "?" hint popover is open, e.g. "cointoss:feePercentOnWin"
+  // or "dice:houseEdgePercent" — prefixed so the two config blocks' fields
+  // (some share key names, like lossCircuitBreakerDegen) never collide.
+  const [openConfigHint, setOpenConfigHint] = useState<string | null>(null);
   const [cashoutSearch, setCashoutSearch] = useState("");
   const [flipsSearch, setFlipsSearch] = useState("");
   const [playerHistoryQuery, setPlayerHistoryQuery] = useState("");
@@ -2895,10 +2899,38 @@ function AdminDashboardInner() {
                   { key: "maxFlipsPerMinutePerUser", label: "Max flips/min/user", hint: "Rate limit — flips a single player can place per minute." },
                   { key: "autoCashoutMaxDegen", label: "Auto cash-out max (DEGEN)", hint: "Cash-out requests at or under this amount send immediately. Above it, they queue for manual admin approval." },
                   { key: "seedRotateAfterFlips", label: "Auto-rotate seed after N flips", hint: "Provably-fair seed auto-rotates (and reveals) once it's backed this many flips." },
-                ].map((f) => (
-                  <label key={f.key} style={{ fontSize: 11, color: T.creamMute }} title={f.hint}>
-                    {f.label}
-                    <div style={{ fontSize: 10, fontWeight: 400, color: T.textMute, marginTop: 2, lineHeight: 1.4 }}>{f.hint}</div>
+                ].map((f) => {
+                  const hintKey = `cointoss:${f.key}`;
+                  const isOpen = openConfigHint === hintKey;
+                  return (
+                  <label key={f.key} style={{ fontSize: 11, color: T.creamMute, position: "relative", display: "block" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      {f.label}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); setOpenConfigHint(isOpen ? null : hintKey); }}
+                        title={f.hint}
+                        style={{
+                          width: 14, height: 14, borderRadius: "50%", border: `1px solid ${T.border}`, background: "transparent",
+                          color: T.textMute, fontSize: 9, fontWeight: 700, lineHeight: "12px", cursor: "pointer", padding: 0,
+                          display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                        }}
+                      >
+                        ?
+                      </button>
+                    </span>
+                    {isOpen && (
+                      <>
+                        <div onClick={() => setOpenConfigHint(null)} style={{ position: "fixed", inset: 0, zIndex: 15 }} />
+                        <div style={{
+                          position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 20, width: 220,
+                          background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px",
+                          fontSize: 10, fontWeight: 400, color: T.textSub, lineHeight: 1.4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
+                        }}>
+                          {f.hint}
+                        </div>
+                      </>
+                    )}
                     <input
                       type="number"
                       value={minigamesConfigDraft[f.key] ?? ""}
@@ -2909,7 +2941,8 @@ function AdminDashboardInner() {
                       }}
                     />
                   </label>
-                ))}
+                  );
+                })}
               </div>
               <button
                 onClick={saveMinigamesConfig}
@@ -3434,10 +3467,38 @@ function AdminDashboardInner() {
               { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)", hint: "Dice auto-pauses if rolling 24h house losses hit this — separate bucket from Coin Toss's breaker." },
               { key: "maxRollsPerMinutePerUser", label: "Max rolls/min/user", hint: "Rate limit — rolls a single player can place per minute." },
               { key: "seedRotateAfterRolls", label: "Auto-rotate seed after N rolls", hint: "Provably-fair seed auto-rotates (and reveals) once it's backed this many rolls." },
-            ].map((f) => (
-              <label key={f.key} style={{ fontSize: 11, color: T.creamMute }} title={f.hint}>
-                {f.label}
-                <div style={{ fontSize: 10, fontWeight: 400, color: T.textMute, marginTop: 2, lineHeight: 1.4 }}>{f.hint}</div>
+            ].map((f) => {
+              const hintKey = `dice:${f.key}`;
+              const isOpen = openConfigHint === hintKey;
+              return (
+              <label key={f.key} style={{ fontSize: 11, color: T.creamMute, position: "relative", display: "block" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  {f.label}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); setOpenConfigHint(isOpen ? null : hintKey); }}
+                    title={f.hint}
+                    style={{
+                      width: 14, height: 14, borderRadius: "50%", border: `1px solid ${T.border}`, background: "transparent",
+                      color: T.textMute, fontSize: 9, fontWeight: 700, lineHeight: "12px", cursor: "pointer", padding: 0,
+                      display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    }}
+                  >
+                    ?
+                  </button>
+                </span>
+                {isOpen && (
+                  <>
+                    <div onClick={() => setOpenConfigHint(null)} style={{ position: "fixed", inset: 0, zIndex: 15 }} />
+                    <div style={{
+                      position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 20, width: 220,
+                      background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px",
+                      fontSize: 10, fontWeight: 400, color: T.textSub, lineHeight: 1.4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
+                    }}>
+                      {f.hint}
+                    </div>
+                  </>
+                )}
                 <input
                   type="number"
                   value={diceConfigDraft[f.key] ?? ""}
@@ -3448,7 +3509,8 @@ function AdminDashboardInner() {
                   }}
                 />
               </label>
-            ))}
+              );
+            })}
           </div>
           <button
             onClick={saveDiceConfig}

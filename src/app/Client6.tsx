@@ -5738,14 +5738,14 @@ function ClientPageInner() {
             <span
               style={{
                 position: "absolute",
-                top: 8,
-                right: 10,
+                top: 7,
+                right: -26,
+                transform: "rotate(35deg)",
                 background: "#7c3aed",
                 color: "#fff",
-                fontSize: "0.58rem",
+                fontSize: "0.6rem",
                 fontWeight: 800,
-                padding: "2px 8px",
-                borderRadius: 999,
+                padding: "2px 28px",
                 letterSpacing: 0.5,
               }}
             >
@@ -5781,7 +5781,7 @@ function ClientPageInner() {
               style={{
                 background: "none", border: "none", cursor: "pointer",
                 color: "#8a7ab0", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
-                flexShrink: 0,
+                flexShrink: 0, alignSelf: "flex-end", marginBottom: 1,
               }}
             >
               ✕

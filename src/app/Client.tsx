@@ -1961,6 +1961,7 @@ function ClientPageInner() {
   async function doDiceRoll() {
     if (diceRolling || !diceConfig?.enabled) return;
     if (diceBetOutOfRange || diceWinChanceOutOfRange) return; // button already disabled for this, guard directly too
+    if (diceBalance < diceBet) return; // same — button already disabled, guard directly too
     const identity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
     if (!identity) {
       setLastAction("✕ No identity found — open this in Farcaster or connect a wallet first.");
@@ -7336,16 +7337,18 @@ function ClientPageInner() {
                     <button
                       type="button"
                       onClick={doDiceRoll}
-                      disabled={diceRolling || !diceConfig?.enabled || diceBetOutOfRange || diceWinChanceOutOfRange}
+                      disabled={diceRolling || !diceConfig?.enabled || diceBalance < diceBet || diceBetOutOfRange || diceWinChanceOutOfRange}
                       style={{
                         background: "#b45309", color: "#fff", border: "none", borderRadius: 10,
                         padding: "12px", fontSize: 14, fontWeight: 800, cursor: "pointer",
-                        opacity: diceRolling || !diceConfig?.enabled ? 0.6 : 1,
+                        opacity: diceRolling || !diceConfig?.enabled || diceBalance < diceBet ? 0.6 : 1,
                       }}
                     >
                       {diceRolling ? "Rolling…" : "🎲 Roll"}
                     </button>
-
+                    {diceBalance < diceBet && (
+                      <div style={{ textAlign: "center", fontSize: 11, color: "#dc2626" }}>Not enough balance for that bet.</div>
+                    )}
                     {diceLastResult && (
                       <div style={{
                         textAlign: "center", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 800,
@@ -7357,20 +7360,28 @@ function ClientPageInner() {
                       </div>
                     )}
 
-                    {/* Recent rolls strip */}
+                    {/* Recent rolls strip — now a casino-style chip like Coin
+                        Toss's ticker above: direction arrow, the actual roll,
+                        and the real +payout/-bet amount, all visible at a
+                        glance instead of hidden behind a hover tooltip. */}
                     {diceRecentRolls.length > 0 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {diceRecentRolls.slice(0, 10).map((r, i) => (
+                      <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "4px 0" }}>
+                        {diceRecentRolls.slice(0, 12).map((r, i) => (
                           <span
                             key={i}
-                            title={`${r.direction} ${r.target} — rolled ${r.roll}`}
+                            title={`${r.direction} ${r.target} — rolled ${r.roll} (bet ${r.betDegen} DEGEN)`}
                             style={{
-                              fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 7px",
+                              flexShrink: 0, minWidth: 40, height: 22, borderRadius: 11, padding: "0 8px",
+                              display: "flex", alignItems: "center", justifyContent: "center", gap: 3,
+                              fontSize: 11, fontWeight: 800, whiteSpace: "nowrap",
+                              color: r.won ? "#15803d" : "#b91c1c",
                               background: r.won ? "#dcfce7" : "#fee2e2",
-                              color: r.won ? "#166534" : "#991b1b",
+                              border: `1px solid ${r.won ? "#86efac" : "#fca5a5"}`,
                             }}
                           >
-                            {r.roll}
+                            <span>{r.direction === "under" ? "▼" : "▲"}</span>
+                            <span>{r.roll}</span>
+                            <span>{r.won ? `+${r.payoutDegen.toFixed(1)}` : `-${r.betDegen.toFixed(1)}`}</span>
                           </span>
                         ))}
                       </div>
