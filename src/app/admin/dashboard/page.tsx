@@ -611,6 +611,23 @@ function AdminDashboardInner() {
   // or "dice:houseEdgePercent" — prefixed so the two config blocks' fields
   // (some share key names, like lossCircuitBreakerDegen) never collide.
   const [openConfigHint, setOpenConfigHint] = useState<string | null>(null);
+  // Close the config-hint popover on outside click. Uses `mousedown` (fires
+  // before the toggle button's `click`) and only closes when the click lands
+  // outside any [data-config-hint] container — so a click on the toggle
+  // button itself still reaches its own onClick and toggles normally.
+  // No full-screen backdrop element, so clicks elsewhere on the page (tabs,
+  // other buttons, scroll) are never swallowed.
+  useEffect(() => {
+    if (!openConfigHint) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-config-hint]")) {
+        setOpenConfigHint(null);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [openConfigHint]);
   const [cashoutSearch, setCashoutSearch] = useState("");
   const [flipsSearch, setFlipsSearch] = useState("");
   const [playerHistoryQuery, setPlayerHistoryQuery] = useState("");
@@ -1695,7 +1712,7 @@ function AdminDashboardInner() {
           >
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 14 }}>
               <span style={{ flexShrink: 0, fontSize: 15, lineHeight: "18px" }}>{confirmModal.danger === false ? "❓" : "⚠️"}</span>
-              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "pre-line" }}>{confirmModal.msg}</p>
+              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "pre-line", overflowWrap: "anywhere", wordBreak: "break-word", minWidth: 0 }}>{confirmModal.msg}</p>
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button
@@ -2903,13 +2920,12 @@ function AdminDashboardInner() {
                   const hintKey = `cointoss:${f.key}`;
                   const isOpen = openConfigHint === hintKey;
                   return (
-                  <label key={f.key} style={{ fontSize: 11, color: T.creamMute, position: "relative", display: "block" }}>
+                  <label key={f.key} data-config-hint style={{ fontSize: 11, color: T.creamMute, position: "relative", display: "block" }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                       {f.label}
                       <button
                         type="button"
                         onClick={(e) => { e.preventDefault(); setOpenConfigHint(isOpen ? null : hintKey); }}
-                        title={f.hint}
                         style={{
                           width: 14, height: 14, borderRadius: "50%", border: `1px solid ${T.border}`, background: "transparent",
                           color: T.textMute, fontSize: 9, fontWeight: 700, lineHeight: "12px", cursor: "pointer", padding: 0,
@@ -2920,16 +2936,13 @@ function AdminDashboardInner() {
                       </button>
                     </span>
                     {isOpen && (
-                      <>
-                        <div onClick={() => setOpenConfigHint(null)} style={{ position: "fixed", inset: 0, zIndex: 15 }} />
-                        <div style={{
-                          position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 20, width: 220,
-                          background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px",
-                          fontSize: 10, fontWeight: 400, color: T.textSub, lineHeight: 1.4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
-                        }}>
-                          {f.hint}
-                        </div>
-                      </>
+                      <div style={{
+                        position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 20, width: 220,
+                        background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px",
+                        fontSize: 10, fontWeight: 400, color: T.textSub, lineHeight: 1.4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
+                      }}>
+                        {f.hint}
+                      </div>
                     )}
                     <input
                       type="number"
@@ -3471,13 +3484,12 @@ function AdminDashboardInner() {
               const hintKey = `dice:${f.key}`;
               const isOpen = openConfigHint === hintKey;
               return (
-              <label key={f.key} style={{ fontSize: 11, color: T.creamMute, position: "relative", display: "block" }}>
+              <label key={f.key} data-config-hint style={{ fontSize: 11, color: T.creamMute, position: "relative", display: "block" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                   {f.label}
                   <button
                     type="button"
                     onClick={(e) => { e.preventDefault(); setOpenConfigHint(isOpen ? null : hintKey); }}
-                    title={f.hint}
                     style={{
                       width: 14, height: 14, borderRadius: "50%", border: `1px solid ${T.border}`, background: "transparent",
                       color: T.textMute, fontSize: 9, fontWeight: 700, lineHeight: "12px", cursor: "pointer", padding: 0,
@@ -3488,16 +3500,13 @@ function AdminDashboardInner() {
                   </button>
                 </span>
                 {isOpen && (
-                  <>
-                    <div onClick={() => setOpenConfigHint(null)} style={{ position: "fixed", inset: 0, zIndex: 15 }} />
-                    <div style={{
-                      position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 20, width: 220,
-                      background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px",
-                      fontSize: 10, fontWeight: 400, color: T.textSub, lineHeight: 1.4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
-                    }}>
-                      {f.hint}
-                    </div>
-                  </>
+                  <div style={{
+                    position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 20, width: 220,
+                    background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px",
+                    fontSize: 10, fontWeight: 400, color: T.textSub, lineHeight: 1.4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
+                  }}>
+                    {f.hint}
+                  </div>
                 )}
                 <input
                   type="number"
