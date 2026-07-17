@@ -3510,13 +3510,6 @@ function AdminDashboardInner() {
           >
             {raffleActionLoading === "dice_recompute_pnl" ? "Rebuilding…" : "⟲ Recompute 24h PnL"}
           </button>
-          <button
-            onClick={rotateDiceSeed}
-            disabled={raffleActionLoading === "dice_rotate_seed"}
-            style={{ background: "transparent", color: "#7c3aed", border: "1px solid #7c3aed", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-          >
-            {raffleActionLoading === "dice_rotate_seed" ? "Rotating…" : "🔄 Rotate Seed"}
-          </button>
         </div>
 
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: "1rem" }}>
