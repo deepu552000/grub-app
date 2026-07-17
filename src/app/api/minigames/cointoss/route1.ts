@@ -67,7 +67,6 @@ export async function GET(req: NextRequest) {
           txHash: c.txHash,
           requestedAt: c.requestedAt,
           fulfilledAt: c.fulfilledAt,
-          sourceGame: c.sourceGame,
         }))
       : [];
 
@@ -80,7 +79,6 @@ export async function GET(req: NextRequest) {
           amountDegen: d.amountDegen,
           txHash: d.txHash,
           ts: d.ts,
-          sourceGame: d.sourceGame,
         }))
       : [];
 
@@ -166,7 +164,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "cashout") {
-      const { amountDegen, cashoutWallet, sourceGame } = body;
+      const { amountDegen, cashoutWallet } = body;
       if (!cashoutWallet || typeof cashoutWallet !== "string") {
         return NextResponse.json({ ok: false, reason: "missing cashoutWallet" }, { status: 400 });
       }
@@ -177,11 +175,7 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         );
       }
-      // sourceGame is an optional UI breadcrumb — "cointoss" | "dice" | undefined.
-      // Not validated strictly since it only ever drives an admin-dashboard tag,
-      // never any balance/permission logic.
-      const taggedSource = sourceGame === "dice" ? "dice" : sourceGame === "cointoss" ? "cointoss" : undefined;
-      const result = await requestCashout(key, Number(amountDegen), trimmedWallet, taggedSource);
+      const result = await requestCashout(key, Number(amountDegen), trimmedWallet);
       if (!result.ok) {
         return NextResponse.json({ ...result, ok: false }, { status: 400 });
       }
@@ -192,12 +186,11 @@ export async function POST(req: NextRequest) {
     // (sendDegenDeposit in Client.tsx); we just verify it landed at the
     // treasury and credit the same balance flip/cashout use ─────────────────
     if (action === "deposit") {
-      const { txHash, amountDegen, sourceGame } = body;
+      const { txHash, amountDegen } = body;
       if (!txHash || typeof txHash !== "string") {
         return NextResponse.json({ ok: false, reason: "missing txHash" }, { status: 400 });
       }
-      const taggedSource = sourceGame === "dice" ? "dice" : sourceGame === "cointoss" ? "cointoss" : undefined;
-      const result = await depositDegen(key, txHash, Number(amountDegen), taggedSource);
+      const result = await depositDegen(key, txHash, Number(amountDegen));
       if (!result.ok) {
         return NextResponse.json({ ...result, ok: false }, { status: 400 });
       }

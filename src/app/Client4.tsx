@@ -2303,18 +2303,6 @@ function ClientPageInner() {
     setCointossBannerDismissed(true);
   }
 
-  // ── Dice Promo Banner ───────────────────────────────────────────────────
-  // Announces the Dice mini-game, separate from the Coin Toss banner above
-  // — deliberately styled distinctly (solid purple card vs. Coin Toss's
-  // dashed amber one) so the two don't read as the same "NEW" banner
-  // reappearing twice if a player hasn't dismissed either yet. Same
-  // session-only dismiss pattern as every other promo banner in this file.
-  const [diceBannerDismissed, setDiceBannerDismissed] = useState(false);
-  const showDiceBanner = !diceBannerDismissed;
-  function dismissDiceBanner() {
-    setDiceBannerDismissed(true);
-  }
-
   const [raffleRound, setRaffleRound] = useState<{
     id: string;
     status: string;
@@ -2353,10 +2341,7 @@ function ClientPageInner() {
   // ticket theme vs. the wheel's purple) so the two "NEW" banners don't
   // read as duplicates if a player hasn't dismissed either yet.
   const [raffleBannerDismissed, setRaffleBannerDismissed] = useState(false);
-  // Temporarily hidden (2026-07-17) to make room for the Dice banner —
-  // flip back to true to re-enable, nothing else removed.
-  const RAFFLE_BANNER_ENABLED = false;
-  const showRaffleBanner = RAFFLE_BANNER_ENABLED && !raffleBannerDismissed;
+  const showRaffleBanner = !raffleBannerDismissed;
 
   function dismissRaffleBanner() {
     setRaffleBannerDismissed(true);
@@ -5700,88 +5685,6 @@ function ClientPageInner() {
                 background: "none", border: "none", cursor: "pointer",
                 color: "#a08070", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
                 flexShrink: 0,
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
-        {/* ── DICE PROMO BANNER ── Deliberately distinct from Coin Toss's:
-            solid purple card + rounded badge instead of amber/dashed/ribbon,
-            so the two "NEW" mini-game banners read as separate features
-            rather than a duplicate. */}
-        {showDiceBanner && (
-          <div
-            onClick={() => {
-              setMinigamesOpen(true);
-              setDiceOpen(true);
-              requestAnimationFrame(() => {
-                diceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-              });
-            }}
-            style={{
-              position: "relative",
-              margin: "8px 8px 0",
-              padding: "12px 14px",
-              background: "#f2ecfd",
-              border: "1.5px solid #7c3aed",
-              borderRadius: 14,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              cursor: "pointer",
-              overflow: "hidden",
-              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
-            }}
-          >
-            <span
-              style={{
-                position: "absolute",
-                top: 7,
-                right: -26,
-                transform: "rotate(35deg)",
-                background: "#7c3aed",
-                color: "#fff",
-                fontSize: "0.6rem",
-                fontWeight: 800,
-                padding: "2px 28px",
-                letterSpacing: 0.5,
-              }}
-            >
-              NEW
-            </span>
-            <span
-              style={{
-                fontSize: "1.3rem",
-                lineHeight: 1,
-                flexShrink: 0,
-                width: 34,
-                height: 34,
-                borderRadius: 10,
-                background: "#7c3aed",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              🎲
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#3b2a63", marginBottom: 1 }}>
-                Mini Games: Dice is live!
-              </div>
-              <div style={{ fontSize: "0.70rem", color: "#6c5a94" }}>
-                Set your target, roll, and cash in on the multiplier.
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); dismissDiceBanner(); }}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                color: "#8a7ab0", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
-                flexShrink: 0, alignSelf: "flex-end", marginBottom: 1,
               }}
             >
               ✕

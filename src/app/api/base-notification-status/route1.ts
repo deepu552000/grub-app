@@ -31,14 +31,6 @@ export async function GET(request: NextRequest) {
   } catch (err: any) {
     // Fail closed to "not enabled" rather than erroring the whole page —
     // worst case the banner shows once more than it strictly needs to.
-    //
-    // Logged now (was previously silent) — this was masking real causes
-    // like a missing BASE_NOTIFICATIONS_API_KEY in local dev (Vercel
-    // dashboard env vars don't reach `next dev` unless pulled via
-    // `vercel env pull .env.local`), which makes apiKey() throw and this
-    // route quietly report "not enabled" for a wallet that actually is,
-    // with zero visible signal as to why.
-    console.error(`[base-notification-status] failed for wallet ${wallet}:`, err?.message ?? err);
     return NextResponse.json({ appPinned: false, notificationsEnabled: false });
   }
 }

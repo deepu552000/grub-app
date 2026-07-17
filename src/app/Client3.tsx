@@ -1877,12 +1877,12 @@ function ClientPageInner() {
   // fades, and flip to "sent" on its own once an admin fulfills it from
   // the dashboard — polled below, not just refreshed on user action.
   const [cointossMyCashouts, setCointossMyCashouts] = useState<
-    Array<{ id: string; amountDegen: number; status: "pending" | "fulfilled" | "cancelled"; txHash?: string; requestedAt: number; fulfilledAt?: number; sourceGame?: "cointoss" | "dice" }>
+    Array<{ id: string; amountDegen: number; status: "pending" | "fulfilled" | "cancelled"; txHash?: string; requestedAt: number; fulfilledAt?: number }>
   >([]);
   // The caller's own on-chain deposit history — counterpart to
   // cointossMyCashouts above, same "last 5" idea.
   const [cointossMyDeposits, setCointossMyDeposits] = useState<
-    Array<{ id: string; amountDegen: number; txHash: string; ts: number; sourceGame?: "cointoss" | "dice" }>
+    Array<{ id: string; amountDegen: number; txHash: string; ts: number }>
   >([]);
 
   // ── Dice (game 2) state — shares Coin Toss's internal balance and
@@ -1916,17 +1916,6 @@ function ClientPageInner() {
     roll: number; target: number; direction: "under" | "over"; won: boolean; payoutDegen: number;
   } | null>(null);
 
-  // ── Dice Provably Fair panel state — mirrors cointossActiveSeed /
-  // cointossSeedHistory / cointossMyClientSeed above exactly, just against
-  // Dice's own independent seed/rotation cadence (myClientSeed itself is
-  // shared with Coin Toss and NOT refetched here — see dice/route.ts's
-  // header comment — so it isn't duplicated in this block). ──────────────
-  const diceFairnessRef = useRef<HTMLDivElement>(null);
-  const [diceActiveSeed, setDiceActiveSeed] = useState<{ serverSeedHash: string; rollsUsed: number; createdAt: number } | null>(null);
-  const [diceSeedHistory, setDiceSeedHistory] = useState<Array<{ serverSeed: string; serverSeedHash: string; finalNonce: number; createdAt: number; revealedAt: number }>>([]);
-  const [diceFairnessOpen, setDiceFairnessOpen] = useState(false);
-  const [diceVerifyStatus, setDiceVerifyStatus] = useState<Record<string, "checking" | "match" | "mismatch" | "error">>({});
-
   const diceBetOutOfRange = !!diceConfig && (diceBet < diceConfig.minBetDegen || diceBet > diceConfig.maxBetDegen);
 
   // Live win-chance/multiplier preview — mirrors the exact server formula
@@ -1952,8 +1941,6 @@ function ClientPageInner() {
         setDiceConfig(res.config);
         setDiceBalance(res.balance ?? 0);
         setDiceRecentRolls(res.recentRolls ?? []);
-        setDiceActiveSeed(res.activeSeed ?? null);
-        setDiceSeedHistory(res.seedHistory ?? []);
       }
     } catch { /* non-blocking — section just shows stale/empty state until next refresh */ }
   }, [fid, walletAddress]);
@@ -2114,7 +2101,7 @@ function ClientPageInner() {
     }
   }
 
-  async function doCointossCashout(sourceGame: "cointoss" | "dice" = "cointoss") {
+  async function doCointossCashout() {
     if (cointossCashoutLoading || !cointossCashoutWallet.trim() || cointossCashoutAmount <= 0) return;
     const trimmedWallet = cointossCashoutWallet.trim();
     if (!isValidBaseAddress(trimmedWallet)) {
@@ -2133,10 +2120,7 @@ function ClientPageInner() {
       const res = await fetch("/api/minigames/cointoss", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // sourceGame is a UI breadcrumb only (which panel the button was
-        // clicked from) — the balance itself is fully shared between
-        // Coin Toss and Dice, so this doesn't change any cash-out logic.
-        body: JSON.stringify({ ...identity, action: "cashout", amountDegen: cointossCashoutAmount, cashoutWallet: trimmedWallet, sourceGame }),
+        body: JSON.stringify({ ...identity, action: "cashout", amountDegen: cointossCashoutAmount, cashoutWallet: trimmedWallet }),
       }).then((r) => r.json());
 
       if (!res?.ok) {
@@ -2158,7 +2142,7 @@ function ClientPageInner() {
     }
   }
 
-  async function doCointossDeposit(sourceGame: "cointoss" | "dice" = "cointoss") {
+  async function doCointossDeposit() {
     if (paymentInFlight || cointossDepositAmount <= 0) return;
     const identity = fid ? { fid } : walletAddress ? { wallet: walletAddress } : null;
     if (!identity) {
@@ -2182,7 +2166,6 @@ function ClientPageInner() {
           action: "deposit",
           txHash,
           amountDegen: cointossDepositAmount,
-          sourceGame,
         }),
       }).then((r) => r.json());
 
@@ -2250,69 +2233,11 @@ function ClientPageInner() {
     }
   }
 
-  // ── Dice provably-fair verify — same Tier 3 idea as verifyCointossFlip
-  // above, own outcome formula: HMAC-SHA256(serverSeed, `dice:${clientSeed}:${nonce}`),
-  // then an unbiased 0–99 draw via rejection sampling across the digest's
-  // eight 4-byte chunks (mirrors lib/minigames.ts's hmacToRoll0to99 exactly
-  // — see that function's comment for why mod-100 needs rejection sampling
-  // when Coin Toss's mod-2 didn't), +1 for the final 1–100 roll. ─────────
-  function hmacHexToRoll0to99(hmacHex: string): number {
-    const CHUNK_HEX_LEN = 8; // 4 bytes = 8 hex chars
-    const MAX_UINT32 = 0x100000000;
-    const THRESHOLD = MAX_UINT32 - (MAX_UINT32 % 100);
-    for (let offset = 0; offset + CHUNK_HEX_LEN <= hmacHex.length; offset += CHUNK_HEX_LEN) {
-      const chunk = parseInt(hmacHex.slice(offset, offset + CHUNK_HEX_LEN), 16);
-      if (chunk < THRESHOLD) return chunk % 100;
-    }
-    return parseInt(hmacHex.slice(0, 8), 16) % 100;
-  }
-
-  async function verifyDiceRoll(
-    roll: { roll: number; serverSeedHash: string; nonce: number; clientSeed: string },
-    revealedSeed: { serverSeed: string; serverSeedHash: string },
-  ) {
-    const statusKey = `${roll.serverSeedHash}:${roll.nonce}`;
-    setDiceVerifyStatus((prev) => ({ ...prev, [statusKey]: "checking" }));
-    try {
-      const enc = new TextEncoder();
-      const seedBytes = enc.encode(revealedSeed.serverSeed);
-
-      // Step 1: sha256(serverSeed) === the hash committed to before this roll.
-      const hashBuf = await crypto.subtle.digest("SHA-256", seedBytes);
-      const computedHash = bufToHex(hashBuf);
-      const hashOk = computedHash === revealedSeed.serverSeedHash;
-
-      // Step 2: recompute the roll outcome from scratch.
-      const key = await crypto.subtle.importKey("raw", seedBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-      const msgBytes = enc.encode(`dice:${roll.clientSeed}:${roll.nonce}`);
-      const sigBuf = await crypto.subtle.sign("HMAC", key, msgBytes);
-      const hmacHex = bufToHex(sigBuf);
-      const computedRoll = hmacHexToRoll0to99(hmacHex) + 1;
-      const resultOk = computedRoll === roll.roll;
-
-      setDiceVerifyStatus((prev) => ({ ...prev, [statusKey]: hashOk && resultOk ? "match" : "mismatch" }));
-    } catch {
-      setDiceVerifyStatus((prev) => ({ ...prev, [statusKey]: "error" }));
-    }
-  }
-
   // Session-only dismiss, same pattern as the Raffle/Spin Wheel promo banners.
   const [cointossBannerDismissed, setCointossBannerDismissed] = useState(false);
   const showCointossBanner = !cointossBannerDismissed;
   function dismissCointossBanner() {
     setCointossBannerDismissed(true);
-  }
-
-  // ── Dice Promo Banner ───────────────────────────────────────────────────
-  // Announces the Dice mini-game, separate from the Coin Toss banner above
-  // — deliberately styled distinctly (solid purple card vs. Coin Toss's
-  // dashed amber one) so the two don't read as the same "NEW" banner
-  // reappearing twice if a player hasn't dismissed either yet. Same
-  // session-only dismiss pattern as every other promo banner in this file.
-  const [diceBannerDismissed, setDiceBannerDismissed] = useState(false);
-  const showDiceBanner = !diceBannerDismissed;
-  function dismissDiceBanner() {
-    setDiceBannerDismissed(true);
   }
 
   const [raffleRound, setRaffleRound] = useState<{
@@ -2353,10 +2278,7 @@ function ClientPageInner() {
   // ticket theme vs. the wheel's purple) so the two "NEW" banners don't
   // read as duplicates if a player hasn't dismissed either yet.
   const [raffleBannerDismissed, setRaffleBannerDismissed] = useState(false);
-  // Temporarily hidden (2026-07-17) to make room for the Dice banner —
-  // flip back to true to re-enable, nothing else removed.
-  const RAFFLE_BANNER_ENABLED = false;
-  const showRaffleBanner = RAFFLE_BANNER_ENABLED && !raffleBannerDismissed;
+  const showRaffleBanner = !raffleBannerDismissed;
 
   function dismissRaffleBanner() {
     setRaffleBannerDismissed(true);
@@ -5707,88 +5629,6 @@ function ClientPageInner() {
           </div>
         )}
 
-        {/* ── DICE PROMO BANNER ── Deliberately distinct from Coin Toss's:
-            solid purple card + rounded badge instead of amber/dashed/ribbon,
-            so the two "NEW" mini-game banners read as separate features
-            rather than a duplicate. */}
-        {showDiceBanner && (
-          <div
-            onClick={() => {
-              setMinigamesOpen(true);
-              setDiceOpen(true);
-              requestAnimationFrame(() => {
-                diceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-              });
-            }}
-            style={{
-              position: "relative",
-              margin: "8px 8px 0",
-              padding: "12px 14px",
-              background: "#f2ecfd",
-              border: "1.5px solid #7c3aed",
-              borderRadius: 14,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              cursor: "pointer",
-              overflow: "hidden",
-              animation: "eventBubbleIn 0.5s cubic-bezier(.4,1.4,.6,1) both",
-            }}
-          >
-            <span
-              style={{
-                position: "absolute",
-                top: 7,
-                right: -26,
-                transform: "rotate(35deg)",
-                background: "#7c3aed",
-                color: "#fff",
-                fontSize: "0.6rem",
-                fontWeight: 800,
-                padding: "2px 28px",
-                letterSpacing: 0.5,
-              }}
-            >
-              NEW
-            </span>
-            <span
-              style={{
-                fontSize: "1.3rem",
-                lineHeight: 1,
-                flexShrink: 0,
-                width: 34,
-                height: 34,
-                borderRadius: 10,
-                background: "#7c3aed",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              🎲
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#3b2a63", marginBottom: 1 }}>
-                Mini Games: Dice is live!
-              </div>
-              <div style={{ fontSize: "0.70rem", color: "#6c5a94" }}>
-                Set your target, roll, and cash in on the multiplier.
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); dismissDiceBanner(); }}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                color: "#8a7ab0", fontSize: "0.85rem", padding: "0 0 0 4px", lineHeight: 1,
-                flexShrink: 0, alignSelf: "flex-end", marginBottom: 1,
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
         {/* ── NOTIFICATION NUDGE BANNER ── */}
         {showNotifBanner && (
           <div
@@ -7095,7 +6935,7 @@ function ClientPageInner() {
                   />
                   <button
                     type="button"
-                    onClick={() => doCointossDeposit("cointoss")}
+                    onClick={doCointossDeposit}
                     disabled={paymentInFlight || cointossDepositAmount <= 0}
                     style={{
                       flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700,
@@ -7143,7 +6983,7 @@ function ClientPageInner() {
                 )}
                 <button
                   type="button"
-                  onClick={() => doCointossCashout("cointoss")}
+                  onClick={doCointossCashout}
                   disabled={cointossCashoutLoading}
                   style={{ padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1px solid #f59e0b", background: "transparent", color: "#b45309", cursor: "pointer" }}
                 >
@@ -7178,7 +7018,7 @@ function ClientPageInner() {
                             color: style.color,
                           }}
                         >
-                          <span>{c.amountDegen} DEGEN — {style.label}{c.sourceGame ? ` · via ${c.sourceGame === "dice" ? "Dice" : "Coin Toss"}` : ""}</span>
+                          <span>{c.amountDegen} DEGEN — {style.label}</span>
                           <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             {c.status === "fulfilled" && c.txHash && (
                               <a
@@ -7215,7 +7055,7 @@ function ClientPageInner() {
                           background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d",
                         }}
                       >
-                        <span>{d.amountDegen} DEGEN — deposited{d.sourceGame ? ` · via ${d.sourceGame === "dice" ? "Dice" : "Coin Toss"}` : ""}</span>
+                        <span>{d.amountDegen} DEGEN — deposited</span>
                         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           {d.txHash && (
                             <a
@@ -7376,102 +7216,6 @@ function ClientPageInner() {
                       </div>
                     )}
 
-                    {/* ── Provably Fair panel — mirrors Coin Toss's panel
-                        above (Tiers 2 + 3) against Dice's own independent
-                        seed/rotation, formula in verifyDiceRoll's comment.
-                        myClientSeed is shared with Coin Toss, so it's read
-                        from cointossMyClientSeed rather than a Dice-only
-                        copy — same underlying value either way. */}
-                    <div ref={diceFairnessRef} style={{ borderTop: "1px solid #eee0d8", paddingTop: 10 }}>
-                      <button
-                        type="button"
-                        onClick={() => setDiceFairnessOpen((o) => !o)}
-                        style={{
-                          display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-                          background: "transparent", border: "none", padding: 0, cursor: "pointer",
-                          fontSize: 12, fontWeight: 700, color: "#49332d",
-                        }}
-                      >
-                        <span>🔒 Provably Fair</span>
-                        <span style={{ fontSize: 11, color: "#8a7060" }}>{diceFairnessOpen ? "▲" : "▼"}</span>
-                      </button>
-
-                      {diceFairnessOpen && (
-                        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-                          <p style={{ fontSize: 11, color: "#8a7060", lineHeight: 1.5, margin: 0 }}>
-                            Every roll resolves as HMAC-SHA256(serverSeed, "dice:yourClientSeed:nonce"),
-                            reduced to 1–100 with rejection sampling to stay unbiased. Only the seed's
-                            hash is public while it's live — the raw seed is revealed once it rotates,
-                            and any roll that used it can be verified right here in your browser.
-                          </p>
-
-                          <div style={{ background: "#fdf8f3", border: "1px solid #eee0d8", borderRadius: 8, padding: "8px 10px", fontSize: 11 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", color: "#8a7060" }}>
-                              <span>Active seed (committed)</span>
-                              <span>{diceActiveSeed ? timeAgoShort(diceActiveSeed.createdAt) : "—"}</span>
-                            </div>
-                            <div style={{ fontFamily: "monospace", color: "#49332d", marginTop: 2 }} title={diceActiveSeed?.serverSeedHash ?? ""}>
-                              {shortHash(diceActiveSeed?.serverSeedHash)}
-                            </div>
-                            <div style={{ color: "#8a7060", marginTop: 2 }}>Rolls used so far: {diceActiveSeed?.rollsUsed ?? 0}</div>
-                          </div>
-
-                          <div style={{ background: "#fdf8f3", border: "1px solid #eee0d8", borderRadius: 8, padding: "8px 10px", fontSize: 11 }}>
-                            <div style={{ color: "#8a7060" }}>Your client seed</div>
-                            <div style={{ fontFamily: "monospace", color: "#49332d", marginTop: 2 }} title={cointossMyClientSeed ?? ""}>
-                              {shortHash(cointossMyClientSeed)}
-                            </div>
-                          </div>
-
-                          <div>
-                            <div style={{ fontSize: 11, color: "#8a7060", fontWeight: 700, marginBottom: 6 }}>Your recent rolls</div>
-                            {diceRecentRolls.length === 0 ? (
-                              <div style={{ fontSize: 11, color: "#8a7060" }}>No rolls yet.</div>
-                            ) : (
-                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                {diceRecentRolls.slice(0, 10).map((r, i) => {
-                                  const revealed = diceSeedHistory.find((s) => s.serverSeedHash === r.serverSeedHash);
-                                  const statusKey = `${r.serverSeedHash}:${r.nonce}`;
-                                  const status = diceVerifyStatus[statusKey];
-                                  return (
-                                    <div
-                                      key={i}
-                                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 11, border: "1px solid #eee0d8", borderRadius: 6, padding: "6px 8px", gap: 8 }}
-                                    >
-                                      <div style={{ minWidth: 0 }}>
-                                        <div style={{ color: "#49332d", fontWeight: 600 }}>
-                                          {r.direction === "under" ? "<" : ">"} {r.target} → rolled {r.roll} · nonce {r.nonce}
-                                        </div>
-                                        <div style={{ color: "#8a7060", fontFamily: "monospace" }} title={r.serverSeedHash}>{shortHash(r.serverSeedHash)}</div>
-                                      </div>
-                                      {revealed ? (
-                                        <button
-                                          type="button"
-                                          onClick={() => verifyDiceRoll(r, revealed)}
-                                          disabled={status === "checking"}
-                                          style={{
-                                            flexShrink: 0, fontSize: 10, fontWeight: 700, borderRadius: 6, padding: "5px 8px", border: "1px solid",
-                                            borderColor: status === "match" ? "#86efac" : status === "mismatch" ? "#fca5a5" : "#eee0d8",
-                                            background: status === "match" ? "#dcfce7" : status === "mismatch" ? "#fee2e2" : "#fff",
-                                            color: status === "match" ? "#15803d" : status === "mismatch" ? "#b91c1c" : "#49332d",
-                                            cursor: status === "checking" ? "default" : "pointer",
-                                          }}
-                                        >
-                                          {status === "checking" ? "Checking…" : status === "match" ? "✓ Verified" : status === "mismatch" ? "✗ Mismatch" : status === "error" ? "Error" : "Verify"}
-                                        </button>
-                                      ) : (
-                                        <span style={{ flexShrink: 0, fontSize: 10, color: "#8a7060", fontStyle: "italic" }}>seed not yet revealed</span>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
                     {/* Deposit / Cash Out — Dice shares Coin Toss's internal
                         balance, so this hits the exact same
                         /api/minigames/cointoss deposit/cashout endpoints and
@@ -7495,7 +7239,7 @@ function ClientPageInner() {
                         />
                         <button
                           type="button"
-                          onClick={() => doCointossDeposit("dice")}
+                          onClick={doCointossDeposit}
                           disabled={paymentInFlight || cointossDepositAmount <= 0}
                           style={{
                             flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700,
@@ -7542,7 +7286,7 @@ function ClientPageInner() {
                       )}
                       <button
                         type="button"
-                        onClick={() => doCointossCashout("dice")}
+                        onClick={doCointossCashout}
                         disabled={cointossCashoutLoading}
                         style={{ padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1px solid #7c3aed", background: "transparent", color: "#7c3aed", cursor: "pointer" }}
                       >
@@ -7571,7 +7315,7 @@ function ClientPageInner() {
                                   color: style.color,
                                 }}
                               >
-                                <span>{c.amountDegen} DEGEN — {style.label}{c.sourceGame ? ` · via ${c.sourceGame === "dice" ? "Dice" : "Coin Toss"}` : ""}</span>
+                                <span>{c.amountDegen} DEGEN — {style.label}</span>
                                 <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                   {c.status === "fulfilled" && c.txHash && (
                                     <a
@@ -7603,7 +7347,7 @@ function ClientPageInner() {
                                 background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d",
                               }}
                             >
-                              <span>{d.amountDegen} DEGEN — deposited{d.sourceGame ? ` · via ${d.sourceGame === "dice" ? "Dice" : "Coin Toss"}` : ""}</span>
+                              <span>{d.amountDegen} DEGEN — deposited</span>
                               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 {d.txHash && (
                                   <a

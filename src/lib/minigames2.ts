@@ -295,10 +295,6 @@ export type DegenDeposit = {
   amountDegen: number;
   txHash: string;
   ts: number;
-  // Same breadcrumb-only caveat as PendingCashout.sourceGame — records
-  // which panel the deposit was made from, not which game the DEGEN is
-  // "for" (the balance is shared, so there's no such thing).
-  sourceGame?: "cointoss" | "dice";
 };
 
 const DEPOSITS_KEY = "grub:minigames:cointoss:deposits";
@@ -333,7 +329,6 @@ export async function depositDegen(
   identityKey: string,
   txHash: string,
   claimedAmount: number,
-  sourceGame?: "cointoss" | "dice",
 ): Promise<DepositResult> {
   if (!txHash || typeof txHash !== "string" || !txHash.startsWith("0x")) {
     return { ok: false, reason: "invalid transaction hash" };
@@ -376,7 +371,6 @@ export async function depositDegen(
     amountDegen: verified.amount,
     txHash,
     ts: Date.now(),
-    sourceGame,
   });
   if (depositList.length > MAX_LOGGED_DEPOSITS) depositList.length = MAX_LOGGED_DEPOSITS;
   await kv.set(DEPOSITS_KEY, depositList);
@@ -976,12 +970,6 @@ export type PendingCashout = {
   requestedAt: number;
   fulfilledAt?: number;
   cancelledAt?: number;
-  // Which panel the player clicked "Cash Out" from — a UI breadcrumb only,
-  // NOT a real ledger split. The internal balance is fully shared between
-  // Coin Toss and Dice, so this just records which button was pressed, not
-  // which game the DEGEN was actually won on. Optional/undefined for any
-  // cash-out requested before this field existed.
-  sourceGame?: "cointoss" | "dice";
 };
 
 const CASHOUTS_KEY = "grub:minigames:cointoss:cashouts";
@@ -1072,12 +1060,7 @@ export type CashoutRequestResult =
  * dashboard's manual "Send" button — same deliberate-trigger pattern used
  * everywhere else real money moves in this app.
  */
-export async function requestCashout(
-  identityKey: string,
-  amountDegen: number,
-  wallet: string,
-  sourceGame?: "cointoss" | "dice",
-): Promise<CashoutRequestResult> {
+export async function requestCashout(identityKey: string, amountDegen: number, wallet: string): Promise<CashoutRequestResult> {
   if (!Number.isFinite(amountDegen) || amountDegen <= 0) {
     return { ok: false, reason: "invalid cash-out amount" };
   }
@@ -1120,7 +1103,6 @@ export async function requestCashout(
       amountDegen,
       status: "pending",
       requestedAt: Date.now(),
-      sourceGame,
     };
 
     if (amountDegen <= config.autoCashoutMaxDegen) {
