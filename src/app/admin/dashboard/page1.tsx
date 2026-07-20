@@ -607,6 +607,27 @@ function AdminDashboardInner() {
   const [diceConfigDraft, setDiceConfigDraft] = useState<Record<string, string>>({});
   const [showSeedHistory, setShowSeedHistory] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  // Which config field's "?" hint popover is open, e.g. "cointoss:feePercentOnWin"
+  // or "dice:houseEdgePercent" — prefixed so the two config blocks' fields
+  // (some share key names, like lossCircuitBreakerDegen) never collide.
+  const [openConfigHint, setOpenConfigHint] = useState<string | null>(null);
+  // Close the config-hint popover on outside click. Uses `mousedown` (fires
+  // before the toggle button's `click`) and only closes when the click lands
+  // outside any [data-config-hint] container — so a click on the toggle
+  // button itself still reaches its own onClick and toggles normally.
+  // No full-screen backdrop element, so clicks elsewhere on the page (tabs,
+  // other buttons, scroll) are never swallowed.
+  useEffect(() => {
+    if (!openConfigHint) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-config-hint]")) {
+        setOpenConfigHint(null);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [openConfigHint]);
   const [cashoutSearch, setCashoutSearch] = useState("");
   const [flipsSearch, setFlipsSearch] = useState("");
   const [playerHistoryQuery, setPlayerHistoryQuery] = useState("");
@@ -982,6 +1003,25 @@ function AdminDashboardInner() {
     }, false);
   }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
 
+  const recomputeCoinTossPnlBuckets = useCallback(() => {
+    askConfirm("Rebuild Coin Toss's rolling 24h PnL buckets from the current flip log? Use this once to fix a \"House Net (24h)\" figure left over from a purge done before the bucket-fix shipped — safe to re-run any time.", async () => {
+      setRaffleActionLoading("minigames_recompute_pnl");
+      try {
+        const res = await authedPost("/api/admin/minigames", { action: "recompute_cointoss_pnl_buckets" });
+        if (res?.ok) {
+          addToast(`✓ Rebuilt ${res.bucketsRebuilt} bucket(s) from ${res.flipsProcessed} flip(s) in the last 24h.`, "success");
+          loadMinigamesAdmin();
+        } else {
+          addToast(`✕ ${res?.reason ?? "Recompute failed"}`, "error");
+        }
+      } catch (err: any) {
+        addToast(`✕ ${err?.message ?? "Recompute failed"}`, "error");
+      } finally {
+        setRaffleActionLoading(null);
+      }
+    }, false);
+  }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
+
   const purgeMinigamesFlipHistory = useCallback((identityKey: string) => {
     askConfirm(`Clear Coin Toss WIN/LOSS FLIP HISTORY for ${identityKey}?\n\nThis removes their flip records, totals, and Player Stats row. Their balance, deposits, cash-outs, and credit history are NOT touched. This can't be undone.`, async () => {
       setRaffleActionLoading(`minigames_purge_${identityKey}`);
@@ -1062,6 +1102,25 @@ function AdminDashboardInner() {
         setRaffleActionLoading(null);
       }
     });
+  }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
+
+  const recomputeDicePnlBuckets = useCallback(() => {
+    askConfirm("Rebuild Dice's rolling 24h PnL buckets from the current roll log? Use this once to fix a \"House Net (24h)\" figure left over from a purge done before the bucket-fix shipped — safe to re-run any time.", async () => {
+      setRaffleActionLoading("dice_recompute_pnl");
+      try {
+        const res = await authedPost("/api/admin/minigames", { action: "recompute_dice_pnl_buckets" });
+        if (res?.ok) {
+          addToast(`✓ Rebuilt ${res.bucketsRebuilt} bucket(s) from ${res.rollsProcessed} roll(s) in the last 24h.`, "success");
+          loadMinigamesAdmin();
+        } else {
+          addToast(`✕ ${res?.reason ?? "Recompute failed"}`, "error");
+        }
+      } catch (err: any) {
+        addToast(`✕ ${err?.message ?? "Recompute failed"}`, "error");
+      } finally {
+        setRaffleActionLoading(null);
+      }
+    }, false);
   }, [askConfirm, authedPost, addToast, loadMinigamesAdmin]);
 
   const purgeDiceRollHistory = useCallback((identityKey: string) => {
@@ -1691,7 +1750,7 @@ function AdminDashboardInner() {
           >
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 14 }}>
               <span style={{ flexShrink: 0, fontSize: 15, lineHeight: "18px" }}>{confirmModal.danger === false ? "❓" : "⚠️"}</span>
-              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "pre-line" }}>{confirmModal.msg}</p>
+              <p style={{ fontSize: 13, fontWeight: 600, color: T.cream, margin: 0, lineHeight: 1.4, whiteSpace: "pre-line", overflowWrap: "anywhere", wordBreak: "break-word", minWidth: 0 }}>{confirmModal.msg}</p>
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button
@@ -2881,6 +2940,14 @@ function AdminDashboardInner() {
               <button onClick={loadMinigamesAdmin} style={{ background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                 ↺ Refresh
               </button>
+              <button
+                onClick={recomputeCoinTossPnlBuckets}
+                disabled={raffleActionLoading === "minigames_recompute_pnl"}
+                title="One-off: rebuilds the rolling 24h PnL buckets from the current flip log. Use after a purge done before this fix shipped."
+                style={{ background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              >
+                {raffleActionLoading === "minigames_recompute_pnl" ? "Rebuilding…" : "⟲ Recompute 24h PnL"}
+              </button>
             </div>
 
             <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: "1rem" }}>
@@ -2895,10 +2962,34 @@ function AdminDashboardInner() {
                   { key: "maxFlipsPerMinutePerUser", label: "Max flips/min/user", hint: "Rate limit — flips a single player can place per minute." },
                   { key: "autoCashoutMaxDegen", label: "Auto cash-out max (DEGEN)", hint: "Cash-out requests at or under this amount send immediately. Above it, they queue for manual admin approval." },
                   { key: "seedRotateAfterFlips", label: "Auto-rotate seed after N flips", hint: "Provably-fair seed auto-rotates (and reveals) once it's backed this many flips." },
-                ].map((f) => (
-                  <label key={f.key} style={{ fontSize: 11, color: T.creamMute }} title={f.hint}>
-                    {f.label}
-                    <div style={{ fontSize: 10, fontWeight: 400, color: T.textMute, marginTop: 2, lineHeight: 1.4 }}>{f.hint}</div>
+                ].map((f) => {
+                  const hintKey = `cointoss:${f.key}`;
+                  const isOpen = openConfigHint === hintKey;
+                  return (
+                  <label key={f.key} data-config-hint style={{ fontSize: 11, color: T.creamMute, position: "relative", display: "block" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      {f.label}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); setOpenConfigHint(isOpen ? null : hintKey); }}
+                        style={{
+                          width: 14, height: 14, borderRadius: "50%", border: `1px solid ${T.border}`, background: "transparent",
+                          color: T.textMute, fontSize: 9, fontWeight: 700, lineHeight: "12px", cursor: "pointer", padding: 0,
+                          display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                        }}
+                      >
+                        ?
+                      </button>
+                    </span>
+                    {isOpen && (
+                      <div style={{
+                        position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 20, width: 220,
+                        background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px",
+                        fontSize: 10, fontWeight: 400, color: T.textSub, lineHeight: 1.4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
+                      }}>
+                        {f.hint}
+                      </div>
+                    )}
                     <input
                       type="number"
                       value={minigamesConfigDraft[f.key] ?? ""}
@@ -2909,7 +3000,8 @@ function AdminDashboardInner() {
                       }}
                     />
                   </label>
-                ))}
+                  );
+                })}
               </div>
               <button
                 onClick={saveMinigamesConfig}
@@ -3411,11 +3503,12 @@ function AdminDashboardInner() {
             ↺ Refresh
           </button>
           <button
-            onClick={rotateDiceSeed}
-            disabled={raffleActionLoading === "dice_rotate_seed"}
-            style={{ background: "transparent", color: "#7c3aed", border: "1px solid #7c3aed", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            onClick={recomputeDicePnlBuckets}
+            disabled={raffleActionLoading === "dice_recompute_pnl"}
+            title="One-off: rebuilds the rolling 24h PnL buckets from the current roll log. Use after a purge done before this fix shipped."
+            style={{ background: "transparent", color: T.creamMute, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
           >
-            {raffleActionLoading === "dice_rotate_seed" ? "Rotating…" : "🔄 Rotate Seed"}
+            {raffleActionLoading === "dice_recompute_pnl" ? "Rebuilding…" : "⟲ Recompute 24h PnL"}
           </button>
         </div>
 
@@ -3434,10 +3527,34 @@ function AdminDashboardInner() {
               { key: "lossCircuitBreakerDegen", label: "24h loss circuit-breaker (DEGEN)", hint: "Dice auto-pauses if rolling 24h house losses hit this — separate bucket from Coin Toss's breaker." },
               { key: "maxRollsPerMinutePerUser", label: "Max rolls/min/user", hint: "Rate limit — rolls a single player can place per minute." },
               { key: "seedRotateAfterRolls", label: "Auto-rotate seed after N rolls", hint: "Provably-fair seed auto-rotates (and reveals) once it's backed this many rolls." },
-            ].map((f) => (
-              <label key={f.key} style={{ fontSize: 11, color: T.creamMute }} title={f.hint}>
-                {f.label}
-                <div style={{ fontSize: 10, fontWeight: 400, color: T.textMute, marginTop: 2, lineHeight: 1.4 }}>{f.hint}</div>
+            ].map((f) => {
+              const hintKey = `dice:${f.key}`;
+              const isOpen = openConfigHint === hintKey;
+              return (
+              <label key={f.key} data-config-hint style={{ fontSize: 11, color: T.creamMute, position: "relative", display: "block" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  {f.label}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); setOpenConfigHint(isOpen ? null : hintKey); }}
+                    style={{
+                      width: 14, height: 14, borderRadius: "50%", border: `1px solid ${T.border}`, background: "transparent",
+                      color: T.textMute, fontSize: 9, fontWeight: 700, lineHeight: "12px", cursor: "pointer", padding: 0,
+                      display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    }}
+                  >
+                    ?
+                  </button>
+                </span>
+                {isOpen && (
+                  <div style={{
+                    position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 20, width: 220,
+                    background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px",
+                    fontSize: 10, fontWeight: 400, color: T.textSub, lineHeight: 1.4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
+                  }}>
+                    {f.hint}
+                  </div>
+                )}
                 <input
                   type="number"
                   value={diceConfigDraft[f.key] ?? ""}
@@ -3448,7 +3565,8 @@ function AdminDashboardInner() {
                   }}
                 />
               </label>
-            ))}
+              );
+            })}
           </div>
           <button
             onClick={saveDiceConfig}
