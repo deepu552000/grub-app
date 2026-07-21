@@ -527,6 +527,7 @@ function AdminDashboardInner() {
   const [mainTab, setMainTab] = useState<"overview" | "games">("overview");
   const [failedPayouts, setFailedPayouts] = useState<FailedPayout[]>([]);
   const [poolDegen, setPoolDegen] = useState<number | null>(null);
+  const [poolUsdc, setPoolUsdc] = useState<number | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [dismissDrafts, setDismissDrafts] = useState<Record<string, string>>({});
   const [playerSearchQuery, setPlayerSearchQuery] = useState("");
@@ -855,8 +856,14 @@ function AdminDashboardInner() {
       // Treasury balance — non-blocking, don't let a pool-check hiccup break the main load
       fetch("/api/referral/pool")
         .then((r) => r.json())
-        .then((p) => setPoolDegen(typeof p?.poolDegen === "number" ? p.poolDegen : null))
-        .catch(() => setPoolDegen(null));
+        .then((p) => {
+          setPoolDegen(typeof p?.poolDegen === "number" ? p.poolDegen : null);
+          setPoolUsdc(typeof p?.poolUsdc === "number" ? p.poolUsdc : null);
+        })
+        .catch(() => {
+          setPoolDegen(null);
+          setPoolUsdc(null);
+        });
     } catch (err: any) {
       setError(err?.message ?? "Failed to load");
     } finally {
@@ -2078,17 +2085,32 @@ function AdminDashboardInner() {
           </div>
         )}
 
-        {/* ── Treasury balance + failed payouts alert ── */}
-        {poolDegen !== null && (
-          <div style={{
-            display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 10,
-            padding: "6px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600,
-            background: poolDegen < 20 ? C.redDim : (dark ? T.surfaceAlt : "#eef2ff"),
-            color: poolDegen < 20 ? C.red : T.textSub,
-            border: `1px solid ${poolDegen < 20 ? C.red + "55" : T.border}`,
-          }}>
-            💰 Treasury: {poolDegen.toLocaleString(undefined, { maximumFractionDigits: 2 })} DEGEN
-            {poolDegen < 20 && " — low, refill soon"}
+        {/* ── Treasury balance (DEGEN + USDC) + failed payouts alert ── */}
+        {(poolDegen !== null || poolUsdc !== null) && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+            {poolDegen !== null && (
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: 8,
+                padding: "6px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600,
+                background: poolDegen < 20 ? C.redDim : (dark ? T.surfaceAlt : "#eef2ff"),
+                color: poolDegen < 20 ? C.red : T.textSub,
+                border: `1px solid ${poolDegen < 20 ? C.red + "55" : T.border}`,
+              }}>
+                💰 Treasury: {poolDegen.toLocaleString(undefined, { maximumFractionDigits: 2 })} DEGEN
+                {poolDegen < 20 && " — low, refill soon"}
+              </div>
+            )}
+            {poolUsdc !== null && (
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: 8,
+                padding: "6px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600,
+                background: dark ? T.surfaceAlt : "#eef2ff",
+                color: T.textSub,
+                border: `1px solid ${T.border}`,
+              }}>
+                💵 Income: {poolUsdc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC
+              </div>
+            )}
           </div>
         )}
 

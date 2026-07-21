@@ -1540,6 +1540,15 @@ function AdminDashboardInner() {
 
   const sortedTxns = [...txns].sort((a, b) => b.ts - a.ts).slice(0, 500);
   const maxXp = Math.max(1, ...users.map((u) => u.xp || 0));
+  // Cat level, derived from xp — mirrors the stage thresholds in Client.tsx's
+  // `stages` array (0 / 480 / 960 / 1440 minXp) so admin and player-facing
+  // "level" always agree without duplicating any state.
+  function catLevel(xp: number): number {
+    if (xp >= 1440) return 4;
+    if (xp >= 960) return 3;
+    if (xp >= 480) return 2;
+    return 1;
+  }
   const maxCheckins = Math.max(1, ...users.map((u) => u.totalCheckIns || 0));
   const realUsers = users.filter((u) => (u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0);
   const ghostUsers = users.filter((u) => !((u.xp || 0) > 0 || (u.totalCheckIns || 0) > 0));
@@ -2277,7 +2286,14 @@ function AdminDashboardInner() {
                               ))}
                             </span>
                           )}
-                          <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textMute, marginLeft: "auto", flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp · {u.totalCheckIns || 0} checkin</span>
+                          <span style={{
+                            fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5,
+                            background: T.bg, border: `1px solid ${dark ? C.amberGlow : "#7c3aed"}55`,
+                            color: dark ? C.amberGlow : "#7c3aed", flexShrink: 0, marginLeft: "auto",
+                          }}>
+                            Lv{catLevel(u.xp || 0)}
+                          </span>
+                          <span style={{ fontSize: 12, color: dark ? "#f1f5f9" : T.textMute, flexShrink: 0 }}>{(u.xp || 0).toLocaleString()} xp · {u.totalCheckIns || 0} checkin</span>
                         </div>
                       );
                     })}
